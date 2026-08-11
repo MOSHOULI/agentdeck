@@ -23,3 +23,8 @@ toml_edit = "0.20"
 serde_yml = "0.0"
 dirs = "6"
 walkdir = "2"
+regex = "1"
+base64 = "0.22"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem"] }
