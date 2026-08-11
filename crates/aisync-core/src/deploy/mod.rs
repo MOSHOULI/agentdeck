@@ -122,7 +122,7 @@ mod tests {
             auth_guide: None,
             config_inject: ConfigInject {
                 skills: false,
-                mcp: false,
+                mcp: None,
                 memory: false,
                 personalization: None,
                 model_config: None,
