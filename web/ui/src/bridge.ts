@@ -6,6 +6,9 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
+// 浏览器调试模式（无 Tauri IPC）时返回 mock 数据
+const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
 // ─── Agent 管理 ────────────────────────────────────
 
 export interface AgentInfo {
@@ -23,23 +26,98 @@ export interface AgentInfo {
   category: string;
 }
 
+const MOCK_AGENTS: AgentInfo[] = [
+  {
+    id: 'opencode',
+    name: 'OpenCode',
+    installed: true,
+    version: '1.18.15',
+    authVerified: true,
+    source: 'open',
+    uiType: 'all',
+    stars: 194000,
+    popular: true,
+    description: '开源 AI 编程代理，支持 75+ 模型供应商、LSP 集成、Plan/Build 双模式。',
+    icon: 'opencode',
+    category: 'ai-coding',
+  },
+  {
+    id: 'claude-code',
+    name: 'Claude Code',
+    installed: false,
+    authVerified: false,
+    source: 'closed',
+    uiType: 'all',
+    stars: 140000,
+    popular: true,
+    description: 'Anthropic 官方终端 AI 编程代理，MCP 原生支持、1M 上下文。',
+    icon: 'claude-code',
+    category: 'ai-coding',
+  },
+  {
+    id: 'codex',
+    name: 'OpenAI Codex',
+    installed: true,
+    version: '1.0.0',
+    authVerified: true,
+    source: 'open',
+    uiType: 'cli+desktop',
+    stars: 104000,
+    popular: true,
+    description: 'OpenAI 官方 AI 编程代理，沙箱安全执行、云端异步批处理。',
+    icon: 'codex',
+    category: 'ai-coding',
+  },
+];
+
+const MOCK_MEMORIES: MemoryEntry[] = [
+  {
+    id: '1',
+    agentId: 'codex',
+    content: 'M0 收尾：cargo tauri dev 窗口跑通，环境工具链全部就绪（VS2022 Build Tools、Node 24、tauri-cli 2.11）。',
+    collectedAt: Math.floor(Date.now() / 1000) - 3600,
+    autoInject: true,
+    tags: ['codex'],
+  },
+  {
+    id: '2',
+    agentId: 'opencode',
+    content: 'OpenCode GO 套餐已接入，auth 中有 OpenCode Go api 凭据。',
+    collectedAt: Math.floor(Date.now() / 1000) - 1800,
+    autoInject: false,
+    tags: ['opencode'],
+  },
+  {
+    id: '3',
+    agentId: 'codex',
+    content: '注册表解析用 map key 回填 id，JSON 无需重复字段。',
+    collectedAt: Math.floor(Date.now() / 1000) - 600,
+    autoInject: false,
+    tags: ['codex'],
+  },
+];
+
 /** 获取所有注册的 agent 列表（含安装状态） */
 export async function getAgents(): Promise<AgentInfo[]> {
+  if (!isTauri) return MOCK_AGENTS;
   return invoke<AgentInfo[]>('get_agents');
 }
 
 /** 安装指定 agent */
 export async function installAgent(id: string): Promise<void> {
+  if (!isTauri) return;
   return invoke<void>('install_agent', { id });
 }
 
 /** 卸载指定 agent */
 export async function uninstallAgent(id: string): Promise<void> {
+  if (!isTauri) return;
   return invoke<void>('uninstall_agent', { id });
 }
 
 /** 验证 agent 认证状态 */
 export async function verifyAgentAuth(id: string): Promise<boolean> {
+  if (!isTauri) return true;
   return invoke<boolean>('verify_agent_auth', { id });
 }
 
@@ -56,21 +134,30 @@ export interface MemoryEntry {
 
 /** 采集指定 agent 的记忆 */
 export async function collectMemory(agentId: string): Promise<MemoryEntry[]> {
+  if (!isTauri) return MOCK_MEMORIES.filter((m) => m.agentId === agentId);
   return invoke<MemoryEntry[]>('collect_memory', { agentId });
 }
 
 /** 搜索记忆 */
 export async function searchMemory(query: string): Promise<MemoryEntry[]> {
+  if (!isTauri) {
+    const q = query.trim().toLowerCase();
+    return MOCK_MEMORIES.filter(
+      (m) => !q || m.content.toLowerCase().includes(q) || m.tags.some((t) => t.includes(q))
+    );
+  }
   return invoke<MemoryEntry[]>('search_memory', { query });
 }
 
 /** 注入记忆到指定 agent */
 export async function injectMemory(agentId: string, memoryIds: string[]): Promise<void> {
+  if (!isTauri) return;
   return invoke<void>('inject_memory', { agentId, memoryIds });
 }
 
 /** 切换记忆自动注入标签 */
 export async function toggleAutoInject(memoryId: string, enabled: boolean): Promise<void> {
+  if (!isTauri) return;
   return invoke<void>('toggle_auto_inject', { memoryId, enabled });
 }
 

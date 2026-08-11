@@ -161,3 +161,6 @@ details[open] > summary { color: var(--accent); }
   .sidebar ul { display: flex; flex-wrap: wrap; gap: 4px; }
   .nav-btn { width: auto; }
 }
+input::placeholder {
+  color: #9ca3af;
+}

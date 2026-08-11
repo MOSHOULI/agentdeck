@@ -7,6 +7,7 @@
 import React, { useEffect, useState } from 'react';
 import { useAgentStore } from '../stores/agentStore';
 import { AgentCard } from '../components/AgentCard';
+import { MemoryPanel } from '../components/MemoryPanel';
 
 export const AgentSquare: React.FC = () => {
   const {
@@ -70,8 +71,8 @@ export const AgentSquare: React.FC = () => {
               padding: '6px 16px',
               borderRadius: 8,
               border: filter === f ? '1px solid #6366f1' : '1px solid #374151',
-              background: filter === f ? '#1e1b4b' : 'transparent',
-              color: filter === f ? '#a5b4fc' : '#9ca3af',
+              background: filter === f ? '#312e81' : 'transparent',
+              color: filter === f ? '#c7d2fe' : '#9ca3af',
               fontSize: 13,
               cursor: 'pointer',
               fontWeight: 500,
@@ -177,6 +178,9 @@ export const AgentSquare: React.FC = () => {
           {filter === 'installed' ? '还没有安装任何 Agent' : '没有找到 Agent'}
         </div>
       )}
+
+      {/* 记忆管理 */}
+      <MemoryPanel />
     </div>
   );
 };
