@@ -28,6 +28,8 @@ pub fn run() {
             commands::vault::import_v2_keys,
             commands::backup::list_backups,
             commands::backup::restore_backup,
+            commands::sync::get_mcp_servers,
+            commands::sync::toggle_mcp_for_agent,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
