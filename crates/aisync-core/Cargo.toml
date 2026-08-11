@@ -19,5 +19,7 @@ zeroize = "1"
 ring = "0.17"
 chrono = { version = "0.4", features = ["serde"] }
 toml = "0.8"
+toml_edit = "0.20"
+serde_yml = "0.0"
 dirs = "6"
 walkdir = "2"
