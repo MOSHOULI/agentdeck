@@ -105,6 +105,28 @@ fn base64_decode(text: &str) -> crate::Result<Vec<u8>> {
         .map_err(|e| Error::VaultError(format!("base64 解码失败: {}", e)))
 }
 
+/// DPAPI 加密（release 签名私钥等复用）
+#[cfg(windows)]
+pub(crate) fn dpapi_encrypt_bytes(data: &[u8]) -> crate::Result<Vec<u8>> {
+    dpapi::encrypt(data)
+}
+
+/// DPAPI 解密
+#[cfg(windows)]
+pub(crate) fn dpapi_decrypt_bytes(data: &[u8]) -> crate::Result<Vec<u8>> {
+    dpapi::decrypt(data)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn dpapi_encrypt_bytes(_data: &[u8]) -> crate::Result<Vec<u8>> {
+    Err(Error::VaultError("非 Windows 平台暂不支持 DPAPI".into()))
+}
+
+#[cfg(not(windows))]
+pub(crate) fn dpapi_decrypt_bytes(_data: &[u8]) -> crate::Result<Vec<u8>> {
+    Err(Error::VaultError("非 Windows 平台暂不支持 DPAPI".into()))
+}
+
 /// 原子写（临时文件 + 替换）
 pub(crate) fn atomic_write(path: &Path, content: &str) -> crate::Result<()> {
     atomic_write_bytes(path, content.as_bytes())

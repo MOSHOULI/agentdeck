@@ -12,9 +12,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::Error;
 
-const MCP_REGISTRY_JSON: &str = include_str!("../../../../agents/mcp-registry.json");
-const AGENT_REGISTRY_JSON: &str = include_str!("../../../../agents/registry-v3.json");
-
 /// 允许写入配置的 MCP 启动命令（与 V2 白名单一致）
 const ALLOWED_BINARIES: &[&str] = &[
     "npx", "uvx", "python", "python3", "node", "docker", "bun", "deno",
@@ -56,13 +53,14 @@ fn load_mcp_registry() -> crate::Result<Vec<McpServerDef>> {
     struct RegistryFile {
         servers: Vec<McpServerDef>,
     }
-    let file: RegistryFile = serde_json::from_str(MCP_REGISTRY_JSON)
+    let content = crate::registry::load_mcp_registry_runtime()?;
+    let file: RegistryFile = serde_json::from_str(&content)
         .map_err(|e| Error::Other(format!("MCP 注册表解析失败: {}", e)))?;
     Ok(file.servers)
 }
 
 fn load_agent_targets() -> crate::Result<Vec<(String, crate::registry::McpInject)>> {
-    let doc = crate::registry::parse_registry(AGENT_REGISTRY_JSON)?;
+    let doc = crate::registry::load_registry_runtime()?;
     let mut out = Vec::new();
     for (id, agent) in doc.agents {
         if let Some(target) = agent.config_inject.mcp {

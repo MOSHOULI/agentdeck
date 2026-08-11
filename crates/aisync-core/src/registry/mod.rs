@@ -177,6 +177,34 @@ pub fn load_registry(path: &std::path::Path) -> crate::Result<RegistryDoc> {
     parse_registry(&content)
 }
 
+/// 运行时注册表目录：~/.agentdeck/registry/（在线更新写入处）
+pub fn runtime_registry_dir() -> crate::Result<std::path::PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| crate::Error::Other("无法定位用户主目录".into()))?;
+    Ok(home.join(".agentdeck").join("registry"))
+}
+
+/// 运行时优先加载注册表：数据目录有文件用它，否则用编译期内置
+pub fn load_registry_runtime() -> crate::Result<RegistryDoc> {
+    const BUILTIN: &str = include_str!("../../../../agents/registry-v3.json");
+    let runtime = runtime_registry_dir()?.join("registry-v3.json");
+    if runtime.exists() {
+        load_registry(&runtime)
+    } else {
+        parse_registry(BUILTIN)
+    }
+}
+
+/// 运行时优先读取 MCP 注册表内容
+pub fn load_mcp_registry_runtime() -> crate::Result<String> {
+    const BUILTIN: &str = include_str!("../../../../agents/mcp-registry.json");
+    let runtime = runtime_registry_dir()?.join("mcp-registry.json");
+    if runtime.exists() {
+        Ok(std::fs::read_to_string(&runtime)?)
+    } else {
+        Ok(BUILTIN.to_string())
+    }
+}
+
 /// 按热度排序的 agent 定义列表（已安装优先 → popular → stars 降序）
 pub fn sorted_agents<'a>(
     registry: &'a RegistryDoc,

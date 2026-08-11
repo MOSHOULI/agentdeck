@@ -8,7 +8,9 @@ pub mod git;
 pub mod mcp;
 pub mod memory;
 pub mod registry;
+pub mod release;
 pub mod sync;
+pub mod update;
 pub mod vault;
 
 /// AgentDeck 错误类型

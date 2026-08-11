@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicepage/nicepage/refs/heads/main/packages/cli/schema.json",
   "productName": "AgentDeck",
-  "version": "3.0.0-alpha.1",
+  "version": "1.0.0",
   "identifier": "com.agentdeck.app",
   "build": {
     "frontendDist": "../web/ui/dist",

@@ -1,6 +1,6 @@
 [package]
 name = "aisync-core"
-version = "3.0.0-alpha.1"
+version = "1.0.0"
 edition = "2024"
 description = "AgentDeck 核心引擎——Agent 部署、记忆管理、密钥加密、配置同步"
 
@@ -25,6 +25,7 @@ dirs = "6"
 walkdir = "2"
 regex = "1"
 base64 = "0.22"
+ureq = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem"] }
