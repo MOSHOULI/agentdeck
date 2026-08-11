@@ -14,6 +14,11 @@ pub fn run() {
             commands::deploy::install_agent,
             commands::deploy::uninstall_agent,
             commands::deploy::verify_agent_auth,
+            commands::memory::collect_memory,
+            commands::memory::search_memory,
+            commands::memory::inject_memory,
+            commands::memory::toggle_auto_inject,
+            commands::memory::recent_memories,
         ])
         .run(tauri::generate_context!())
         .expect("启动 AgentDeck 失败");
