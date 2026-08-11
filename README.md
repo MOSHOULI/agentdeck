@@ -23,9 +23,9 @@ AgentDeck 是一个跨平台桌面应用，定位为 **Agent 编排中枢**—�
 
 ## 当前状态（2026-08-11）
 
-- ✅ **M0 窗口已跑通**：`cargo tauri dev` 可弹出 1200×800 的 Agent 广场窗口；`cargo check --workspace`、`npm run build`、`npx tsc --noEmit` 全绿
-- ⏳ **M0 收尾（进行中）**：cargo fmt/clippy/test、vitest 测试、GitHub Actions CI、图标入库
-- ⏳ **M1（下一步）**：`get_agents` 接线、广场真实显示 9 款 Agent、OpenCode 一键安装闭环
+- ✅ **M0 完成**：`cargo tauri dev` 可弹出 1200×800 的 Agent 广场窗口；质量门全绿（cargo fmt/clippy/test、vitest、`npm run build`、`npx tsc --noEmit`）；GitHub Actions CI 已就位
+- ✅ **M1 完成**：广场真实显示注册表 9 款 Agent；安装/卸载/验证闭环已接线（真实 npm 全局安装 opencode-ai 验证通过，测试后已还原）；安装/卸载前有确认弹窗
+- ⏳ **M2（下一步）**：配置注入引擎（TOML/JSONC/YAML/JSON 适配器）、9 款核心 agent 配置注入
 
 ## 环境要求（本机已就绪）
 
