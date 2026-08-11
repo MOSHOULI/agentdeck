@@ -102,7 +102,8 @@ pub fn load_or_create_signing_key() -> crate::Result<(Vec<u8>, Vec<u8>)> {
 }
 
 /// canonical JSON（键排序，签名/验签双方一致）
-fn canonical_json(manifest: &ReleaseManifest) -> crate::Result<String> {
+/// canonical JSON（签名与 manifest 文件输出统一使用，保证验签一致）
+pub fn canonical_manifest_json(manifest: &ReleaseManifest) -> crate::Result<String> {
     serde_json::to_string(manifest).map_err(|e| Error::Other(format!("manifest 序列化失败: {}", e)))
 }
 
@@ -110,7 +111,7 @@ fn canonical_json(manifest: &ReleaseManifest) -> crate::Result<String> {
 pub fn sign_manifest(manifest: &ReleaseManifest, pkcs8: &[u8]) -> crate::Result<Vec<u8>> {
     let pair =
         Ed25519KeyPair::from_pkcs8(pkcs8).map_err(|_| Error::Other("签名密钥解析失败".into()))?;
-    let json = canonical_json(manifest)?;
+    let json = canonical_manifest_json(manifest)?;
     Ok(pair.sign(json.as_bytes()).as_ref().to_vec())
 }
 
@@ -197,8 +198,8 @@ mod tests {
             }],
             pubkey_fp: pubkey_fingerprint(&pubkey),
         };
-        let a = canonical_json(&m).unwrap();
-        let b = canonical_json(&m).unwrap();
+        let a = canonical_manifest_json(&m).unwrap();
+        let b = canonical_manifest_json(&m).unwrap();
         assert_eq!(a, b);
     }
 }

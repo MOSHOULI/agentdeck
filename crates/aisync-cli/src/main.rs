@@ -111,7 +111,7 @@ fn main() -> anyhow::Result<()> {
                     &refs,
                 )?;
                 std::fs::create_dir_all(&out)?;
-                let manifest_json = serde_json::to_string_pretty(&manifest)?;
+                let manifest_json = aisync_core::release::canonical_manifest_json(&manifest)?;
                 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
                 std::fs::write(out.join("manifest.json"), manifest_json)?;
                 std::fs::write(out.join("manifest.json.sig"), B64.encode(sig))?;

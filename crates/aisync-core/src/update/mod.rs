@@ -261,4 +261,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    /// 真实环境验证：从 GitHub Releases 拉取 v1.0.0 manifest 并验签（手动运行）
+    #[test]
+    #[ignore = "真实环境验证：访问 github.com"]
+    fn real_check_github_release() {
+        let base = "https://github.com/MOSHOULI/agentdeck/releases/download/v1.0.0";
+        let manifest_json = fetch_bytes(&format!("{}/manifest.json", base)).unwrap();
+        let manifest_json = String::from_utf8(manifest_json).unwrap();
+        let sig_b64 = fetch_bytes(&format!("{}/manifest.json.sig", base)).unwrap();
+        let sig_b64 = String::from_utf8(sig_b64).unwrap();
+        use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+        let sig = B64.decode(sig_b64.trim()).unwrap();
+        let pubkey = crate::release::embedded_public_key().expect("内置公钥");
+        let manifest = parse_and_verify(&manifest_json, &sig, &pubkey).unwrap();
+        assert_eq!(manifest.version, "1.0.0");
+        assert!(!is_update_available("1.0.0", &manifest), "同版本不应有更新");
+        println!(
+            "GitHub Release 真实拉取+验签通过：version={} pubkey_fp={} files={:?}",
+            manifest.version,
+            manifest.pubkey_fp,
+            manifest
+                .files
+                .iter()
+                .map(|f| f.name.clone())
+                .collect::<Vec<_>>()
+        );
+    }
 }
