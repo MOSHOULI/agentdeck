@@ -1,122 +1,75 @@
 # AgentDeck（AI 中枢）
 
-AgentDeck 是一个跨平台桌面应用，定位为 **Agent 编排中枢**——一站式发现、安装、配置、记忆管理本地 AI 代理工具。
+AgentDeck 是一款跨平台桌面应用，帮助你**一站式发现、安装、配置和管理本地 AI 代理工具**。它把安装、配置注入、对话记忆、密钥加密、MCP 服务器管理整合到一个界面里。
 
-与 CC Switch 互补共存：AgentDeck 负责「安装 → 注入 → 记忆」，CC Switch 负责「模型切换 → 协议代理」。
+## 功能特性
 
-## 四大核心能力
+- **Agent 广场**：卡片式浏览支持的 AI Agent，一键安装 / 卸载 / 验证
+- **配置注入**：自动把个性化模板与模型配置写入各 Agent 的配置文件（JSON / JSONC / TOML / YAML），写入前自动备份，失败自动回滚
+- **统一记忆**：采集 Codex / Claude Code / OpenCode 的会话历史，全文搜索，跨 Agent 注入记忆文件；支持定时采集与自动标签注入
+- **密钥库（vault）**：API Key 用 AES-256-GCM 加密存储，主密钥由 Windows DPAPI 保护；支持从旧版 vault 一键迁移
+- **备份回滚**：每次安装 / 注入 / 密钥变动前自动生成 git 备份，支持按操作回滚或按时间点整体恢复；备份内容加密后入库
+- **MCP 管理**：内置 MCP 服务器注册表，按 Agent 独立开关，实时写回各 Agent 的 MCP 配置
+- **在线更新**：启动时静默检查注册表更新，ed25519 签名校验，一键应用
 
-1. **Agent 广场**：Steam 风格卡片展示 AI Agent，一键安装/卸载/配置注入
-2. **统一记忆**：跨 agent 采集对话历史 → SQLite FTS5 全文搜索 → 跨 agent 注入
-3. **vault 加密**：AES-256-GCM 统一管理所有 agent 的 API Key
-4. **git 备份回滚**：每次变动前自动备份，可回滚
+## 安装
 
-## 技术栈
+### 下载安装包（推荐）
 
-| 层 | 技术 |
-|----|------|
-| 桌面壳 | Tauri 2（单进程单二进制） |
-| 后端 | Rust（aisync-core 引擎库） |
-| 前端 | React 18 + TypeScript + Vite + Zustand |
-| 数据 | SQLite + FTS5（rusqlite bundled） |
-| 打包 | tauri-bundler → NSIS（Windows 优先） |
+前往 [GitHub Releases](https://github.com/MOSHOULI/agentdeck/releases) 下载最新的 Windows 安装包（`AgentDeck_x.y.z_x64-setup.exe`），双击运行，按向导安装即可。安装包支持中文 / English 界面。
 
-## 当前状态（2026-08-11）
+### 从源码构建
 
-- ✅ **M0 完成**：`cargo tauri dev` 可弹出 1200×800 的 Agent 广场窗口；质量门全绿（cargo fmt/clippy/test、vitest、`npm run build`、`npx tsc --noEmit`）；GitHub Actions CI 已就位
-- ✅ **M1 完成**：广场真实显示注册表 9 款 Agent；安装/卸载/验证闭环已接线（真实 npm 全局安装 opencode-ai 验证通过，测试后已还原）；安装/卸载前有确认弹窗
-- ✅ **M2 完成**：配置注入引擎（JSON/JSONC/TOML/YAML/文本适配器 + 备份回滚）；codex/opencode 已真实注入成功（备份在 `~/.agentdeck/backups/`）；其余 7 款因数据源缺模板/特殊通道明确跳过（逐项报告）
-- ✅ **M3 完成**：记忆引擎（SQLite FTS5 存储/搜索，Codex/Claude/OpenCode 采集器，记忆注入文件）；前端记忆管理面板（采集/搜索/自动注入/注入）；定时采集（Tauri 启动即跑一轮、之后每小时一轮，采集后自动回写 `auto_inject` 记忆文件）；真实采集验证 391+ 条；opencode 代码审查两轮共 16 项问题已修复
-- ✅ **M4 完成**：vault 加密（Windows DPAPI 保护主密钥 + AES-256-GCM 加密存储，V2 格式兼容与一键导入）；git 事件驱动备份回滚（安装/注入/vault 变动前自动备份，备份文件加密镜像入库 + 提交前密钥扫描，按操作回滚 / 按时间点整体恢复）；前端密钥与备份面板（添加/删除/脱敏查看/复制）；真实验证：vault 增删改查 + 备份 119 个加密文件入库无明文
-- ✅ **M5 完成**：MCP 管理（内置注册表 + 6 款 agent 目标定义，按 agent 独立开关实时写回 TOML/JSON/JSONC/YAML 配置，命令白名单防任意命令）；前端 MCP 面板；真实端到端：codex/opencode MCP 开关往返 + gemini-cli/hermes 真实安装→MCP 注入→卸载全链路通过
-- ✅ **M6 完成（v1.0.0 正式发布）**：Windows NSIS 安装包（真实安装/启动/卸载冒烟通过，SHA256 见 VERSION.md）；注册表在线更新（ed25519 签名 manifest + 防降级 + 一键应用，真实 GitHub Release 验签通过）；发布到 [github.com/MOSHOULI/agentdeck](https://github.com/MOSHOULI/agentdeck) Release v1.0.0
-- 🏁 **项目完成**：M0-M6 全部交付
+环境要求：
 
-## 环境要求（本机已就绪）
-
-- Windows + PowerShell 7
-- Rust 1.97.1（MSVC 工具链）+ VS2022 Build Tools
-- Node 24 LTS + npm 11
-- tauri-cli 2.11（`cargo tauri`）
-- cargo 已配置 USTC 镜像与关闭证书吊销检查（`C:\Users\CLUSTER\.cargo\config.toml`）
-
-## 常用命令
-
-在仓库根目录 `D:\BASED CODE\AGENTDECK\agentdeck` 执行：
+- Windows 10 / 11
+- Rust（MSVC 工具链）
+- Node.js 18+ 与 npm
+- Tauri CLI
 
 ```powershell
-cargo tauri dev              # 启动开发窗口
-cargo check --workspace      # 编译检查
-cargo test --workspace       # Rust 测试
-cargo clippy --workspace -- -D warnings   # 静态检查
-cargo fmt --check            # 格式检查
-cargo tauri build            # 正式打包（NSIS）
-aisync release init          # 发布签名密钥（DPAPI 存本机）
-aisync release manifest ...  # 生成签名 manifest
+# 克隆仓库
+git clone https://github.com/MOSHOULI/agentdeck.git
+cd agentdeck
+
+# 启动开发窗口
+cargo tauri dev
+
+# 构建安装包（NSIS）
+cargo tauri build
 ```
 
-前端（`web/ui` 目录下）：
+## 快速开始
 
-```powershell
-npm run build                # 生产构建
-npm test                     # vitest 测试
-npx tsc --noEmit             # 类型检查
-```
+1. 启动 AgentDeck，在「Agent 广场」选择要使用的 Agent，点击安装（安装与卸载前会弹出确认）
+2. 安装完成后，配置注入会自动写入对应 Agent 的配置文件（写入前有备份）
+3. 在「记忆管理」面板点击「采集」，同步 Codex / Claude / OpenCode 的会话历史；勾选「自动注入」的记忆会在每次采集后自动写入记忆文件
+4. 在「密钥与备份」面板添加 API Key（加密存储，界面只显示脱敏内容），并可查看历史备份、执行回滚
+5. 在「MCP 服务器」面板按 Agent 开启需要的 MCP 服务器，配置实时生效
+6. 在「在线更新」面板检查并应用注册表更新
 
-## 目录结构
+## 数据与安全
 
-```
-agentdeck/
-├── Cargo.toml                       ← workspace 根（3 个 member）
-├── AgentDeck-V3-产品策划书.md        ← 完整产品方案（必读）
-├── agents/registry-v3.json          ← Agent 注册表（9 款核心）
-├── crates/
-│   ├── aisync-core/                 ← 核心引擎（deploy/memory/vault/sync/config/git/registry）
-│   └── aisync-cli/                  ← CLI 入口
-├── src-tauri/                       ← Tauri 2 桌面壳
-│   ├── tauri.conf.json              ← 窗口/安全/打包配置
-│   ├── icons/                       ← 应用图标（本地生成，构建必需）
-│   └── src/commands/                ← 5 类 Tauri 命令
-└── web/ui/                          ← React 前端
-    ├── tsconfig.json
-    └── src/
-        ├── bridge.ts                ← Tauri IPC 桥接层
-        ├── stores/agentStore.ts     ← Zustand 状态管理
-        ├── pages/AgentSquare.tsx    ← Agent 广场主界面
-        ├── components/AgentCard.tsx ← Agent 卡片组件
-        ├── App.tsx / App.css
-        └── main.jsx / styles.css
-```
+- 应用数据统一存放在用户主目录下的 `~/.agentdeck/`：记忆库（`memory.db`）、密钥库（`vault/`）、备份仓库（`git-backup/`）、在线更新注册表（`registry/`）
+- API Key 以密文存储，明文绝不落盘；主密钥由 Windows DPAPI 绑定当前用户保护
+- 配置写入前自动备份，注入失败自动回滚；备份文件加密后进入备份仓库，提交前做密钥特征扫描
+- 安装 / 卸载 / 删除密钥 / 回滚等操作均有确认提示
 
-## 关键文档与数据源
+## 常见问题
 
-- `AgentDeck-V3-产品策划书.md`：完整产品方案（7 章、6 个里程碑 M0-M6），**必读**
-- `agents/registry-v3.json`：9 款核心 Agent 定义（8 款预留接口规划中）
-- 外部数据源：`D:\BASED CODE\SHARED\shared-ai-config`（skills / personalization / mcp-configs / memory 在此定义）
+**采集不到某个 Agent 的记忆？**
 
-## 提交约定
+确认对应 Agent 已安装并产生过会话记录。当前支持 Codex（`~/.codex/sessions`）、Claude Code（`~/.claude/projects`）、OpenCode（`~/.local/share/opencode`）。
 
-- 中文 Conventional Commits（`feat:` / `fix:` / `chore:` / `docs:` / `test:` / `ci:` / `style:`）
-- 里程碑推进时同步更新本文档「当前状态」与「下一步」
+**在线更新提示失败？**
 
----
+更新源需要能访问 GitHub Releases；网络受限时请配置系统代理后重试。
 
-## 给 Codex 的启动提示
+**如何迁移旧版 vault 密钥？**
 
-你是 Codex，角色为乙方全栈开发团队；甲方是龙喵（老大），零基础、不写代码，所有开发由你完成。
+在「密钥与备份」面板点击「导入 V2 vault 密钥」，从旧版 vault 目录迁移（同名密钥不会被覆盖）。
 
-协作规则：
+## 更新与反馈
 
-- 称呼「老大」，不客套，先自查再问
-- 涉及方案/计划先走 grill-me 审查，确认后再动手
-- 修改代码前先读相关依赖，不重复造轮子
-- 每个阶段结束做 code review 与验证，提交用中文 Conventional Commits
-- 文档同步：功能、接口、数据结构变化时同步更新 README 与产品文档
-
-开始任务前先读：
-
-1. `AgentDeck-V3-产品策划书.md` 全文
-2. `agents/registry-v3.json`（Agent 注册表结构）
-3. `README.md` 当前状态与常用命令
-
-项目已完成（M0-M6，v1.0.0 已发布）。
+- 发布与更新：[GitHub Releases](https://github.com/MOSHOULI/agentdeck/releases)
+- 问题反馈：欢迎在 [Issues](https://github.com/MOSHOULI/agentdeck/issues) 提交
