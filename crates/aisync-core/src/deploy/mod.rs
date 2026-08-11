@@ -10,22 +10,146 @@
 ///   4. 若未完成：弹窗引导用户手动登录
 ///   5. 轮询/监听 completion_check 直到认证完成
 ///   6. 触发 config inject（配置注入）
-
 use crate::registry::AgentDefinition;
 
+use std::process::Command;
+use std::sync::mpsc;
+use std::time::Duration;
+
+/// 执行注册表里的 shell 命令（Windows 用 cmd /C）
+fn run_shell(cmdline: &str) -> std::io::Result<()> {
+    #[cfg(windows)]
+    let status = Command::new("cmd").args(["/C", cmdline]).status()?;
+    #[cfg(not(windows))]
+    let status = Command::new("sh").args(["-c", cmdline]).status()?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "命令退出码 {}",
+            status.code().unwrap_or(-1)
+        )))
+    }
+}
+
+/// 安装 Agent：执行 install.command → verify_cmd 验证
 pub fn install_agent(_agent: &AgentDefinition) -> crate::Result<()> {
-    // M1 实现：执行安装命令 + 验证 + 安全闸
-    todo!("M1: 实现 Agent 安装")
+    let cmd = _agent
+        .install
+        .command
+        .as_deref()
+        .ok_or_else(|| crate::Error::InstallFailed(format!("{} 缺少安装命令", _agent.name)))?;
+    run_shell(cmd)
+        .map_err(|e| crate::Error::InstallFailed(format!("安装 {} 失败: {}", _agent.name, e)))?;
+    if !verify_installation(_agent)? {
+        return Err(crate::Error::InstallFailed(format!(
+            "安装 {} 后验证失败",
+            _agent.name
+        )));
+    }
+    Ok(())
 }
 
+/// 卸载 Agent：执行 uninstall_cmd
 pub fn uninstall_agent(_agent: &AgentDefinition) -> crate::Result<()> {
-    todo!("M1: 实现 Agent 卸载")
+    let cmd = _agent
+        .install
+        .uninstall_cmd
+        .as_deref()
+        .ok_or_else(|| crate::Error::InstallFailed(format!("{} 缺少卸载命令", _agent.name)))?;
+    run_shell(cmd)
+        .map_err(|e| crate::Error::InstallFailed(format!("卸载 {} 失败: {}", _agent.name, e)))?;
+    Ok(())
 }
 
+/// 验证 Agent 是否安装成功：执行 verify_cmd，3 秒超时
 pub fn verify_installation(_agent: &AgentDefinition) -> crate::Result<bool> {
-    todo!("M1: 验证 Agent 是否安装成功")
+    let Some(verify_cmd) = _agent.install.verify_cmd.clone() else {
+        return Ok(false);
+    };
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(run_shell(&verify_cmd).is_ok());
+    });
+    Ok(rx.recv_timeout(Duration::from_secs(3)).unwrap_or(false))
 }
 
+/// 检测 Agent 认证状态（M1 简化：统一返回未认证）
 pub fn check_auth(_agent: &AgentDefinition) -> crate::Result<bool> {
-    todo!("M1: 检测 Agent 认证状态")
+    Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::registry::{AuthType, ConfigInject, InstallConfig, InstallMethod, UiType};
+
+    fn fake_agent() -> AgentDefinition {
+        AgentDefinition {
+            id: "fake".into(),
+            name: "Fake".into(),
+            source: "open".into(),
+            license: None,
+            github: None,
+            stars: Some(1),
+            ui_type: UiType::Cli,
+            category: "test".into(),
+            popular: false,
+            description: "测试用".into(),
+            install: InstallConfig {
+                method: InstallMethod::Manual,
+                command: Some("echo installed".into()),
+                url: None,
+                verify_cmd: Some("echo ok".into()),
+                uninstall_cmd: Some("echo uninstalled".into()),
+                dependencies: vec![],
+            },
+            auth_type: AuthType::None,
+            auth_guide: None,
+            config_inject: ConfigInject {
+                skills: false,
+                mcp: false,
+                memory: false,
+                personalization: None,
+                model_config: None,
+            },
+            memory_collector: None,
+            icon: "t".into(),
+            homepage: None,
+        }
+    }
+
+    #[test]
+    fn install_verify_uninstall_roundtrip_with_echo() {
+        let agent = fake_agent();
+        install_agent(&agent).expect("echo 安装命令应成功");
+        assert!(verify_installation(&agent).unwrap());
+        uninstall_agent(&agent).expect("echo 卸载命令应成功");
+    }
+
+    fn npm_has_opencode() -> bool {
+        run_shell("npm ls -g --depth=0 opencode-ai").is_ok()
+    }
+
+    /// 真实环境验证：npm 全局安装 opencode-ai → 验证 → 卸载（需要手动运行）
+    #[test]
+    #[ignore = "真实环境验证：执行 npm install/uninstall -g opencode-ai"]
+    fn real_install_roundtrip() {
+        let doc =
+            crate::registry::parse_registry(include_str!("../../../../agents/registry-v3.json"))
+                .unwrap();
+        let opencode = doc.agents.get("opencode").expect("注册表应有 opencode");
+
+        assert!(
+            !npm_has_opencode(),
+            "前置条件：npm 全局不应已有 opencode-ai"
+        );
+        install_agent(opencode).expect("真实安装应成功");
+        assert!(verify_installation(opencode).unwrap());
+        assert!(npm_has_opencode());
+
+        uninstall_agent(opencode).expect("真实卸载应成功");
+        assert!(!npm_has_opencode(), "卸载后 npm 全局不应再有 opencode-ai");
+    }
 }
