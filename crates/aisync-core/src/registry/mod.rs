@@ -156,10 +156,10 @@ pub fn load_registry(path: &std::path::Path) -> crate::Result<RegistryDoc> {
 }
 
 /// 按热度排序的 agent 定义列表（已安装优先 → popular → stars 降序）
-pub fn sorted_agents(
-    registry: &RegistryDoc,
+pub fn sorted_agents<'a>(
+    registry: &'a RegistryDoc,
     installed_ids: &[String],
-) -> Vec<(&String, &AgentDefinition)> {
+) -> Vec<(&'a String, &'a AgentDefinition)> {
     let mut agents: Vec<_> = registry.agents.iter().collect();
     agents.sort_by(|(id_a, a), (id_b, b)| {
         let a_installed = installed_ids.contains(id_a);
