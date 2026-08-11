@@ -82,13 +82,28 @@ pub struct ModelConfigInject {
     pub format: String,
 }
 
+/// MCP 配置注入目标（M5）：每款支持 MCP 的 agent 定义注入文件与格式
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpInject {
+    /// 目标配置文件（支持 ~ 展开）
+    pub file: String,
+    /// toml_section | json_merge | jsonc_merge | yaml_section
+    pub format: String,
+    /// JSON/JSONC 的服务器对象键（如 mcpServers / mcp）
+    #[serde(default)]
+    pub key: Option<String>,
+    /// TOML/YAML 的段名（默认 mcp_servers）
+    #[serde(default)]
+    pub section: Option<String>,
+}
+
 /// 配置注入定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigInject {
     #[serde(default)]
     pub skills: bool,
     #[serde(default)]
-    pub mcp: bool,
+    pub mcp: Option<McpInject>,
     #[serde(default)]
     pub memory: bool,
     #[serde(default)]

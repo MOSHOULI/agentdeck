@@ -23,7 +23,11 @@
       "auth_type": "api_key",
       "config_inject": {
         "skills": true,
-        "mcp": true,
+        "mcp": {
+          "file": "~/.config/opencode/opencode.jsonc",
+          "format": "jsonc_merge",
+          "key": "mcp"
+        },
         "memory": true,
         "personalization": {
           "template": "opencode",
@@ -66,7 +70,11 @@
       },
       "config_inject": {
         "skills": true,
-        "mcp": true,
+        "mcp": {
+          "file": "~/.claude.json",
+          "format": "json_merge",
+          "key": "mcpServers"
+        },
         "memory": true,
         "personalization": {
           "template": "claude",
@@ -110,7 +118,11 @@
       },
       "config_inject": {
         "skills": true,
-        "mcp": true,
+        "mcp": {
+          "file": "~/.codex/config.toml",
+          "format": "toml_section",
+          "section": "mcp_servers"
+        },
         "memory": true,
         "personalization": {
           "template": "codex",
@@ -144,7 +156,11 @@
       "auth_type": "api_key",
       "config_inject": {
         "skills": false,
-        "mcp": true,
+        "mcp": {
+          "file": "%APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+          "format": "json_merge",
+          "key": "mcpServers"
+        },
         "memory": false,
         "personalization": {
           "template": "cline",
@@ -182,7 +198,7 @@
       },
       "config_inject": {
         "skills": false,
-        "mcp": false,
+        "mcp": null,
         "memory": false,
         "personalization": {
           "template": "zcode",
@@ -212,7 +228,7 @@
       "auth_type": "api_key",
       "config_inject": {
         "skills": true,
-        "mcp": false,
+        "mcp": null,
         "memory": false,
         "personalization": null,
         "model_config": null
@@ -241,7 +257,11 @@
       "auth_type": "api_key",
       "config_inject": {
         "skills": true,
-        "mcp": true,
+        "mcp": {
+          "file": "~/.hermes/config.yaml",
+          "format": "yaml_section",
+          "section": "mcp_servers"
+        },
         "memory": false,
         "personalization": {
           "template": "hermes",
@@ -284,7 +304,11 @@
       },
       "config_inject": {
         "skills": false,
-        "mcp": true,
+        "mcp": {
+          "file": "~/.gemini/settings.json",
+          "format": "json_merge",
+          "key": "mcpServers"
+        },
         "memory": false,
         "personalization": {
           "template": "gemini",
@@ -319,7 +343,7 @@
       "auth_type": "api_key",
       "config_inject": {
         "skills": false,
-        "mcp": false,
+        "mcp": null,
         "memory": false,
         "personalization": null,
         "model_config": {
