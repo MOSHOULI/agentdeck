@@ -1,0 +1,19 @@
+[package]
+name = "agentdeck"
+version = "3.0.0-alpha.1"
+edition = "2024"
+description = "AgentDeck 桌面应用（AI 中枢）—— Tauri 2 桌面壳"
+
+[lib]
+name = "agentdeck_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+aisync-core = { path = "../crates/aisync-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

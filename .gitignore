@@ -1,0 +1,28 @@
+# Rust / Cargo
+target/
+Cargo.lock
+
+# Node / Frontend
+node_modules/
+dist/
+web/ui/dist/
+
+# Tauri
+src-tauri/icons/*.png
+src-tauri/icons/*.icns
+src-tauri/icons/*.ico
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+
+# WorkBuddy
+.workbuddy/

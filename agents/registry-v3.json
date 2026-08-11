@@ -1,0 +1,443 @@
+{
+  "version": 3,
+  "description": "AgentDeck（AI 中枢）Agent 注册表。9 款核心（v0.1 交付）+ 8 款预留接口（v0.2+）。按 GitHub Stars 热度排序。",
+  "updated_at": "2026-08-11",
+  "agents": {
+    "opencode": {
+      "name": "OpenCode",
+      "source": "open",
+      "license": "MIT",
+      "github": "anomalyco/opencode",
+      "stars": 194000,
+      "ui_type": "all",
+      "category": "ai-coding",
+      "popular": true,
+      "description": "开源 AI 编程代理，支持 75+ 模型供应商、LSP 集成、Plan/Build 双模式、桌面+移动端全平台覆盖。社区最大（194k stars）。",
+      "install": {
+        "method": "npm",
+        "command": "npm install -g opencode-ai",
+        "verify_cmd": "opencode --version",
+        "uninstall_cmd": "npm uninstall -g opencode-ai",
+        "dependencies": ["node >= 18"]
+      },
+      "auth_type": "api_key",
+      "config_inject": {
+        "skills": true,
+        "mcp": true,
+        "memory": true,
+        "personalization": {
+          "template": "opencode",
+          "target": "~/.config/opencode/AGENTS.md"
+        },
+        "model_config": {
+          "file": "~/.config/opencode/opencode.jsonc",
+          "format": "jsonc_merge"
+        }
+      },
+      "memory_collector": "opencode_sessions",
+      "icon": "opencode",
+      "homepage": "https://opencode.ai"
+    },
+    "claude-code": {
+      "name": "Claude Code",
+      "source": "closed",
+      "github": "anthropics/claude-code",
+      "stars": 140000,
+      "ui_type": "all",
+      "category": "ai-coding",
+      "popular": true,
+      "description": "Anthropic 官方终端 AI 编程代理。8 个月内登顶市场、42M/月 npm 下载。MCP 原生支持、1M 上下文、VS Code/JetBrains 集成。",
+      "install": {
+        "method": "npm",
+        "command": "npm install -g @anthropic-ai/claude-code",
+        "verify_cmd": "claude --version",
+        "uninstall_cmd": "npm uninstall -g @anthropic-ai/claude-code",
+        "dependencies": ["node >= 18", "git"]
+      },
+      "auth_type": "oauth_cli",
+      "auth_guide": {
+        "steps": [
+          "在终端运行 claude login 完成 Anthropic 账号 OAuth 认证",
+          "也可通过 ANTHROPIC_API_KEY 环境变量使用 API Key 模式"
+        ],
+        "completion_check": {
+          "file_contains": "~/.claude/credentials.json"
+        }
+      },
+      "config_inject": {
+        "skills": true,
+        "mcp": true,
+        "memory": true,
+        "personalization": {
+          "template": "claude",
+          "target": "~/.claude/CLAUDE.md"
+        },
+        "model_config": {
+          "file": "~/.claude/settings.json",
+          "format": "json_merge"
+        }
+      },
+      "memory_collector": "claude_sessions",
+      "icon": "claude-code",
+      "homepage": "https://claude.com"
+    },
+    "codex": {
+      "name": "OpenAI Codex",
+      "source": "open",
+      "license": "Apache-2.0",
+      "github": "openai/codex",
+      "stars": 104000,
+      "ui_type": "cli+desktop",
+      "category": "ai-coding",
+      "popular": true,
+      "description": "OpenAI 官方 AI 编程代理。GPT-5.6 Sol 驱动、沙箱安全执行、云端异步批处理、企业级代理/代理 workflow 支持。",
+      "install": {
+        "method": "npm",
+        "command": "npm install -g @openai/codex",
+        "verify_cmd": "codex --version",
+        "uninstall_cmd": "npm uninstall -g @openai/codex",
+        "dependencies": ["node >= 18"]
+      },
+      "auth_type": "account_login",
+      "auth_guide": {
+        "steps": [
+          "在终端运行 codex login 完成 OpenAI 账号认证",
+          "Codex 桌面版可通过图形界面登录 ChatGPT/Codex 账号"
+        ],
+        "completion_check": {
+          "file_exists": "~/.codex/auth.json"
+        }
+      },
+      "config_inject": {
+        "skills": true,
+        "mcp": true,
+        "memory": true,
+        "personalization": {
+          "template": "codex",
+          "target": "~/.codex/AGENTS.md"
+        },
+        "model_config": {
+          "file": "~/.codex/config.toml",
+          "format": "toml_section"
+        }
+      },
+      "memory_collector": "codex_sqlite",
+      "icon": "codex",
+      "homepage": "https://github.com/openai/codex"
+    },
+    "cline": {
+      "name": "Cline",
+      "source": "open",
+      "license": "Apache-2.0",
+      "github": "cline/cline",
+      "stars": 66000,
+      "ui_type": "vscode-extension",
+      "category": "ai-coding",
+      "popular": true,
+      "description": "开源 VS Code AI 编程代理。Plan/Act 双模式、MCP 支持、任何模型 BYOK、VS Code 原生面板 UI。",
+      "install": {
+        "method": "vscode_extension",
+        "extension_id": "saoudrizwan.claude-dev",
+        "verify_cmd": null,
+        "dependencies": ["vscode"]
+      },
+      "auth_type": "api_key",
+      "config_inject": {
+        "skills": false,
+        "mcp": true,
+        "memory": false,
+        "personalization": {
+          "template": "cline",
+          "target": ".clinerules"
+        },
+        "model_config": {
+          "file": "vscode://settings.json",
+          "format": "json_merge"
+        }
+      },
+      "memory_collector": null,
+      "icon": "cline",
+      "homepage": "https://cline.bot"
+    },
+    "zcode": {
+      "name": "ZCode",
+      "source": "closed",
+      "ui_type": "desktop",
+      "category": "ai-coding",
+      "popular": true,
+      "description": "智谱 AI（Z.ai）专为 GLM-5.2 打造的 Agentic Development Environment。Electron 桌面应用、/goal Loop Engineering、微信/飞书/Telegram 远程操控。MIT 开源模型、国内直连。",
+      "install": {
+        "method": "download",
+        "url": "https://zcode.z.ai/cn",
+        "verify_cmd": null,
+        "dependencies": []
+      },
+      "auth_type": "account_login",
+      "auth_guide": {
+        "steps": [
+          "访问 https://zcode.z.ai/cn 下载对应平台安装包",
+          "使用智谱 AI 账号登录 ZCode"
+        ],
+        "completion_check": null
+      },
+      "config_inject": {
+        "skills": false,
+        "mcp": false,
+        "memory": false,
+        "personalization": {
+          "template": "zcode",
+          "target": "zcode://prompts/"
+        },
+        "model_config": null
+      },
+      "memory_collector": null,
+      "icon": "zcode",
+      "homepage": "https://zcode.z.ai/cn"
+    },
+    "openclaw": {
+      "name": "OpenClaw",
+      "source": "open",
+      "github": "openclaw/openclaw",
+      "stars": 247000,
+      "ui_type": "cli-bot",
+      "category": "personal-agent",
+      "popular": true,
+      "description": "开源本地优先个人 AI 助手，通过 Telegram/Signal/WhatsApp 等消息平台交互。100+ 可安装技能包（Claws）。",
+      "install": {
+        "method": "manual",
+        "command": null,
+        "verify_cmd": null,
+        "dependencies": []
+      },
+      "auth_type": "api_key",
+      "config_inject": {
+        "skills": true,
+        "mcp": false,
+        "memory": false,
+        "personalization": null,
+        "model_config": null
+      },
+      "memory_collector": null,
+      "icon": "openclaw",
+      "homepage": "https://github.com/openclaw/openclaw"
+    },
+    "hermes": {
+      "name": "Hermes Agent",
+      "source": "open",
+      "license": "MIT",
+      "github": "nousresearch/hermes-agent",
+      "stars": 218000,
+      "ui_type": "cli",
+      "category": "personal-agent",
+      "popular": true,
+      "description": "Nous Research 出品的开源自进化 AI 代理。持久化记忆、自学习技能系统、20+ 消息平台接入。MIT 永久免费。",
+      "install": {
+        "method": "pip",
+        "command": "pip install -U hermes-agent",
+        "verify_cmd": "hermes --version",
+        "uninstall_cmd": "pip uninstall -y hermes-agent",
+        "dependencies": ["python >= 3.10"]
+      },
+      "auth_type": "api_key",
+      "config_inject": {
+        "skills": true,
+        "mcp": true,
+        "memory": false,
+        "personalization": {
+          "template": "hermes",
+          "target": "~/.hermes/config.yaml"
+        },
+        "model_config": {
+          "file": "~/.hermes/config.yaml",
+          "format": "yaml_section"
+        }
+      },
+      "memory_collector": "hermes_memory",
+      "icon": "hermes",
+      "homepage": "https://hermes-agent.nousresearch.com"
+    },
+    "gemini-cli": {
+      "name": "Gemini CLI",
+      "source": "open",
+      "license": "Apache-2.0",
+      "github": "google-gemini/gemini-cli",
+      "stars": 106000,
+      "ui_type": "cli",
+      "category": "ai-coding",
+      "popular": true,
+      "description": "Google 官方开源终端 AI 代理。1M 上下文窗口、Gemini 3 系列模型、MCP 支持、Google Search 接地、免费额度慷慨。",
+      "install": {
+        "method": "npm",
+        "command": "npm install -g @google/gemini-cli",
+        "verify_cmd": "gemini --version",
+        "uninstall_cmd": "npm uninstall -g @google/gemini-cli",
+        "dependencies": ["node >= 18"]
+      },
+      "auth_type": "oauth_cli",
+      "auth_guide": {
+        "steps": [
+          "在终端运行 gemini login 完成 Google 账号 OAuth 认证"
+        ],
+        "completion_check": {
+          "file_exists": "~/.gemini/auth.json"
+        }
+      },
+      "config_inject": {
+        "skills": false,
+        "mcp": true,
+        "memory": false,
+        "personalization": {
+          "template": "gemini",
+          "target": "~/.gemini/GEMINI.md"
+        },
+        "model_config": {
+          "file": "~/.gemini/settings.json",
+          "format": "json_merge"
+        }
+      },
+      "memory_collector": null,
+      "icon": "gemini",
+      "homepage": "https://github.com/google-gemini/gemini-cli"
+    },
+    "pi": {
+      "name": "Pi",
+      "source": "open",
+      "license": "MIT",
+      "github": "earendil-works/pi",
+      "stars": 83000,
+      "ui_type": "cli",
+      "category": "ai-coding",
+      "popular": true,
+      "description": "Mario Zechner 的极简开源终端 AI 代理。核心工具极少、快速 TUI、TypeScript 可扩展。架构学习最佳参照。",
+      "install": {
+        "method": "npm",
+        "command": "npm install -g @mariozechner/pi",
+        "verify_cmd": "pi --version",
+        "uninstall_cmd": "npm uninstall -g @mariozechner/pi",
+        "dependencies": ["node >= 18"]
+      },
+      "auth_type": "api_key",
+      "config_inject": {
+        "skills": false,
+        "mcp": false,
+        "memory": false,
+        "personalization": null,
+        "model_config": {
+          "file": "~/.pi/config.json",
+          "format": "json_merge"
+        }
+      },
+      "memory_collector": null,
+      "icon": "pi",
+      "homepage": "https://github.com/earendil-works/pi"
+    }
+  },
+  "future_registry": {
+    "description": "v0.2+ 待接入的 8 款 Agent，字段结构与核心 agent 一致，仅需补充 install/config_inject 细节后移入 agents 段即可激活。",
+    "agents": {
+      "goose": {
+        "name": "Goose",
+        "source": "open",
+        "license": "Apache-2.0",
+        "github": "aaif-goose/goose",
+        "stars": 52000,
+        "ui_type": "cli",
+        "category": "ai-coding",
+        "popular": false,
+        "install": { "method": "manual" },
+        "auth_type": "api_key",
+        "status": "v0.2_pending"
+      },
+      "aider": {
+        "name": "Aider",
+        "source": "open",
+        "license": "Apache-2.0",
+        "github": "paul-gauthier/aider",
+        "stars": 47000,
+        "ui_type": "cli",
+        "category": "ai-coding",
+        "popular": false,
+        "install": { "method": "pip" },
+        "auth_type": "api_key",
+        "status": "v0.2_pending"
+      },
+      "continue": {
+        "name": "Continue.dev",
+        "source": "open",
+        "license": "Apache-2.0",
+        "github": "continuedev/continue",
+        "stars": 35000,
+        "ui_type": "ide-extension",
+        "category": "ai-coding",
+        "popular": false,
+        "install": { "method": "vscode_extension" },
+        "auth_type": "api_key",
+        "status": "v0.2_pending"
+      },
+      "kilocode": {
+        "name": "Kilo Code",
+        "source": "open",
+        "license": "MIT",
+        "github": "kilocode/kilocode",
+        "stars": 27000,
+        "ui_type": "vscode-extension",
+        "category": "ai-coding",
+        "popular": false,
+        "install": { "method": "vscode_extension" },
+        "auth_type": "api_key",
+        "status": "v0.2_pending"
+      },
+      "crush": {
+        "name": "Crush",
+        "source": "open",
+        "license": "FSL-1.1-MIT",
+        "github": "charms/crush",
+        "stars": 27000,
+        "ui_type": "cli",
+        "category": "ai-coding",
+        "popular": false,
+        "install": { "method": "manual" },
+        "auth_type": "api_key",
+        "status": "v0.2_pending"
+      },
+      "roocode": {
+        "name": "Roo Code",
+        "source": "open",
+        "license": "Apache-2.0",
+        "github": "RooVetGit/Roo-Code",
+        "stars": 24000,
+        "ui_type": "vscode-extension",
+        "category": "ai-coding",
+        "popular": false,
+        "install": { "method": "vscode_extension" },
+        "auth_type": "api_key",
+        "status": "v0.2_pending"
+      },
+      "plandex": {
+        "name": "Plandex",
+        "source": "open",
+        "license": "MIT",
+        "github": "plandex-ai/plandex",
+        "stars": 16000,
+        "ui_type": "cli",
+        "category": "ai-coding",
+        "popular": false,
+        "install": { "method": "manual" },
+        "auth_type": "api_key",
+        "status": "v0.3_pending"
+      },
+      "oh-my-pi": {
+        "name": "Oh-My-Pi",
+        "source": "open",
+        "github": "oh-my-pi/oh-my-pi",
+        "stars": 12000,
+        "ui_type": "cli",
+        "category": "ai-coding",
+        "popular": false,
+        "install": { "method": "manual" },
+        "auth_type": "api_key",
+        "status": "v0.3_pending"
+      }
+    }
+  }
+}

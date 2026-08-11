@@ -1,0 +1,9 @@
+{
+  "identifier": "default",
+  "description": "默认权限——AgentDeck 核心命令",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default"
+  ]
+}

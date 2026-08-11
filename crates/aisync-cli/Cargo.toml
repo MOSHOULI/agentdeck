@@ -1,0 +1,14 @@
+[package]
+name = "aisync-cli"
+version = "3.0.0-alpha.1"
+edition = "2024"
+description = "AgentDeck CLI——命令行工具"
+
+[[bin]]
+name = "aisync"
+path = "src/main.rs"
+
+[dependencies]
+aisync-core = { path = "../aisync-core" }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"

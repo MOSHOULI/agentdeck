@@ -1,0 +1,46 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicepage/nicepage/refs/heads/main/packages/cli/schema.json",
+  "productName": "AgentDeck",
+  "version": "3.0.0-alpha.1",
+  "identifier": "com.agentdeck.app",
+  "build": {
+    "frontendDist": "../web/ui/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "cd ../web/ui && npm run dev",
+    "beforeBuildCommand": "cd ../web/ui && npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "AgentDeck - AI 中枢",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "languages": ["SimpChinese", "English"],
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico"
+      }
+    }
+  }
+}

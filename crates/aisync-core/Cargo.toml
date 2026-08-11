@@ -1,0 +1,23 @@
+[package]
+name = "aisync-core"
+version = "3.0.0-alpha.1"
+edition = "2024"
+description = "AgentDeck 核心引擎——Agent 部署、记忆管理、密钥加密、配置同步"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+rusqlite = { version = "0.34", features = ["bundled", "fts5"] }
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
+rand = "0.8"
+zeroize = "1"
+ring = "0.17"
+chrono = { version = "0.4", features = ["serde"] }
+toml = "0.8"
+dirs = "6"
+walkdir = "2"
