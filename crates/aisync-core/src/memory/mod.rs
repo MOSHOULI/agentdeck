@@ -36,6 +36,18 @@ pub fn default_db_path() -> PathBuf {
         .join("memory.db")
 }
 
+/// 校验 agent_id 只允许小写字母、数字、连字符（防路径穿越）
+fn sanitize_agent_id(agent_id: &str) -> crate::Result<String> {
+    let valid = !agent_id.is_empty()
+        && agent_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-');
+    if !valid {
+        return Err(crate::Error::Other(format!("非法 agent_id: {}", agent_id)));
+    }
+    Ok(agent_id.to_string())
+}
+
 /// 初始化记忆数据库（创建表 + FTS5 索引）
 pub fn init_db(db_path: &Path) -> crate::Result<()> {
     MemoryStore::open(db_path).map(|_| ())
@@ -43,12 +55,16 @@ pub fn init_db(db_path: &Path) -> crate::Result<()> {
 
 /// 从指定 agent 采集记忆，返回该 agent 最近 100 条
 pub fn collect(agent_id: &str) -> crate::Result<Vec<MemoryEntry>> {
+    let canonical = match agent_id {
+        "claude" => "claude-code",
+        other => other,
+    };
     let store = MemoryStore::open(&default_db_path())?;
-    match agent_id {
+    match canonical {
         "codex" => {
             collector::collect_from_codex(&store)?;
         }
-        "claude-code" | "claude" => {
+        "claude-code" => {
             collector::collect_from_claude(&store)?;
         }
         "opencode" => {
@@ -58,7 +74,7 @@ pub fn collect(agent_id: &str) -> crate::Result<Vec<MemoryEntry>> {
             return Err(crate::Error::Other(format!("未知采集源: {}", other)));
         }
     }
-    store.recent(agent_id, 100)
+    store.recent(canonical, 100)
 }
 
 /// 全文搜索记忆
@@ -69,6 +85,7 @@ pub fn search(query: &str) -> crate::Result<Vec<MemoryEntry>> {
 
 /// 注入记忆到指定 agent（生成 ~/.agentdeck/memory/<agent_id>.md）
 pub fn inject(agent_id: &str, memory_ids: &[String]) -> crate::Result<()> {
+    let agent_id = sanitize_agent_id(agent_id)?;
     let store = MemoryStore::open(&default_db_path())?;
     let ids: Vec<i64> = memory_ids.iter().filter_map(|s| s.parse().ok()).collect();
     let entries = store.get_by_ids(&ids)?;
@@ -192,6 +209,17 @@ mod tests {
         let entries = store.get_by_ids(&[a, b]).unwrap();
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().any(|e| e.content == "gamma delta"));
+    }
+
+    #[test]
+    fn sanitize_agent_id_rejects_path_traversal() {
+        assert!(sanitize_agent_id("codex").is_ok());
+        assert!(sanitize_agent_id("claude-code").is_ok());
+        for evil in [
+            "../evil", "..\\evil", "a/b", "a\\b", "a:b", "a*b", "a\0b", "",
+        ] {
+            assert!(sanitize_agent_id(evil).is_err(), "应拒绝: {:?}", evil);
+        }
     }
 
     /// 真实环境验证：采集本机 Codex/OpenCode 会话并搜索

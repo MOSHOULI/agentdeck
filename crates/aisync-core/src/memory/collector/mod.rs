@@ -4,6 +4,7 @@
 //! - claude：扫描 `~/.claude/projects/**/*.jsonl`（message.content 格式）
 //! - opencode：读取 `~/.local/share/opencode/opencode.db`（part.data 文本块）
 
+use std::io::BufRead;
 use std::path::Path;
 
 use rusqlite::Connection;
@@ -64,14 +65,22 @@ fn collect_jsonl_dir(
         return Ok(0);
     }
     let mut count = 0usize;
-    for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
             continue;
         }
-        let content = std::fs::read_to_string(path)?;
-        for (idx, line) in content.lines().enumerate() {
-            let value: Value = match serde_json::from_str(line) {
+        let file = std::fs::File::open(path)?;
+        for (idx, line) in std::io::BufReader::new(file).lines().enumerate() {
+            let line = match line {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
+            let value: Value = match serde_json::from_str(&line) {
                 Ok(v) => v,
                 Err(_) => continue,
             };

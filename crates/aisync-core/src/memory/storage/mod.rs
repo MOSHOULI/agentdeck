@@ -86,6 +86,8 @@ impl MemoryStore {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path)?;
+        conn.pragma_update(None, "busy_timeout", 5000)?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self { conn })
     }
@@ -135,7 +137,30 @@ impl MemoryStore {
              ORDER BY collected_at DESC
              LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![fts_query, limit as i64], row_to_entry)?;
+        let rows = stmt.query_map(params![fts_query, limit as i64], row_to_entry);
+        match rows {
+            Ok(rows) => {
+                let mut out = Vec::new();
+                for row in rows {
+                    out.push(row?);
+                }
+                Ok(out)
+            }
+            // FTS5 词法异常时降级为 LIKE 搜索
+            Err(_) => self.search_like(query, limit),
+        }
+    }
+
+    fn search_like(&self, query: &str, limit: usize) -> crate::Result<Vec<MemoryEntry>> {
+        let pattern = format!("%{}%", query.trim());
+        let mut stmt = self.conn.prepare(
+            "SELECT id, agent_id, content, collected_at, source, auto_inject, tags
+             FROM memories
+             WHERE content LIKE ?1 OR tags LIKE ?1
+             ORDER BY collected_at DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![pattern, limit as i64], row_to_entry)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
