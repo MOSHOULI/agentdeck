@@ -29,7 +29,8 @@ AgentDeck 是一个跨平台桌面应用，定位为 **Agent 编排中枢**—�
 - ✅ **M3 完成**：记忆引擎（SQLite FTS5 存储/搜索，Codex/Claude/OpenCode 采集器，记忆注入文件）；前端记忆管理面板（采集/搜索/自动注入/注入）；定时采集（Tauri 启动即跑一轮、之后每小时一轮，采集后自动回写 `auto_inject` 记忆文件）；真实采集验证 391+ 条；opencode 代码审查两轮共 16 项问题已修复
 - ✅ **M4 完成**：vault 加密（Windows DPAPI 保护主密钥 + AES-256-GCM 加密存储，V2 格式兼容与一键导入）；git 事件驱动备份回滚（安装/注入/vault 变动前自动备份，备份文件加密镜像入库 + 提交前密钥扫描，按操作回滚 / 按时间点整体恢复）；前端密钥与备份面板（添加/删除/脱敏查看/复制）；真实验证：vault 增删改查 + 备份 119 个加密文件入库无明文
 - ✅ **M5 完成**：MCP 管理（内置注册表 + 6 款 agent 目标定义，按 agent 独立开关实时写回 TOML/JSON/JSONC/YAML 配置，命令白名单防任意命令）；前端 MCP 面板；真实端到端：codex/opencode MCP 开关往返 + gemini-cli/hermes 真实安装→MCP 注入→卸载全链路通过
-- ⏳ **M6 下一步**：发布（NSIS 打包 + 注册表在线更新 + 发布 v3.0.0）
+- ✅ **M6 完成（v1.0.0 正式发布）**：Windows NSIS 安装包（真实安装/启动/卸载冒烟通过，SHA256 见 VERSION.md）；注册表在线更新（ed25519 签名 manifest + 防降级 + 一键应用，真实 GitHub Release 验签通过）；发布到 [github.com/MOSHOULI/agentdeck](https://github.com/MOSHOULI/agentdeck) Release v1.0.0
+- 🏁 **项目完成**：M0-M6 全部交付
 
 ## 环境要求（本机已就绪）
 
@@ -49,6 +50,9 @@ cargo check --workspace      # 编译检查
 cargo test --workspace       # Rust 测试
 cargo clippy --workspace -- -D warnings   # 静态检查
 cargo fmt --check            # 格式检查
+cargo tauri build            # 正式打包（NSIS）
+aisync release init          # 发布签名密钥（DPAPI 存本机）
+aisync release manifest ...  # 生成签名 manifest
 ```
 
 前端（`web/ui` 目录下）：
@@ -115,4 +119,4 @@ agentdeck/
 2. `agents/registry-v3.json`（Agent 注册表结构）
 3. `README.md` 当前状态与常用命令
 
-当前下一步：M6（tauri-bundler NSIS 打包 + GitHub Releases 在线更新 + ed25519 签名 + 发布 v3.0.0）。
+项目已完成（M0-M6，v1.0.0 已发布）。
