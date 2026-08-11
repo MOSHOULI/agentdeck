@@ -6,6 +6,7 @@ pub mod backup;
 pub mod deploy;
 pub mod memory;
 pub mod sync;
+pub mod update;
 pub mod vault;
 
 /// 健康检查——验证后端可用

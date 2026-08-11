@@ -48,6 +48,18 @@ pub fn signing_key_path() -> crate::Result<PathBuf> {
     Ok(release_dir()?.join(KEY_FILE))
 }
 
+/// 应用内置的发布公钥（base64）——v1.0.0 发布密钥对（2026-08-11 生成，DPAPI 存本机）
+pub const EMBEDDED_PUBKEY_B64: &str = "oQ7ynIBaiXY/4Z4i+ltgmDcdKIbFjPNsMW6PptkaXxE=";
+
+/// 解码内置公钥；未配置时返回 None（未发布版本无更新能力）
+pub fn embedded_public_key() -> Option<Vec<u8>> {
+    if EMBEDDED_PUBKEY_B64.is_empty() {
+        return None;
+    }
+    use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+    B64.decode(EMBEDDED_PUBKEY_B64).ok()
+}
+
 /// 公钥指纹：sha256 前 8 字节 hex
 pub fn pubkey_fingerprint(pubkey: &[u8]) -> String {
     use sha2::{Digest, Sha256};

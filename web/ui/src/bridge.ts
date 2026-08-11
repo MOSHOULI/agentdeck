@@ -278,3 +278,31 @@ export async function restoreBackup(timestamp: string, full: boolean): Promise<s
   if (!isTauri) return [];
   return invoke<string[]>('restore_backup', { timestamp, full });
 }
+
+// ─── 在线更新 ────────────────────────────────────
+
+export interface UpdateSummary {
+  version: string;
+  released: string;
+  files: string[];
+  pubkeyFp: string;
+}
+
+/** 检查注册表在线更新（无更新返回 null） */
+export async function checkUpdates(): Promise<UpdateSummary | null> {
+  if (!isTauri) return null;
+  return invoke<UpdateSummary | null>('check_updates');
+}
+
+/** 应用更新（下载 → 校验 → 备份 → 原子写入） */
+export async function applyUpdates(): Promise<string[]> {
+  if (!isTauri) return [];
+  return invoke<string[]>('apply_updates');
+}
+
+/** 应用版本（来自后端健康检查） */
+export async function getAppVersion(): Promise<string> {
+  if (!isTauri) return 'v1.0.0';
+  const health = await invoke<string>('health_check');
+  return health.replace(/^AgentDeck /, '').replace(/ OK$/, '');
+}

@@ -30,6 +30,8 @@ pub fn run() {
             commands::backup::restore_backup,
             commands::sync::get_mcp_servers,
             commands::sync::toggle_mcp_for_agent,
+            commands::update::check_updates,
+            commands::update::apply_updates,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

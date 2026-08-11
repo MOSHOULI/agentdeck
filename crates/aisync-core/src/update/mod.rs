@@ -6,7 +6,6 @@
 //! 运行时注册表优先于编译期内置（见 registry::load_registry_runtime）。
 
 use std::io::Read;
-use std::path::Path;
 
 use crate::Error;
 use crate::release::ReleaseManifest;
@@ -207,5 +206,59 @@ mod tests {
         assert!(apply_update(&bad).is_err(), "非白名单文件应报错");
         let _ = test_file;
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 真实环境验证：签名 → 验签 → 版本比较 → 应用 → 运行时注册表优先（手动运行，测试后清理）
+    #[test]
+    #[ignore = "真实环境验证：写入 ~/.agentdeck/registry（测试后清理）"]
+    fn real_update_chain() {
+        let dir = crate::registry::runtime_registry_dir().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tmp = std::env::temp_dir().join(format!("agentdeck-update-chain-{}", nanos));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join("registry-v3.json"),
+            include_str!("../../../../agents/registry-v3.json"),
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("mcp-registry.json"),
+            include_str!("../../../../agents/mcp-registry.json"),
+        )
+        .unwrap();
+
+        let reg_path = tmp.join("registry-v3.json");
+        let mcp_path = tmp.join("mcp-registry.json");
+        let (manifest, sig) = crate::release::make_manifest(
+            "1.0.1",
+            "1.0.0",
+            "2026-08-11",
+            &[
+                ("registry-v3.json", reg_path.to_str().unwrap(), &reg_path),
+                ("mcp-registry.json", mcp_path.to_str().unwrap(), &mcp_path),
+            ],
+        )
+        .unwrap();
+        let manifest_json = serde_json::to_string(&manifest).unwrap();
+
+        let pubkey = crate::release::embedded_public_key().expect("应已内置发布公钥");
+        let parsed = parse_and_verify(&manifest_json, &sig, &pubkey).unwrap();
+        assert!(is_update_available("1.0.0", &parsed));
+        assert!(!is_update_available("1.0.1", &parsed), "同版本不应更新");
+
+        apply_update(&parsed).unwrap();
+        assert!(dir.join("registry-v3.json").exists());
+        assert!(dir.join("mcp-registry.json").exists());
+        let doc = crate::registry::load_registry_runtime().unwrap();
+        assert_eq!(doc.agents.len(), 9, "运行时注册表应可加载");
+        println!("更新链路验证通过：manifest 验签 → 版本比较 → 下载校验 → 原子写入 → 运行时优先");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
