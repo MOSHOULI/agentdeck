@@ -93,6 +93,7 @@ export const useAgentStore = create<AgentState>((set) => ({
       }));
     } catch (e) {
       set({ error: `采集记忆失败: ${e}` });
+      throw e;
     }
   },
 
@@ -105,6 +106,7 @@ export const useAgentStore = create<AgentState>((set) => ({
       await bridge.injectMemory(agentId, memoryIds);
     } catch (e) {
       set({ error: `注入记忆失败: ${e}` });
+      throw e;
     }
   },
 
@@ -113,6 +115,7 @@ export const useAgentStore = create<AgentState>((set) => ({
       await bridge.toggleAutoInject(memoryId, enabled);
     } catch (e) {
       set({ error: `切换自动注入失败: ${e}` });
+      throw e;
     }
   },
 

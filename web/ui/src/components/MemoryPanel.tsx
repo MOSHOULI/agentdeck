@@ -41,8 +41,8 @@ export const MemoryPanel: React.FC = () => {
       await collectMemories(agentId);
       await refreshAll();
       setNotice(`已采集 ${agentId} 的记忆`);
-    } catch {
-      setNotice('采集失败');
+    } catch (e) {
+      setNotice(`采集失败: ${e}`);
     } finally {
       setBusy(null);
     }
@@ -59,10 +59,18 @@ export const MemoryPanel: React.FC = () => {
   };
 
   const onToggleAuto = async (entry: MemoryEntry, enabled: boolean) => {
-    await toggleAutoInject(entry.id, enabled);
+    const previous = entry.autoInject;
     setResults((prev) =>
       prev.map((r) => (r.id === entry.id ? { ...r, autoInject: enabled } : r))
     );
+    try {
+      await toggleAutoInject(entry.id, enabled);
+    } catch (e) {
+      setResults((prev) =>
+        prev.map((r) => (r.id === entry.id ? { ...r, autoInject: previous } : r))
+      );
+      setNotice(`切换自动注入失败: ${e}`);
+    }
   };
 
   const onInject = async (entry: MemoryEntry) => {
@@ -70,6 +78,8 @@ export const MemoryPanel: React.FC = () => {
     try {
       await injectMemories(entry.agentId, [entry.id]);
       setNotice(`已注入到 ${entry.agentId} 的记忆文件`);
+    } catch (e) {
+      setNotice(`注入失败: ${e}`);
     } finally {
       setBusy(null);
     }

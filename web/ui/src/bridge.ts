@@ -130,6 +130,8 @@ export interface MemoryEntry {
   collectedAt: number;
   autoInject: boolean;
   tags: string[];
+  contentHash?: string;
+  sourceSessionId?: string | null;
 }
 
 /** 采集指定 agent 的记忆 */
