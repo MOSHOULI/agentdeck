@@ -30,7 +30,7 @@ interface AgentState {
   clearError: () => void;
 }
 
-export const useAgentStore = create<AgentState>((set, get) => ({
+export const useAgentStore = create<AgentState>((set) => ({
   agents: [],
   selectedAgentId: null,
   loading: false,
