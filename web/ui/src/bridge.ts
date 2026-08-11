@@ -188,12 +188,74 @@ export async function toggleMcpForAgent(
 
 // ─── 密钥管理 ────────────────────────────────────
 
+export interface ApiKeyInfo {
+  agentId: string;
+  provider: string;
+  maskedKey: string;
+}
+
+export interface BackupInfo {
+  hash: string;
+  timestamp: string;
+  message: string;
+}
+
+const MOCK_KEYS: ApiKeyInfo[] = [
+  { agentId: 'codex', provider: 'manual', maskedKey: 'sk-a***5678' },
+  { agentId: 'opencode', provider: 'env', maskedKey: 'oc-***9999' },
+];
+
+const MOCK_BACKUPS: BackupInfo[] = [
+  {
+    hash: 'abc1234',
+    timestamp: String(Date.now() * 1_000_000),
+    message: 'inject codex',
+  },
+];
+
 /** 保存 API Key（加密存入 vault） */
 export async function saveApiKey(agentId: string, provider: string, key: string): Promise<void> {
+  if (!isTauri) return;
   return invoke<void>('save_api_key', { agentId, provider, key });
 }
 
 /** 列出已存储的 API Key（脱敏显示） */
-export async function listApiKeys(): Promise<Array<{ agentId: string; provider: string; maskedKey: string }>> {
+export async function listApiKeys(): Promise<ApiKeyInfo[]> {
+  if (!isTauri) return MOCK_KEYS;
   return invoke<Array<{ agentId: string; provider: string; maskedKey: string }>>('list_api_keys');
+}
+
+/** 取明文 API Key（复制用） */
+export async function getApiKey(agentId: string): Promise<string | null> {
+  if (!isTauri) {
+    const mock = MOCK_KEYS.find((k) => k.agentId === agentId);
+    return mock ? `mock-${agentId}-key` : null;
+  }
+  return invoke<string | null>('get_api_key', { agentId });
+}
+
+/** 删除 API Key */
+export async function deleteApiKey(agentId: string): Promise<boolean> {
+  if (!isTauri) return true;
+  return invoke<boolean>('delete_api_key', { agentId });
+}
+
+/** 从 V2 vault（~/.aisync-vault）导入密钥，返回导入条数 */
+export async function importV2Keys(): Promise<number> {
+  if (!isTauri) return 0;
+  return invoke<number>('import_v2_keys');
+}
+
+// ─── 备份回滚 ────────────────────────────────────
+
+/** 列出备份历史 */
+export async function listBackups(): Promise<BackupInfo[]> {
+  if (!isTauri) return MOCK_BACKUPS;
+  return invoke<BackupInfo[]>('list_backups');
+}
+
+/** 按时间戳回滚：full=false 按操作回滚，full=true 整体恢复 */
+export async function restoreBackup(timestamp: string, full: boolean): Promise<string[]> {
+  if (!isTauri) return [];
+  return invoke<string[]>('restore_backup', { timestamp, full });
 }

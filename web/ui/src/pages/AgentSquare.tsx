@@ -8,6 +8,7 @@ import React, { useEffect, useState } from 'react';
 import { useAgentStore } from '../stores/agentStore';
 import { AgentCard } from '../components/AgentCard';
 import { MemoryPanel } from '../components/MemoryPanel';
+import { VaultPanel } from '../components/VaultPanel';
 
 export const AgentSquare: React.FC = () => {
   const {
@@ -181,6 +182,8 @@ export const AgentSquare: React.FC = () => {
 
       {/* 记忆管理 */}
       <MemoryPanel />
+      {/* 密钥与备份 */}
+      <VaultPanel />
     </div>
   );
 };

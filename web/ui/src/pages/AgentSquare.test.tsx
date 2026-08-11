@@ -12,6 +12,13 @@ vi.mock('../bridge', () => ({
   searchMemory: vi.fn(),
   injectMemory: vi.fn(),
   toggleAutoInject: vi.fn(),
+  listApiKeys: vi.fn(),
+  saveApiKey: vi.fn(),
+  getApiKey: vi.fn(),
+  deleteApiKey: vi.fn(),
+  importV2Keys: vi.fn(),
+  listBackups: vi.fn(),
+  restoreBackup: vi.fn(),
 }));
 
 import * as bridge from '../bridge';
@@ -48,6 +55,8 @@ const agents: AgentInfo[] = [
 describe('AgentSquare', () => {
   beforeEach(() => {
     vi.mocked(bridge.getAgents).mockReset();
+    vi.mocked(bridge.listApiKeys).mockResolvedValue([]);
+    vi.mocked(bridge.listBackups).mockResolvedValue([]);
   });
 
   it('渲染标题与三个筛选按钮', async () => {
