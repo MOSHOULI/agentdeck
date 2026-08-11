@@ -168,12 +168,30 @@ export async function toggleAutoInject(memoryId: string, enabled: boolean): Prom
 export interface McpServer {
   name: string;
   description: string;
-  enabled: boolean;
+  kind: 'http' | 'stdio';
+  url?: string;
+  command?: string;
+  args: string[];
+  supportedAgents: string[];
   enabledAgents: string[];
 }
 
+// MOCK: 与 agents/registry-v3.json 的 config_inject.mcp 目标保持一致
+const MOCK_MCP_SERVERS: McpServer[] = [
+  {
+    name: 'ragflow',
+    description: 'RAGFlow 本地知识库 MCP（只读检索：ragflow_retrieval / ragflow_list_datasets）',
+    kind: 'http',
+    url: 'http://127.0.0.1:9382/mcp',
+    args: [],
+    supportedAgents: ['codex', 'claude-code', 'opencode', 'gemini-cli', 'hermes', 'cline'],
+    enabledAgents: ['codex', 'opencode'],
+  },
+];
+
 /** 获取 MCP 服务器列表 */
 export async function getMcpServers(): Promise<McpServer[]> {
+  if (!isTauri) return MOCK_MCP_SERVERS;
   return invoke<McpServer[]>('get_mcp_servers');
 }
 
@@ -183,6 +201,7 @@ export async function toggleMcpForAgent(
   agentId: string,
   enabled: boolean
 ): Promise<void> {
+  if (!isTauri) return;
   return invoke<void>('toggle_mcp_for_agent', { serverName, agentId, enabled });
 }
 

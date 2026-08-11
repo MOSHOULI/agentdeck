@@ -9,6 +9,7 @@ import { useAgentStore } from '../stores/agentStore';
 import { AgentCard } from '../components/AgentCard';
 import { MemoryPanel } from '../components/MemoryPanel';
 import { VaultPanel } from '../components/VaultPanel';
+import { McpPanel } from '../components/McpPanel';
 
 export const AgentSquare: React.FC = () => {
   const {
@@ -184,6 +185,8 @@ export const AgentSquare: React.FC = () => {
       <MemoryPanel />
       {/* 密钥与备份 */}
       <VaultPanel />
+      {/* MCP 管理 */}
+      <McpPanel />
     </div>
   );
 };

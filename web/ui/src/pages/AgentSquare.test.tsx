@@ -19,6 +19,8 @@ vi.mock('../bridge', () => ({
   importV2Keys: vi.fn(),
   listBackups: vi.fn(),
   restoreBackup: vi.fn(),
+  getMcpServers: vi.fn(),
+  toggleMcpForAgent: vi.fn(),
 }));
 
 import * as bridge from '../bridge';
@@ -57,6 +59,7 @@ describe('AgentSquare', () => {
     vi.mocked(bridge.getAgents).mockReset();
     vi.mocked(bridge.listApiKeys).mockResolvedValue([]);
     vi.mocked(bridge.listBackups).mockResolvedValue([]);
+    vi.mocked(bridge.getMcpServers).mockResolvedValue([]);
   });
 
   it('渲染标题与三个筛选按钮', async () => {
