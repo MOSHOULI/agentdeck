@@ -7,8 +7,9 @@ pub fn sync_skills(_agent_id: &str) -> crate::Result<()> {
     todo!("M2: 同步 skills")
 }
 
-pub fn sync_mcp(_agent_id: &str, _enabled_servers: &[String]) -> crate::Result<()> {
-    todo!("M5: 同步 MCP 配置")
+/// 同步 MCP 配置：确保 enabled 列表中的服务器已注入，其余移除
+pub fn sync_mcp(agent_id: &str, enabled_servers: &[String]) -> crate::Result<()> {
+    crate::mcp::sync(agent_id, enabled_servers).map(|_| ())
 }
 
 pub fn sync_personalization(_agent_id: &str) -> crate::Result<()> {

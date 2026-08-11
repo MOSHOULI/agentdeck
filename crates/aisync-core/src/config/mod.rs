@@ -75,7 +75,7 @@ fn write_file(path: &Path, content: &str) -> crate::Result<()> {
 }
 
 /// 去掉 JSONC 的 // 与 /* */ 注释（字符串内不处理）
-fn strip_jsonc_comments(input: &str) -> String {
+pub(crate) fn strip_jsonc_comments(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
     let mut in_string = false;
@@ -517,7 +517,12 @@ mod tests {
             auth_guide: None,
             config_inject: crate::registry::ConfigInject {
                 skills: true,
-                mcp: true,
+                mcp: Some(crate::registry::McpInject {
+                    file: "~/.claude/settings.json".into(),
+                    format: "json_merge".into(),
+                    key: Some("mcpServers".into()),
+                    section: None,
+                }),
                 memory: true,
                 personalization: Some(crate::registry::PersonalizationInject {
                     template: "claude".into(),

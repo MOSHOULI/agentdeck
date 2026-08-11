@@ -5,6 +5,7 @@ pub mod config;
 /// 本库不依赖 Tauri，纯 Rust 实现，可供 CLI 和桌面端共用。
 pub mod deploy;
 pub mod git;
+pub mod mcp;
 pub mod memory;
 pub mod registry;
 pub mod sync;
