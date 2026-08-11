@@ -3,10 +3,9 @@
 /// SQLite + FTS5 全文搜索存储。
 /// Collector 适配器模式采集各 agent 会话历史。
 /// 被动注入 + 自动标签双模式。
-
 pub mod collector;
-pub mod storage;
 pub mod search;
+pub mod storage;
 
 /// 记忆条目
 #[derive(Debug, Clone)]

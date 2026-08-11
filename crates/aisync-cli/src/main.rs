@@ -1,7 +1,6 @@
 /// AgentDeck CLI —— 命令行入口。
 ///
 /// 子命令：sync / deploy / backup / health / version
-
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]

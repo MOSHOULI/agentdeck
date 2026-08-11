@@ -1,15 +1,14 @@
+pub mod config;
 /// AgentDeck 核心引擎库（aisync-core）
 ///
 /// 提供 Agent 部署、记忆管理、密钥加密、配置同步等基础能力。
 /// 本库不依赖 Tauri，纯 Rust 实现，可供 CLI 和桌面端共用。
-
 pub mod deploy;
-pub mod memory;
-pub mod vault;
-pub mod sync;
-pub mod config;
 pub mod git;
+pub mod memory;
 pub mod registry;
+pub mod sync;
+pub mod vault;
 
 /// AgentDeck 错误类型
 #[derive(Debug, thiserror::Error)]
