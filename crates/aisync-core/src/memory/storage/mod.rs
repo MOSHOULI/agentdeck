@@ -182,6 +182,22 @@ impl MemoryStore {
         Ok(out)
     }
 
+    /// 某 agent 全部 auto_inject 记忆（定时采集后回写记忆文件用）
+    pub fn auto_inject_entries(&self, agent_id: &str) -> crate::Result<Vec<MemoryEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, agent_id, content, collected_at, source, auto_inject, tags
+             FROM memories
+             WHERE agent_id = ?1 AND auto_inject = 1
+             ORDER BY collected_at DESC",
+        )?;
+        let rows = stmt.query_map(params![agent_id], row_to_entry)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     pub fn get_by_ids(&self, ids: &[i64]) -> crate::Result<Vec<MemoryEntry>> {
         if ids.is_empty() {
             return Ok(Vec::new());

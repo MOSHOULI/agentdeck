@@ -28,6 +28,25 @@ pub struct MemoryEntry {
     pub tags: Vec<String>,
 }
 
+/// 一次全量定时采集的报告（供 UI/日志展示）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectReport {
+    pub agents: Vec<AgentCollectResult>,
+    pub total: usize,
+    pub auto_injected: Vec<String>,
+    /// 单源采集失败记录（best-effort，不阻塞其他源）
+    pub errors: Vec<String>,
+}
+
+/// 单个 agent 的采集结果
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCollectResult {
+    pub agent_id: String,
+    pub new_count: usize,
+}
+
 /// 默认记忆库路径：~/.agentdeck/memory.db
 pub fn default_db_path() -> PathBuf {
     dirs::home_dir()
@@ -83,18 +102,8 @@ pub fn search(query: &str) -> crate::Result<Vec<MemoryEntry>> {
     store.search(query, 50)
 }
 
-/// 注入记忆到指定 agent（生成 ~/.agentdeck/memory/<agent_id>.md）
-pub fn inject(agent_id: &str, memory_ids: &[String]) -> crate::Result<()> {
-    let agent_id = sanitize_agent_id(agent_id)?;
-    let store = MemoryStore::open(&default_db_path())?;
-    let ids: Vec<i64> = memory_ids.iter().filter_map(|s| s.parse().ok()).collect();
-    let entries = store.get_by_ids(&ids)?;
-
-    let home = dirs::home_dir().ok_or_else(|| crate::Error::Other("无法定位用户主目录".into()))?;
-    let dir = home.join(".agentdeck").join("memory");
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{}.md", agent_id));
-
+/// 生成记忆注入 Markdown 内容（inject 与自动注入共用）
+fn render_memory_file(entries: &[MemoryEntry]) -> String {
     let mut out =
         String::from("# AgentDeck 记忆注入\n\n> 由 AgentDeck 自动维护，手动改动会被覆盖。\n\n");
     for entry in entries {
@@ -108,8 +117,83 @@ pub fn inject(agent_id: &str, memory_ids: &[String]) -> crate::Result<()> {
             entry.content.replace('\n', " ")
         ));
     }
-    std::fs::write(&path, out)?;
+    out
+}
+
+/// 写记忆注入文件到指定目录（测试可注入目录）
+fn write_memory_file_at(dir: &Path, agent_id: &str, entries: &[MemoryEntry]) -> crate::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(format!("{}.md", agent_id));
+    std::fs::write(&path, render_memory_file(entries))?;
     Ok(())
+}
+
+/// 写记忆注入文件 ~/.agentdeck/memory/<agent_id>.md
+fn write_memory_file(agent_id: &str, entries: &[MemoryEntry]) -> crate::Result<()> {
+    let home = dirs::home_dir().ok_or_else(|| crate::Error::Other("无法定位用户主目录".into()))?;
+    write_memory_file_at(&home.join(".agentdeck").join("memory"), agent_id, entries)
+}
+
+/// 注入指定记忆到 agent（生成 ~/.agentdeck/memory/<agent_id>.md）
+pub fn inject(agent_id: &str, memory_ids: &[String]) -> crate::Result<()> {
+    let agent_id = sanitize_agent_id(agent_id)?;
+    let store = MemoryStore::open(&default_db_path())?;
+    let ids: Vec<i64> = memory_ids.iter().filter_map(|s| s.parse().ok()).collect();
+    let entries = store.get_by_ids(&ids)?;
+    write_memory_file(&agent_id, &entries)
+}
+
+/// 把某 agent 全部 auto_inject 记忆回写记忆文件，返回写入条数
+pub fn inject_auto(agent_id: &str) -> crate::Result<usize> {
+    let agent_id = sanitize_agent_id(agent_id)?;
+    let store = MemoryStore::open(&default_db_path())?;
+    let entries = store.auto_inject_entries(&agent_id)?;
+    if entries.is_empty() {
+        return Ok(0);
+    }
+    write_memory_file(&agent_id, &entries)?;
+    Ok(entries.len())
+}
+
+/// 全量采集（codex / claude-code / opencode），随后回写 auto_inject 记忆文件
+pub fn collect_all_and_inject() -> crate::Result<CollectReport> {
+    let store = MemoryStore::open(&default_db_path())?;
+    let mut agents = Vec::new();
+    let mut total = 0usize;
+    let mut errors = Vec::new();
+    for agent_id in ["codex", "claude-code", "opencode"] {
+        let count = match agent_id {
+            "codex" => collector::collect_from_codex(&store),
+            "claude-code" => collector::collect_from_claude(&store),
+            "opencode" => collector::collect_from_opencode(&store),
+            _ => unreachable!(),
+        };
+        let count = match count {
+            Ok(n) => n,
+            Err(e) => {
+                errors.push(format!("{}: {}", agent_id, e));
+                0
+            }
+        };
+        total += count;
+        agents.push(AgentCollectResult {
+            agent_id: agent_id.to_string(),
+            new_count: count,
+        });
+    }
+
+    let mut auto_injected = Vec::new();
+    for agent_id in ["codex", "claude-code", "opencode"] {
+        if inject_auto(agent_id)? > 0 {
+            auto_injected.push(agent_id.to_string());
+        }
+    }
+    Ok(CollectReport {
+        agents,
+        total,
+        auto_injected,
+        errors,
+    })
 }
 
 /// 切换自动注入标签
@@ -222,6 +306,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn auto_inject_entries_filters_and_writes_file() {
+        let db = temp_db("autoinject");
+        let store = MemoryStore::open(&db).unwrap();
+        store
+            .insert(
+                "codex",
+                "需要自动注入的记忆 A",
+                "s1",
+                1000,
+                true,
+                &["codex".into()],
+            )
+            .unwrap();
+        store
+            .insert("codex", "不需要注入的记忆 B", "s2", 2000, false, &[])
+            .unwrap();
+
+        let entries = store.auto_inject_entries("codex").unwrap();
+        assert_eq!(entries.len(), 1, "只应返回 auto_inject 的记忆");
+        assert_eq!(entries[0].content, "需要自动注入的记忆 A");
+        assert!(
+            store.auto_inject_entries("opencode").unwrap().is_empty(),
+            "其他 agent 不应有记录"
+        );
+
+        let out_dir = db.parent().unwrap().join("memory");
+        write_memory_file_at(&out_dir, "codex", &entries).unwrap();
+        let content = std::fs::read_to_string(out_dir.join("codex.md")).unwrap();
+        assert!(content.contains("需要自动注入的记忆 A"));
+        assert!(!content.contains("不需要注入的记忆 B"));
+    }
+
     /// 真实环境验证：采集本机 Codex/OpenCode 会话并搜索
     #[test]
     #[ignore = "真实环境验证：扫描 ~/.codex 与 opencode.db 写入 ~/.agentdeck/memory.db"]
@@ -236,5 +353,28 @@ mod tests {
         }
         let hits = store.search("配置", 5).unwrap();
         println!("搜索「配置」命中 {} 条", hits.len());
+    }
+
+    /// 真实环境验证：全量采集 + auto_inject 记忆回写文件
+    #[test]
+    #[ignore = "真实环境验证：扫描三个采集源并回写 ~/.agentdeck/memory/<agent>.md"]
+    fn real_collect_all_and_auto_inject() {
+        let report = collect_all_and_inject().unwrap();
+        println!(
+            "全量采集新增 {} 条（{}），自动注入 agent: {:?}",
+            report.total,
+            report
+                .agents
+                .iter()
+                .map(|a| format!("{}={}", a.agent_id, a.new_count))
+                .collect::<Vec<_>>()
+                .join(", "),
+            report.auto_injected
+        );
+        assert_eq!(report.agents.len(), 3, "应覆盖三个采集源");
+        let ids: Vec<&str> = report.agents.iter().map(|a| a.agent_id.as_str()).collect();
+        assert_eq!(ids, ["codex", "claude-code", "opencode"]);
+        let sum: usize = report.agents.iter().map(|a| a.new_count).sum();
+        assert_eq!(report.total, sum, "total 应等于各 agent 新增之和");
     }
 }
