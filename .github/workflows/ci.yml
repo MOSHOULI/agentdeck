@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  frontend:
+    name: 前端（build + test + tsc）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/ui/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npx tsc --noEmit
+
+  rust:
+    name: Rust（fmt + clippy + test）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/ui/package-lock.json
+      - name: 构建前端（tauri 编译需要 dist 产物）
+        working-directory: web/ui
+        run: npm ci && npm run build
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace -- -D warnings
+      - run: cargo test --workspace
