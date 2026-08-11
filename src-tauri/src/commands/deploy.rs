@@ -41,7 +41,11 @@ fn find_agent(id: &str) -> aisync_core::Result<AgentDefinition> {
 fn shared_config_source() -> std::path::PathBuf {
     std::env::var_os("AGENTDECK_SHARED_CONFIG")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from(r"D:\BASED CODE\SHARED\shared-ai-config"))
+        .unwrap_or_else(|| {
+            // 默认使用用户主目录下的通用共享配置目录
+            let home = dirs::home_dir().unwrap_or_default();
+            home.join("shared-ai-config")
+        })
 }
 
 fn ui_type_string(ui_type: &registry::UiType) -> String {

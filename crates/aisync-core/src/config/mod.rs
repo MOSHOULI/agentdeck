@@ -553,7 +553,16 @@ mod tests {
     }
 
     const REGISTRY_JSON: &str = include_str!("../../../../agents/registry-v3.json");
-    const SOURCE_DIR: &str = r"D:\BASED CODE\SHARED\shared-ai-config";
+
+    fn shared_source_dir() -> std::path::PathBuf {
+        std::env::var_os("AGENTDECK_SHARED_CONFIG")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                dirs::home_dir()
+                    .unwrap_or_default()
+                    .join("shared-ai-config")
+            })
+    }
 
     /// 真实环境验证：codex/opencode 注入真实配置（带备份）
     #[test]
@@ -562,7 +571,7 @@ mod tests {
         let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
         for id in ["codex", "opencode"] {
             let agent = doc.agents.get(id).unwrap();
-            let report = inject_for_agent(agent, std::path::Path::new(SOURCE_DIR)).unwrap();
+            let report = inject_for_agent(agent, &shared_source_dir()).unwrap();
             assert_eq!(
                 report.personalization,
                 Some(InjectStatus::Ok),
@@ -587,7 +596,7 @@ mod tests {
         ids.sort();
         for id in ids {
             let agent = doc.agents.get(id).unwrap();
-            let report = inject_for_agent(agent, std::path::Path::new(SOURCE_DIR)).unwrap();
+            let report = inject_for_agent(agent, &shared_source_dir()).unwrap();
             println!(
                 "{} | personalization={:?} | model_config={:?}",
                 report.agent_id, report.personalization, report.model_config
