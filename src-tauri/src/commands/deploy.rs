@@ -98,6 +98,7 @@ pub async fn install_agent(id: String) -> Result<(), String> {
     let agent = find_agent(&id).map_err(|e| e.to_string())?;
     let source = shared_config_source();
     tauri::async_runtime::spawn_blocking(move || {
+        aisync_core::git::backup(&format!("install {}", agent.name))?;
         aisync_core::deploy::install_agent_with_inject(&agent, &source)
     })
     .await
@@ -109,10 +110,13 @@ pub async fn install_agent(id: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn uninstall_agent(id: String) -> Result<(), String> {
     let agent = find_agent(&id).map_err(|e| e.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || aisync_core::deploy::uninstall_agent(&agent))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        aisync_core::git::backup(&format!("uninstall {}", agent.name))?;
+        aisync_core::deploy::uninstall_agent(&agent)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 /// 验证 agent 认证状态（M1 简化实现）

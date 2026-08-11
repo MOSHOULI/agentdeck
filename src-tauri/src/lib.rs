@@ -21,6 +21,13 @@ pub fn run() {
             commands::memory::toggle_auto_inject,
             commands::memory::recent_memories,
             commands::memory::memory_collection_status,
+            commands::vault::save_api_key,
+            commands::vault::list_api_keys,
+            commands::vault::get_api_key,
+            commands::vault::delete_api_key,
+            commands::vault::import_v2_keys,
+            commands::backup::list_backups,
+            commands::backup::restore_backup,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
