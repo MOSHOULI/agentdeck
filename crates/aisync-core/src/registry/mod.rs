@@ -2,7 +2,6 @@
 ///
 /// 加载 `agents/registry-v3.json`，提供 agent 定义查询。
 /// 支持本地缓存和在线更新（GitHub Releases 合并）。
-
 use serde::{Deserialize, Serialize};
 
 /// Agent 安装方式
@@ -101,6 +100,7 @@ pub struct ConfigInject {
 /// Agent 定义（从 registry-v3.json 解析）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentDefinition {
+    #[serde(default)]
     pub id: String,
     pub name: String,
     pub source: String,
@@ -144,15 +144,22 @@ pub struct FutureRegistry {
     pub agents: std::collections::HashMap<String, serde_json::Value>,
 }
 
+/// 从 JSON 文本解析注册表，并用 map key 回填每条 agent 的 id
+pub fn parse_registry(content: &str) -> crate::Result<RegistryDoc> {
+    let mut doc: RegistryDoc = serde_json::from_str(content)
+        .map_err(|e| crate::Error::Other(format!("注册表 JSON 解析失败: {}", e)))?;
+
+    for (key, agent) in doc.agents.iter_mut() {
+        agent.id = key.clone();
+    }
+    Ok(doc)
+}
+
 /// 加载 Agent 注册表
 pub fn load_registry(path: &std::path::Path) -> crate::Result<RegistryDoc> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| crate::Error::Other(format!("无法读取注册表文件: {}", e)))?;
-
-    let doc: RegistryDoc = serde_json::from_str(&content)
-        .map_err(|e| crate::Error::Other(format!("注册表 JSON 解析失败: {}", e)))?;
-
-    Ok(doc)
+    parse_registry(&content)
 }
 
 /// 按热度排序的 agent 定义列表（已安装优先 → popular → stars 降序）
@@ -170,4 +177,44 @@ pub fn sorted_agents<'a>(
             .then_with(|| b.stars.unwrap_or(0).cmp(&a.stars.unwrap_or(0)))
     });
     agents
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const REGISTRY_JSON: &str = include_str!("../../../../agents/registry-v3.json");
+
+    #[test]
+    fn parses_registry_and_backfills_ids() {
+        let doc = parse_registry(REGISTRY_JSON).expect("注册表应可解析");
+        assert_eq!(doc.agents.len(), 9);
+        for (key, agent) in &doc.agents {
+            assert_eq!(&agent.id, key, "id 应与 map key 一致");
+            assert!(!agent.name.is_empty());
+            assert!(!agent.description.is_empty());
+            assert!(!agent.icon.is_empty());
+        }
+    }
+
+    #[test]
+    fn sorted_agents_orders_popular_then_stars() {
+        let doc = parse_registry(REGISTRY_JSON).unwrap();
+        let list = sorted_agents(&doc, &[]);
+
+        let popular_flags: Vec<bool> = list.iter().map(|(_, a)| a.popular).collect();
+        let mut expected = popular_flags.clone();
+        expected.sort_by(|a, b| b.cmp(a));
+        assert_eq!(popular_flags, expected, "popular 应排在前面");
+
+        let stars: Vec<u64> = list.iter().map(|(_, a)| a.stars.unwrap_or(0)).collect();
+        let mut sorted = stars.clone();
+        sorted.sort_by(|a, b| b.cmp(a));
+        assert_eq!(stars, sorted, "stars 应降序");
+    }
+
+    #[test]
+    fn rejects_invalid_json() {
+        assert!(parse_registry("{ not json").is_err());
+    }
 }
