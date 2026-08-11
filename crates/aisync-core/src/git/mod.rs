@@ -1,7 +1,7 @@
-/// Git 操作模块（M4）。
-///
-/// 备份、回滚、自动 commit/pull/push。
-/// 调用系统 git CLI（不引入 git2 crate）。
+//! Git 操作模块（M4）。
+//!
+//! 备份、回滚、自动 commit/pull/push。
+//! 调用系统 git CLI（不引入 git2 crate）。
 
 pub fn backup() -> crate::Result<String> {
     todo!("M4: git 备份")
