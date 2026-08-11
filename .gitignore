@@ -24,3 +24,6 @@ Thumbs.db
 
 # WorkBuddy
 .workbuddy/
+
+# 内部文档（仅本地保留，不推送到公开仓库）
+AgentDeck-V3-产品策划书.md
