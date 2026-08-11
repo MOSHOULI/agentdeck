@@ -37,6 +37,13 @@ fn find_agent(id: &str) -> aisync_core::Result<AgentDefinition> {
         .ok_or_else(|| aisync_core::Error::AgentNotFound(id.to_string()))
 }
 
+/// 共享配置数据源（可被 AGENTDECK_SHARED_CONFIG 覆盖）
+fn shared_config_source() -> std::path::PathBuf {
+    std::env::var_os("AGENTDECK_SHARED_CONFIG")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(r"D:\BASED CODE\SHARED\shared-ai-config"))
+}
+
 fn ui_type_string(ui_type: &registry::UiType) -> String {
     serde_json::from_value(serde_json::to_value(ui_type).unwrap_or_default()).unwrap_or_default()
 }
@@ -89,10 +96,13 @@ pub fn get_agents() -> Result<Vec<AgentInfo>, String> {
 #[tauri::command]
 pub async fn install_agent(id: String) -> Result<(), String> {
     let agent = find_agent(&id).map_err(|e| e.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || aisync_core::deploy::install_agent(&agent))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+    let source = shared_config_source();
+    tauri::async_runtime::spawn_blocking(move || {
+        aisync_core::deploy::install_agent_with_inject(&agent, &source)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 /// 卸载指定 agent

@@ -51,6 +51,19 @@ pub fn install_agent(_agent: &AgentDefinition) -> crate::Result<()> {
     Ok(())
 }
 
+/// 安装 Agent 并执行配置注入；注入失败时卸载回滚（原子化流程）
+pub fn install_agent_with_inject(
+    agent: &AgentDefinition,
+    source_dir: &std::path::Path,
+) -> crate::Result<()> {
+    install_agent(agent)?;
+    if let Err(e) = crate::config::inject_for_agent(agent, source_dir) {
+        let _ = uninstall_agent(agent);
+        return Err(e);
+    }
+    Ok(())
+}
+
 /// 卸载 Agent：执行 uninstall_cmd
 pub fn uninstall_agent(_agent: &AgentDefinition) -> crate::Result<()> {
     let cmd = _agent
