@@ -27,7 +27,8 @@ AgentDeck 是一个跨平台桌面应用，定位为 **Agent 编排中枢**—�
 - ✅ **M1 完成**：广场真实显示注册表 9 款 Agent；安装/卸载/验证闭环已接线（真实 npm 全局安装 opencode-ai 验证通过，测试后已还原）；安装/卸载前有确认弹窗
 - ✅ **M2 完成**：配置注入引擎（JSON/JSONC/TOML/YAML/文本适配器 + 备份回滚）；codex/opencode 已真实注入成功（备份在 `~/.agentdeck/backups/`）；其余 7 款因数据源缺模板/特殊通道明确跳过（逐项报告）
 - ✅ **M3 完成**：记忆引擎（SQLite FTS5 存储/搜索，Codex/Claude/OpenCode 采集器，记忆注入文件）；前端记忆管理面板（采集/搜索/自动注入/注入）；定时采集（Tauri 启动即跑一轮、之后每小时一轮，采集后自动回写 `auto_inject` 记忆文件）；真实采集验证 391+ 条；opencode 代码审查两轮共 16 项问题已修复
-- ⏳ **M4 下一步**：vault 加密（AES-256-GCM + DPAPI/Keychain/secret-service）+ git 备份回滚（决策分支待老大确认）
+- ✅ **M4 完成**：vault 加密（Windows DPAPI 保护主密钥 + AES-256-GCM 加密存储，V2 格式兼容与一键导入）；git 事件驱动备份回滚（安装/注入/vault 变动前自动备份，备份文件加密镜像入库 + 提交前密钥扫描，按操作回滚 / 按时间点整体恢复）；前端密钥与备份面板（添加/删除/脱敏查看/复制）；真实验证：vault 增删改查 + 备份 119 个加密文件入库无明文
+- ⏳ **M5 下一步**：MCP 管理 + 全功能集成
 
 ## 环境要求（本机已就绪）
 
@@ -113,4 +114,4 @@ agentdeck/
 2. `agents/registry-v3.json`（Agent 注册表结构）
 3. `README.md` 当前状态与常用命令
 
-当前下一步：M4（vault 加密 + git 备份回滚）。
+当前下一步：M5（MCP 跨工具面板 + 全流程联调）。
