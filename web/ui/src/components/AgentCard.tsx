@@ -152,7 +152,9 @@ export const AgentCard: React.FC<AgentCardProps> = ({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onUninstall(agent.id);
+              if (window.confirm(`确定卸载 ${agent.name} 吗？`)) {
+                onUninstall(agent.id);
+              }
             }}
             style={{
               padding: '6px 14px',
@@ -171,7 +173,9 @@ export const AgentCard: React.FC<AgentCardProps> = ({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              onInstall(agent.id);
+              if (window.confirm(`确定安装 ${agent.name} 吗？`)) {
+                onInstall(agent.id);
+              }
             }}
             style={{
               padding: '6px 14px',

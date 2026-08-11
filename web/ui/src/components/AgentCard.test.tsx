@@ -35,6 +35,7 @@ describe('AgentCard', () => {
 
   it('点击安装触发 onInstall', () => {
     const onInstall = vi.fn();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(
       <AgentCard
         agent={agent}
@@ -50,6 +51,7 @@ describe('AgentCard', () => {
 
   it('已安装态显示卸载按钮并触发 onUninstall', () => {
     const onUninstall = vi.fn();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(
       <AgentCard
         agent={{ ...agent, installed: true, version: '1.0.0' }}
