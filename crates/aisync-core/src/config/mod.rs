@@ -486,16 +486,34 @@ mod tests {
         dir
     }
 
+    fn temp_home_target(tag: &str, file_name: &str) -> (PathBuf, PathBuf) {
+        let home = temp_dir(tag);
+        let target = home.join("target").join(file_name);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        assert!(target.starts_with(&home), "测试目标必须位于临时 home");
+        (home, target)
+    }
+
+    fn assert_temp_backup_exists(home: &Path, file_name: &str) {
+        let backups = home.join(".agentdeck").join("backups");
+        assert!(backups.starts_with(home), "测试备份必须位于临时 home");
+        let found = fs::read_dir(backups)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .any(|entry| entry.path().join(file_name).is_file());
+        assert!(found, "临时 home 中应存在 {} 的备份", file_name);
+    }
+
     #[test]
     fn json_merge_updates_and_preserves_other_keys() {
-        let dir = temp_dir("json");
-        let target = dir.join("settings.json");
+        let (home, target) = temp_home_target("json-home", "settings.json");
         fs::write(&target, r#"{ "a": 1, "nested": { "x": 1 } }"#).unwrap();
 
-        inject(
+        inject_in_home(
             Format::JsonMerge,
             &target,
             r#"{ "a": 2, "b": 3, "nested": { "y": 2 } }"#,
+            &home,
         )
         .unwrap();
 
@@ -504,31 +522,32 @@ mod tests {
         assert_eq!(value["b"], 3);
         assert_eq!(value["nested"]["x"], 1);
         assert_eq!(value["nested"]["y"], 2);
+        assert_temp_backup_exists(&home, "settings.json");
     }
 
     #[test]
     fn jsonc_merge_strips_comments() {
-        let dir = temp_dir("jsonc");
-        let target = dir.join("config.jsonc");
+        let (home, target) = temp_home_target("jsonc-home", "config.jsonc");
         fs::write(&target, "// 头部注释\n{ \"a\": 1 /* 行内 */ }\n// 尾部").unwrap();
 
-        inject(Format::JsoncMerge, &target, r#"{ "b": 2 }"#).unwrap();
+        inject_in_home(Format::JsoncMerge, &target, r#"{ "b": 2 }"#, &home).unwrap();
 
         let value: Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
         assert_eq!(value["a"], 1);
         assert_eq!(value["b"], 2);
+        assert_temp_backup_exists(&home, "config.jsonc");
     }
 
     #[test]
     fn toml_section_appends_then_replaces() {
-        let dir = temp_dir("toml");
-        let target = dir.join("config.toml");
+        let (home, target) = temp_home_target("toml-home", "config.toml");
         fs::write(&target, "[existing]\nkeep = true\n").unwrap();
 
-        inject(
+        inject_in_home(
             Format::TomlSection,
             &target,
             "[features]\nmemories = true\njs_repl = false\n",
+            &home,
         )
         .unwrap();
         let first = fs::read_to_string(&target).unwrap();
@@ -537,10 +556,11 @@ mod tests {
         assert!(first.contains("[existing]"));
         assert_eq!(first.matches("[features]").count(), 1, "不应产生重复段");
 
-        inject(
+        inject_in_home(
             Format::TomlSection,
             &target,
             "[features]\nmemories = false\n",
+            &home,
         )
         .unwrap();
         let second = fs::read_to_string(&target).unwrap();
@@ -553,38 +573,30 @@ mod tests {
         let parsed: toml::Value = toml::from_str(&second).expect("合并后 TOML 应可解析");
         assert_eq!(parsed["features"]["memories"], toml::Value::Boolean(false));
         assert_eq!(parsed["existing"]["keep"], toml::Value::Boolean(true));
+        assert_temp_backup_exists(&home, "config.toml");
     }
 
     #[test]
     fn yaml_section_merges() {
-        let dir = temp_dir("yaml");
-        let target = dir.join("config.yaml");
+        let (home, target) = temp_home_target("yaml-home", "config.yaml");
         fs::write(&target, "a: 1\n").unwrap();
 
-        inject(Format::YamlSection, &target, "a: 3\nb: 2\n").unwrap();
+        inject_in_home(Format::YamlSection, &target, "a: 3\nb: 2\n", &home).unwrap();
 
         let value: Value = serde_yml::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
         assert_eq!(value["a"], 3);
         assert_eq!(value["b"], 2);
+        assert_temp_backup_exists(&home, "config.yaml");
     }
 
     #[test]
     fn plain_text_writes_and_keeps_backup_in_temp_home() {
-        let home = temp_dir("plain-home");
-        let dir = home.join("target");
-        fs::create_dir_all(&dir).unwrap();
-        let target = dir.join("AGENTS.md");
+        let (home, target) = temp_home_target("plain-home", "AGENTS.md");
         fs::write(&target, "旧内容").unwrap();
 
         inject_in_home(Format::PlainText, &target, "新内容", &home).unwrap();
         assert_eq!(fs::read_to_string(&target).unwrap(), "新内容");
-
-        let backups = home.join(".agentdeck").join("backups");
-        let found = fs::read_dir(&backups)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .any(|e| e.path().join("AGENTS.md").is_file());
-        assert!(found, "注入前应有备份");
+        assert_temp_backup_exists(&home, "AGENTS.md");
     }
 
     #[test]
