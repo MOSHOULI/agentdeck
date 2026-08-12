@@ -87,27 +87,40 @@ fn profile_source_dir_in(home: &Path) -> crate::Result<PathBuf> {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&target)
-        {
-            Ok(mut file) => file.write_all(content.as_bytes())?,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error.into()),
-        }
+        create_profile_file_with(&target, |file| file.write_all(content.as_bytes()))?;
     }
     Ok(profile)
 }
 
-fn expand_home(path: &str) -> PathBuf {
-    if let (Some(rest), Some(home)) = (
-        path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")),
-        dirs::home_dir(),
-    ) {
+fn create_profile_file_with(
+    target: &Path,
+    write: impl FnOnce(&mut fs::File) -> std::io::Result<()>,
+) -> crate::Result<()> {
+    match OpenOptions::new().write(true).create_new(true).open(target) {
+        Ok(mut file) => {
+            if let Err(error) = write(&mut file) {
+                drop(file);
+                let _ = fs::remove_file(target);
+                return Err(error.into());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
+fn expand_home_in(path: &str, home: &Path) -> PathBuf {
+    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
         return home.join(rest);
     }
     PathBuf::from(path)
+}
+
+fn expand_home(path: &str) -> PathBuf {
+    dirs::home_dir()
+        .map(|home| expand_home_in(path, &home))
+        .unwrap_or_else(|| PathBuf::from(path))
 }
 
 fn backup_file_in(path: &Path, home: &Path) -> crate::Result<Option<PathBuf>> {
@@ -369,7 +382,6 @@ pub fn inject(format: Format, target_path: &Path, content: &str) -> crate::Resul
     inject_with_backup(format, target_path, content, backup)
 }
 
-#[cfg(test)]
 fn inject_in_home(
     format: Format,
     target_path: &Path,
@@ -378,6 +390,24 @@ fn inject_in_home(
 ) -> crate::Result<()> {
     let backup = backup_file_in(target_path, home)?;
     inject_with_backup(format, target_path, content, backup)
+}
+
+fn target_path(path: &str, target_home: Option<&Path>) -> PathBuf {
+    target_home
+        .map(|home| expand_home_in(path, home))
+        .unwrap_or_else(|| expand_home(path))
+}
+
+fn inject_target(
+    format: Format,
+    target: &Path,
+    content: &str,
+    target_home: Option<&Path>,
+) -> crate::Result<()> {
+    match target_home {
+        Some(home) => inject_in_home(format, target, content, home),
+        None => inject(format, target, content),
+    }
 }
 
 /// 模板注入内容源：personalization/<template>/AGENTS.md
@@ -415,8 +445,11 @@ fn model_config_content(agent: &AgentDefinition, source_dir: &Path) -> Option<St
     }
 }
 
-/// 为单个 agent 执行个性化 + model_config 注入，返回逐项报告
-pub fn inject_for_agent(agent: &AgentDefinition, source_dir: &Path) -> crate::Result<InjectReport> {
+fn inject_for_agent_with_home(
+    agent: &AgentDefinition,
+    source_dir: &Path,
+    target_home: Option<&Path>,
+) -> crate::Result<InjectReport> {
     let mut personalization = None;
     let mut model_config = None;
 
@@ -426,8 +459,8 @@ pub fn inject_for_agent(agent: &AgentDefinition, source_dir: &Path) -> crate::Re
         } else if !p.target.starts_with("~/") && !p.target.starts_with("~\\") {
             personalization = Some(InjectStatus::Skipped("非绝对路径目标暂不支持".into()));
         } else if let Some(content) = template_agents_md(source_dir, &p.template) {
-            let target = expand_home(&p.target);
-            match inject(Format::PlainText, &target, &content) {
+            let target = target_path(&p.target, target_home);
+            match inject_target(Format::PlainText, &target, &content, target_home) {
                 Ok(()) => personalization = Some(InjectStatus::Ok),
                 Err(e) => return Err(e),
             }
@@ -454,8 +487,8 @@ pub fn inject_for_agent(agent: &AgentDefinition, source_dir: &Path) -> crate::Re
                 }
             };
             if let Some(format) = format {
-                let target = expand_home(&mc.file);
-                match inject(format, &target, &content) {
+                let target = target_path(&mc.file, target_home);
+                match inject_target(format, &target, &content, target_home) {
                     Ok(()) => model_config = Some(InjectStatus::Ok),
                     Err(e) => return Err(e),
                 }
@@ -470,6 +503,20 @@ pub fn inject_for_agent(agent: &AgentDefinition, source_dir: &Path) -> crate::Re
         personalization,
         model_config,
     })
+}
+
+/// 为单个 agent 执行个性化 + model_config 注入，返回逐项报告
+pub fn inject_for_agent(agent: &AgentDefinition, source_dir: &Path) -> crate::Result<InjectReport> {
+    inject_for_agent_with_home(agent, source_dir, None)
+}
+
+#[cfg(test)]
+fn inject_for_agent_in_home(
+    agent: &AgentDefinition,
+    source_dir: &Path,
+    target_home: &Path,
+) -> crate::Result<InjectReport> {
+    inject_for_agent_with_home(agent, source_dir, Some(target_home))
 }
 
 #[cfg(test)]
@@ -659,6 +706,64 @@ mod tests {
     }
 
     #[test]
+    fn profile_file_write_failure_removes_only_the_new_file() {
+        let home = temp_dir("profile-write-failure");
+        let target = home.join("personalization/codex/AGENTS.md");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+
+        let error = create_profile_file_with(&target, |file| {
+            file.write_all(b"partial")?;
+            Err(std::io::Error::other("simulated profile write failure"))
+        })
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("simulated profile write failure")
+        );
+        assert!(!target.exists(), "写失败时应移除本次新建的半文件");
+
+        fs::write(&target, "用户已有内容").unwrap();
+        create_profile_file_with(&target, |_file| {
+            panic!("预先存在的用户文件不应进入写入分支")
+        })
+        .unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "用户已有内容");
+    }
+
+    #[test]
+    fn inject_for_agent_in_home_keeps_all_supported_targets_in_temp_home() {
+        let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        let profile_home = temp_dir("all-agents-profile-home");
+        let source = profile_source_dir_in(&profile_home).unwrap();
+        let target_home = temp_dir("all-agents-target-home");
+        let mut personalization_writes = 0;
+
+        for agent in doc.agents.values() {
+            let report = inject_for_agent_in_home(agent, &source, &target_home).unwrap();
+            if report.personalization == Some(InjectStatus::Ok) {
+                personalization_writes += 1;
+            }
+        }
+
+        assert_eq!(personalization_writes, 5);
+        for relative in [
+            ".codex/AGENTS.md",
+            ".codex/config.toml",
+            ".config/opencode/AGENTS.md",
+            ".config/opencode/opencode.jsonc",
+            ".claude/CLAUDE.md",
+            ".gemini/GEMINI.md",
+            ".hermes/config.yaml",
+        ] {
+            let target = target_home.join(relative);
+            assert!(target.starts_with(&target_home));
+            assert!(target.is_file(), "临时目标缺失: {}", relative);
+        }
+    }
+
+    #[test]
     fn inject_for_agent_skips_missing_template() {
         let agent = AgentDefinition {
             id: "claude-code".into(),
@@ -745,18 +850,19 @@ mod tests {
         }
     }
 
-    /// 真实环境验证：输出全部 9 款 Agent 的注入报告（无 Err 即通过）
+    /// 全注册表诊断：在临时 profile 与临时目标 home 中输出逐 Agent 注入报告。
     #[test]
-    #[ignore = "真实环境验证：对 9 款 Agent 逐一注入（仅 codex/opencode 实际写入）"]
-    fn real_inject_all_nine_report() {
+    #[ignore = "全注册表诊断：仅写临时目录，手动查看逐 Agent 注入报告"]
+    fn inject_all_agents_in_temp_home_report() {
         let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
-        let home = temp_dir("real-profile-all");
-        let source = profile_source_dir_in(&home).unwrap();
+        let profile_home = temp_dir("report-profile-home");
+        let source = profile_source_dir_in(&profile_home).unwrap();
+        let target_home = temp_dir("report-target-home");
         let mut ids: Vec<&String> = doc.agents.keys().collect();
         ids.sort();
         for id in ids {
             let agent = doc.agents.get(id).unwrap();
-            let report = inject_for_agent(agent, &source).unwrap();
+            let report = inject_for_agent_in_home(agent, &source, &target_home).unwrap();
             println!(
                 "{} | personalization={:?} | model_config={:?}",
                 report.agent_id, report.personalization, report.model_config
