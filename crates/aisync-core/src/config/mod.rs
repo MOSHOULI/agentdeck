@@ -3,7 +3,8 @@
 //! 适配器模式：统一接口 → 各格式 Writer。
 //! 支持格式：TOML section / JSON merge / JSONC merge / YAML section / plain text。
 
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -34,6 +35,71 @@ pub struct InjectReport {
     pub model_config: Option<InjectStatus>,
 }
 
+const BUILTIN_PROFILE_FILES: &[(&str, &str)] = &[
+    (
+        "personalization/codex/AGENTS.md",
+        include_str!("../../../../profiles/default/personalization/codex/AGENTS.md"),
+    ),
+    (
+        "personalization/opencode/AGENTS.md",
+        include_str!("../../../../profiles/default/personalization/opencode/AGENTS.md"),
+    ),
+    (
+        "personalization/claude/AGENTS.md",
+        include_str!("../../../../profiles/default/personalization/claude/AGENTS.md"),
+    ),
+    (
+        "personalization/cline/AGENTS.md",
+        include_str!("../../../../profiles/default/personalization/cline/AGENTS.md"),
+    ),
+    (
+        "personalization/hermes/AGENTS.md",
+        include_str!("../../../../profiles/default/personalization/hermes/AGENTS.md"),
+    ),
+    (
+        "personalization/gemini/AGENTS.md",
+        include_str!("../../../../profiles/default/personalization/gemini/AGENTS.md"),
+    ),
+    (
+        "personalization/zcode/AGENTS.md",
+        include_str!("../../../../profiles/default/personalization/zcode/AGENTS.md"),
+    ),
+    (
+        "personalization/codex.json",
+        include_str!("../../../../profiles/default/personalization/codex.json"),
+    ),
+    (
+        "personalization/opencode/opencode.jsonc",
+        include_str!("../../../../profiles/default/personalization/opencode/opencode.jsonc"),
+    ),
+];
+
+/// 返回 AgentDeck 默认 profile；缺失文件会从内置模板初始化，已有文件保持不变。
+pub fn profile_source_dir() -> crate::Result<PathBuf> {
+    let home = dirs::home_dir().ok_or_else(|| crate::Error::Other("无法定位用户主目录".into()))?;
+    profile_source_dir_in(&home)
+}
+
+fn profile_source_dir_in(home: &Path) -> crate::Result<PathBuf> {
+    let profile = home.join(".agentdeck").join("profiles").join("default");
+    for (relative, content) in BUILTIN_PROFILE_FILES {
+        let target = profile.join(relative);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)
+        {
+            Ok(mut file) => file.write_all(content.as_bytes())?,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(profile)
+}
+
 fn expand_home(path: &str) -> PathBuf {
     if let (Some(rest), Some(home)) = (
         path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")),
@@ -44,11 +110,10 @@ fn expand_home(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-fn backup_file(path: &Path) -> crate::Result<Option<PathBuf>> {
+fn backup_file_in(path: &Path, home: &Path) -> crate::Result<Option<PathBuf>> {
     if !path.is_file() {
         return Ok(None);
     }
-    let home = dirs::home_dir().ok_or_else(|| crate::Error::Other("无法定位用户主目录".into()))?;
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -64,6 +129,14 @@ fn backup_file(path: &Path) -> crate::Result<Option<PathBuf>> {
     let dest = backup_root.join(name);
     fs::copy(path, &dest)?;
     Ok(Some(dest))
+}
+
+fn backup_file(path: &Path) -> crate::Result<Option<PathBuf>> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let home = dirs::home_dir().ok_or_else(|| crate::Error::Other("无法定位用户主目录".into()))?;
+    backup_file_in(path, &home)
 }
 
 fn write_file(path: &Path, content: &str) -> crate::Result<()> {
@@ -243,9 +316,12 @@ fn merge_yaml(target: &Path, additions: &str) -> crate::Result<()> {
     write_file(target, &out)
 }
 
-/// 注入配置到目标文件（先备份，失败自动回滚）
-pub fn inject(format: Format, target_path: &Path, content: &str) -> crate::Result<()> {
-    let backup = backup_file(target_path)?;
+fn inject_with_backup(
+    format: Format,
+    target_path: &Path,
+    content: &str,
+    backup: Option<PathBuf>,
+) -> crate::Result<()> {
     let result = match format {
         Format::PlainText => write_file(target_path, content),
         Format::JsonMerge | Format::JsoncMerge => {
@@ -285,6 +361,23 @@ pub fn inject(format: Format, target_path: &Path, content: &str) -> crate::Resul
         )));
     }
     Ok(())
+}
+
+/// 注入配置到目标文件（先备份，失败自动回滚）
+pub fn inject(format: Format, target_path: &Path, content: &str) -> crate::Result<()> {
+    let backup = backup_file(target_path)?;
+    inject_with_backup(format, target_path, content, backup)
+}
+
+#[cfg(test)]
+fn inject_in_home(
+    format: Format,
+    target_path: &Path,
+    content: &str,
+    home: &Path,
+) -> crate::Result<()> {
+    let backup = backup_file_in(target_path, home)?;
+    inject_with_backup(format, target_path, content, backup)
 }
 
 /// 模板注入内容源：personalization/<template>/AGENTS.md
@@ -476,20 +569,81 @@ mod tests {
     }
 
     #[test]
-    fn plain_text_writes_and_keeps_backup() {
-        let dir = temp_dir("plain");
+    fn plain_text_writes_and_keeps_backup_in_temp_home() {
+        let home = temp_dir("plain-home");
+        let dir = home.join("target");
+        fs::create_dir_all(&dir).unwrap();
         let target = dir.join("AGENTS.md");
         fs::write(&target, "旧内容").unwrap();
 
-        inject(Format::PlainText, &target, "新内容").unwrap();
+        inject_in_home(Format::PlainText, &target, "新内容", &home).unwrap();
         assert_eq!(fs::read_to_string(&target).unwrap(), "新内容");
 
-        let backups = dirs::home_dir().unwrap().join(".agentdeck").join("backups");
+        let backups = home.join(".agentdeck").join("backups");
         let found = fs::read_dir(&backups)
             .unwrap()
             .filter_map(|e| e.ok())
             .any(|e| e.path().join("AGENTS.md").is_file());
         assert!(found, "注入前应有备份");
+    }
+
+    #[test]
+    fn profile_source_dir_initializes_builtin_profile_in_temp_home() {
+        let home = temp_dir("profile-home");
+
+        let profile = profile_source_dir_in(&home).unwrap();
+
+        assert_eq!(
+            profile,
+            home.join(".agentdeck").join("profiles").join("default")
+        );
+        for relative in [
+            "personalization/codex/AGENTS.md",
+            "personalization/opencode/AGENTS.md",
+            "personalization/claude/AGENTS.md",
+            "personalization/cline/AGENTS.md",
+            "personalization/hermes/AGENTS.md",
+            "personalization/gemini/AGENTS.md",
+            "personalization/zcode/AGENTS.md",
+            "personalization/codex.json",
+            "personalization/opencode/opencode.jsonc",
+        ] {
+            let path = profile.join(relative);
+            assert!(path.is_file(), "内置 profile 文件缺失: {}", relative);
+            assert!(
+                !fs::read_to_string(path).unwrap().trim().is_empty(),
+                "内置 profile 文件不应为空: {}",
+                relative
+            );
+        }
+
+        let codex: Value = serde_json::from_str(
+            &fs::read_to_string(profile.join("personalization/codex.json")).unwrap(),
+        )
+        .expect("codex.json 应为有效 JSON");
+        assert!(codex.is_object());
+
+        let opencode =
+            fs::read_to_string(profile.join("personalization/opencode/opencode.jsonc")).unwrap();
+        let opencode: Value = serde_json::from_str(&strip_jsonc_comments(&opencode))
+            .expect("opencode.jsonc 去除注释后应为有效 JSON");
+        assert!(opencode.is_object());
+    }
+
+    #[test]
+    fn profile_source_dir_preserves_existing_files_and_restores_missing_files() {
+        let home = temp_dir("profile-preserve");
+        let profile = profile_source_dir_in(&home).unwrap();
+        let customized = profile.join("personalization/codex/AGENTS.md");
+        let removed = profile.join("personalization/opencode/opencode.jsonc");
+        fs::write(&customized, "用户自定义内容").unwrap();
+        fs::remove_file(&removed).unwrap();
+
+        let second = profile_source_dir_in(&home).unwrap();
+
+        assert_eq!(second, profile);
+        assert_eq!(fs::read_to_string(customized).unwrap(), "用户自定义内容");
+        assert!(removed.is_file(), "再次初始化应补齐缺失文件");
     }
 
     #[test]
