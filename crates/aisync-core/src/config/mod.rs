@@ -708,24 +708,16 @@ mod tests {
 
     const REGISTRY_JSON: &str = include_str!("../../../../agents/registry-v3.json");
 
-    fn shared_source_dir() -> std::path::PathBuf {
-        std::env::var_os("AGENTDECK_SHARED_CONFIG")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                dirs::home_dir()
-                    .unwrap_or_default()
-                    .join("shared-ai-config")
-            })
-    }
-
     /// 真实环境验证：codex/opencode 注入真实配置（带备份）
     #[test]
     #[ignore = "真实环境验证：修改 ~/.codex 与 ~/.config/opencode 配置（带备份）"]
     fn real_inject_codex_and_opencode() {
         let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        let home = temp_dir("real-profile-codex-opencode");
+        let source = profile_source_dir_in(&home).unwrap();
         for id in ["codex", "opencode"] {
             let agent = doc.agents.get(id).unwrap();
-            let report = inject_for_agent(agent, &shared_source_dir()).unwrap();
+            let report = inject_for_agent(agent, &source).unwrap();
             assert_eq!(
                 report.personalization,
                 Some(InjectStatus::Ok),
@@ -746,11 +738,13 @@ mod tests {
     #[ignore = "真实环境验证：对 9 款 Agent 逐一注入（仅 codex/opencode 实际写入）"]
     fn real_inject_all_nine_report() {
         let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        let home = temp_dir("real-profile-all");
+        let source = profile_source_dir_in(&home).unwrap();
         let mut ids: Vec<&String> = doc.agents.keys().collect();
         ids.sort();
         for id in ids {
             let agent = doc.agents.get(id).unwrap();
-            let report = inject_for_agent(agent, &shared_source_dir()).unwrap();
+            let report = inject_for_agent(agent, &source).unwrap();
             println!(
                 "{} | personalization={:?} | model_config={:?}",
                 report.agent_id, report.personalization, report.model_config
