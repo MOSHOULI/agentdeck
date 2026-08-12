@@ -51,6 +51,7 @@ cargo tauri build
 ## 数据与安全
 
 - 应用数据统一存放在用户主目录下的 `~/.agentdeck/`：记忆库（`memory.db`）、密钥库（`vault/`）、备份仓库（`git-backup/`）、在线更新注册表（`registry/`）
+- Agent 配置模板存放在 `~/.agentdeck/profiles/default/`；缺失的目录或文件会自动初始化，已有文件不会被覆盖
 - API Key 以密文存储，明文绝不落盘；主密钥由 Windows DPAPI 绑定当前用户保护
 - 配置写入前自动备份，注入失败自动回滚；备份文件加密后进入备份仓库，提交前做密钥特征扫描
 - 安装 / 卸载 / 删除密钥 / 回滚等操作均有确认提示
