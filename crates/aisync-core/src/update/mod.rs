@@ -43,6 +43,9 @@ pub fn is_update_available_for(
         && valid_version(&manifest.version)
         && valid_version(&manifest.min_version)
         && compare_versions(&manifest.version, current).is_gt()
+        // Never reintroduce metadata older than (or equal to) the bundled
+        // registry, even if an unknown/custom legacy installation reports 0.0.0.
+        && compare_versions(&manifest.version, crate::registry::BUNDLED_REGISTRY_VERSION).is_gt()
         && !compare_versions(application, &manifest.min_version).is_lt()
 }
 
@@ -363,6 +366,109 @@ mod tests {
         assert!(!is_update_available_for("0.9.0", "0.9.0", &m));
         assert!(!is_update_available("invalid", &m));
         assert!(compare_versions("1.10.0", "1.9.0").is_gt());
+    }
+
+    #[test]
+    fn stock_feed_cannot_replace_bundled_metadata_even_for_unknown_legacy_data() {
+        let f = Fixture::new();
+        let mut manifest = f.manifest();
+        for version in ["1.0.0", "1.0.1", "1.1.0", "1.1.0.0"] {
+            manifest.version = version.into();
+            assert!(!is_update_available("0.0.0", &manifest));
+            assert!(!is_update_available("1.0.0", &manifest));
+            assert!(!is_update_available("1.1.0", &manifest));
+        }
+        manifest.version = "1.1.1".into();
+        assert!(is_update_available("0.0.0", &manifest));
+        assert!(is_update_available("1.1.0", &manifest));
+        assert!(!is_update_available("1.2.0", &manifest));
+    }
+
+    #[test]
+    fn signed_updates_enforce_bundled_floor_and_preserve_legacy_originals() {
+        let f = Fixture::new();
+        std::fs::create_dir_all(&f.paths.registry_dir).unwrap();
+        let stock = [
+            (
+                "registry-v3.json",
+                include_bytes!("../../tests/fixtures/registry-v1.0.0/registry-v3.json").as_slice(),
+            ),
+            (
+                "mcp-registry.json",
+                include_bytes!("../../tests/fixtures/registry-v1.0.0/mcp-registry.json").as_slice(),
+            ),
+        ];
+        for (name, bytes) in stock {
+            std::fs::write(f.paths.registry_dir.join(name), bytes).unwrap();
+        }
+        let (secret, public) = crate::release::generate_keypair().unwrap();
+        let mut manifest = f.manifest();
+        manifest.pubkey_fp = crate::release::pubkey_fingerprint(&public);
+        for version in ["1.0.0", "1.1.0", "1.1.1"] {
+            manifest.version = version.into();
+            let json = crate::release::canonical_manifest_json(&manifest).unwrap();
+            let sig = crate::release::sign_manifest(&manifest, &secret).unwrap();
+            let verified = parse_and_verify(&json, &sig, &public).unwrap();
+            if version != "1.1.1" {
+                assert!(apply_update_at(&verified, &f.paths).is_err());
+                for (name, bytes) in stock {
+                    assert_eq!(
+                        std::fs::read(f.paths.registry_dir.join(name)).unwrap(),
+                        bytes
+                    );
+                }
+                assert!(!f.paths.registry_dir.join("installed-version").exists());
+            } else {
+                apply_update_at(&verified, &f.paths).unwrap();
+            }
+        }
+        assert_eq!(
+            crate::registry::installed_version_at(&f.paths, "1.1.0").unwrap(),
+            "1.1.1"
+        );
+        let backup = std::fs::read_dir(f.paths.registry_dir.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("registry-backup-")
+            })
+            .unwrap();
+        for (name, bytes) in stock {
+            assert_eq!(std::fs::read(backup.join(name)).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn signed_old_feed_cannot_replace_a_custom_unversioned_registry() {
+        let f = Fixture::new();
+        std::fs::create_dir_all(&f.paths.registry_dir).unwrap();
+        let mut custom =
+            crate::registry::parse_registry(include_str!("../../../../agents/registry-v3.json"))
+                .unwrap();
+        custom.description = "preserve custom metadata".into();
+        let original = serde_json::to_vec(&custom).unwrap();
+        let path = f.paths.registry_dir.join("registry-v3.json");
+        std::fs::write(&path, &original).unwrap();
+        assert_eq!(
+            crate::registry::installed_version_at(&f.paths, "1.1.0").unwrap(),
+            "0.0.0"
+        );
+        let (secret, public) = crate::release::generate_keypair().unwrap();
+        let mut manifest = f.manifest();
+        manifest.pubkey_fp = crate::release::pubkey_fingerprint(&public);
+        for version in ["1.0.0", "1.1.0"] {
+            manifest.version = version.into();
+            let json = crate::release::canonical_manifest_json(&manifest).unwrap();
+            let sig = crate::release::sign_manifest(&manifest, &secret).unwrap();
+            let verified = parse_and_verify(&json, &sig, &public).unwrap();
+            assert!(apply_update_at(&verified, &f.paths).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+            assert!(!f.paths.registry_dir.join("installed-version").exists());
+            assert!(!f.paths.registry_dir.join("mcp-registry.json").exists());
+        }
     }
 
     #[test]

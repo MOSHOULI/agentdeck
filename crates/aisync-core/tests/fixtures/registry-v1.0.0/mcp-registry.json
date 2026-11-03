@@ -1,0 +1,25 @@
+{
+  "$schema": "https://raw.githubusercontent.com/different-ai/openwork/main/docs/mcp-registry-schema.json",
+  "description": "AgentDeck 内置 MCP 服务器注册表 — 与各 agent 的 MCP 目标配置（registry-v3.json config_inject.mcp）配合注入",
+  "servers": [
+    {
+      "name": "example-http-mcp",
+      "description": "示例：HTTP 类型的 MCP 服务器",
+      "url": "http://localhost:3000/mcp",
+      "disabled": true
+    },
+    {
+      "name": "example-stdio-mcp",
+      "description": "示例：STDIO 类型的 MCP 服务器",
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-example"],
+      "disabled": true
+    },
+    {
+      "name": "ragflow",
+      "description": "RAGFlow 本地知识库 MCP（只读检索：ragflow_retrieval / ragflow_list_datasets）",
+      "url": "http://127.0.0.1:9382/mcp",
+      "disabled": false
+    }
+  ]
+}

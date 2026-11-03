@@ -25,6 +25,8 @@ CI first uploads a draft release, downloads its assets again, and verifies the i
 
 This installer-only release is published with `--latest=false`. The application's registry update check uses GitHub's `latest` download endpoint, which must continue to serve the existing signed registry manifest and signature. Use the explicit v1.1.0 link above for the desktop installer; the Latest label identifies the preserved registry feed, not the newest desktop binary. No new signed registry update is included because the original signing private key is unavailable. Signature and download failures remain errors, and the existing trust anchor is unchanged.
 
+On upgrade, the application uses its improved bundled registries only when both retained runtime files exactly match the SHA256 fingerprints of the original signed v1.0.0 assets and their version marker is absent or `1.0.0`. This changes the selected source without deleting or rewriting those files or their marker. Custom, unknown and newer runtime registries remain in use. Signed updates must exceed both the effective installed registry version and the bundled version, so the old feed cannot reintroduce superseded metadata. Invalid version metadata, incomplete versioned installations and recovery failures remain errors.
+
 ## Scope and known limitations
 
 - Windows 10/11 x64 is the complete desktop target. Git is required for backups; npm-based agents need Node.js/npm.
