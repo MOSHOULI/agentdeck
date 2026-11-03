@@ -1,200 +1,93 @@
-/**
- * Agent 广场 —— 主界面。
- * 以卡片网格展示全部 17 款 Agent，支持安装/卸载/选择。
- * 首行展示「热度推荐」，后续按 GitHub Stars 降序排列。
- */
-
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useAgentStore } from '../stores/agentStore';
 import { AgentCard } from '../components/AgentCard';
-import { MemoryPanel } from '../components/MemoryPanel';
-import { VaultPanel } from '../components/VaultPanel';
-import { McpPanel } from '../components/McpPanel';
-import { UpdatePanel } from '../components/UpdatePanel';
+import { Icon } from '../components/Icon';
+import './AgentWorkspace.css';
+
+const filters = [
+  { id: 'all', label: '全部' },
+  { id: 'popular', label: '热度推荐' },
+  { id: 'installed', label: '已安装' },
+] as const;
 
 export const AgentSquare: React.FC = () => {
-  const {
-    agents,
-    loading,
-    error,
-    notice,
-    selectedAgentId,
-    loadAgents,
-    installAgent,
-    uninstallAgent,
-    selectAgent,
-    clearError,
-  } = useAgentStore();
-
+  const { agents, loading, error, notice, selectedAgentId, loadAgents, installAgent, uninstallAgent, selectAgent, clearError } = useAgentStore();
   const [filter, setFilter] = useState<'all' | 'installed' | 'popular'>('all');
+  const [query, setQuery] = useState('');
 
-  useEffect(() => {
-    loadAgents();
-  }, [loadAgents]);
+  useEffect(() => { void loadAgents(); }, [loadAgents]);
 
-  // 按规则排序：热度标记优先 → 星数降序
-  const sortedAgents = [...agents].sort((a, b) => {
-    if (a.popular && !b.popular) return -1;
-    if (!a.popular && b.popular) return 1;
-    return (b.stars ?? 0) - (a.stars ?? 0);
-  });
+  const filteredAgents = useMemo(() => {
+    const search = query.trim().toLocaleLowerCase();
+    return [...agents]
+      .sort((a, b) => Number(Boolean(b.popular)) - Number(Boolean(a.popular)) || (b.stars ?? 0) - (a.stars ?? 0) || a.name.localeCompare(b.name))
+      .filter((agent) => {
+        if (filter === 'installed' && !agent.installed) return false;
+        if (filter === 'popular' && !agent.popular) return false;
+        return !search || [agent.name, agent.id, agent.description, agent.uiType, agent.category]
+          .some((value) => value.toLocaleLowerCase().includes(search));
+      });
+  }, [agents, filter, query]);
 
-  const filteredAgents = sortedAgents.filter((a) => {
-    if (filter === 'installed') return a.installed;
-    if (filter === 'popular') return a.popular;
-    return true;
-  });
-
-  // 分组：有面板 / 纯 CLI
-  const withUI = filteredAgents.filter((a) =>
-    ['all', 'cli+desktop', 'desktop', 'vscode-extension', 'ide-extension'].includes(a.uiType)
-  );
-  const pureCli = filteredAgents.filter((a) =>
-    !['all', 'cli+desktop', 'desktop', 'vscode-extension', 'ide-extension'].includes(a.uiType)
-  );
+  const resetFilters = () => { setQuery(''); setFilter('all'); };
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
 
   return (
-    <div style={{ padding: 24, maxWidth: 1200, margin: '0 auto' }}>
-      {/* 页头 */}
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700, color: '#f3f4f6', margin: '0 0 8px 0' }}>
-          Agent 广场
-        </h1>
-        <p style={{ fontSize: 14, color: '#9ca3af', margin: 0 }}>
-          一站式发现、安装、配置本地 AI Agent。共 {agents.length} 款 Agent 可用。
-        </p>
+    <div className="agent-workspace">
+      <div className="workspace-heading agent-workspace-heading">
+        <div>
+          <p className="eyebrow">AGENT WORKSPACE</p>
+          <h1>Agent 广场</h1>
+          <p className="muted">发现并管理本地 Agent，选择一个以供其他工作区使用。</p>
+        </div>
+        <button type="button" className="button" onClick={() => { void loadAgents(); }} disabled={loading}>
+          <Icon name="refresh" size={15} />刷新列表
+        </button>
       </div>
 
-      {/* 筛选 */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        {(['all', 'popular', 'installed'] as const).map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            style={{
-              padding: '6px 16px',
-              borderRadius: 8,
-              border: filter === f ? '1px solid #6366f1' : '1px solid #374151',
-              background: filter === f ? '#312e81' : 'transparent',
-              color: filter === f ? '#c7d2fe' : '#9ca3af',
-              fontSize: 13,
-              cursor: 'pointer',
-              fontWeight: 500,
-            }}
-          >
-            {f === 'all' ? '全部' : f === 'popular' ? '🔥 热度推荐' : '✓ 已安装'}
-          </button>
-        ))}
-      </div>
-
-      {notice && <p role="status" style={{ color: '#fcd34d' }}>{notice}</p>}
-      {/* 错误提示 */}
+      {notice && <div role="status" className="notice agent-notice"><Icon name="info" size={16} /><span>{notice}</span></div>}
       {error && (
-        <div role="alert"
-          style={{
-            padding: 12,
-            borderRadius: 8,
-            background: '#7f1d1d',
-            color: '#fca5a5',
-            fontSize: 13,
-            marginBottom: 16,
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-          }}
-        >
-          <span>{error}</span>
-          <button
-            onClick={clearError}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: '#fca5a5',
-              cursor: 'pointer',
-              fontSize: 16,
-            }}
-          >
-            ×
-          </button>
+        <div role="alert" className="notice notice-error agent-notice">
+          <Icon name="alert" size={16} />
+          <div className="agent-error-copy"><strong>无法完成操作</strong><span>{error}</span></div>
+          <button type="button" className="button" onClick={clearError} aria-label="关闭错误提示"><Icon name="x" size={15} /></button>
         </div>
       )}
 
-      <button onClick={loadAgents} disabled={loading}>刷新列表</button>
-      {/* 加载中 */}
-      {loading && <p style={{ color: '#6b7280', fontSize: 14 }}>加载中...</p>}
-
-      {/* 🖥️ 有桌面/GUI 面板 */}
-      {withUI.length > 0 && (
-        <>
-          <h2 style={{ fontSize: 18, fontWeight: 600, color: '#e5e7eb', marginBottom: 12 }}>
-            🖥️ 桌面 / GUI / IDE 面板
-          </h2>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-              gap: 16,
-              marginBottom: 32,
-            }}
-          >
-            {withUI.map((agent) => (
-              <AgentCard
-                key={agent.id}
-                agent={agent}
-                busy={loading}
-                selected={selectedAgentId === agent.id}
-                onInstall={installAgent}
-                onUninstall={uninstallAgent}
-                onSelect={selectAgent}
-              />
+      <div className="panel agent-directory">
+        <div className="toolbar agent-toolbar">
+          <div className="agent-filters" role="group" aria-label="Agent 筛选">
+            {filters.map(({ id, label }) => (
+              <button key={id} type="button" className={`button agent-filter${filter === id ? ' agent-filter-active' : ''}`} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>
             ))}
           </div>
-        </>
-      )}
-
-      {/* ⌨️ 纯 CLI */}
-      {pureCli.length > 0 && (
-        <>
-          <h2 style={{ fontSize: 18, fontWeight: 600, color: '#e5e7eb', marginBottom: 12 }}>
-            ⌨️ 纯终端 CLI
-          </h2>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-              gap: 16,
-            }}
-          >
-            {pureCli.map((agent) => (
-              <AgentCard
-                key={agent.id}
-                agent={agent}
-                busy={loading}
-                selected={selectedAgentId === agent.id}
-                onInstall={installAgent}
-                onUninstall={uninstallAgent}
-                onSelect={selectAgent}
-              />
-            ))}
+          <div className="agent-search">
+            <Icon name="search" size={16} />
+            <label htmlFor="agent-search" className="sr-only">搜索 Agent</label>
+            <input id="agent-search" className="control" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、ID 或描述…" />
           </div>
-        </>
-      )}
-
-      {/* 空状态 */}
-      {!loading && filteredAgents.length === 0 && (
-        <div style={{ textAlign: 'center', padding: 60, color: '#6b7280' }}>
-          {filter === 'installed' ? '还没有安装任何 Agent' : '没有找到 Agent'}
         </div>
-      )}
 
-      {/* 记忆管理 */}
-      <MemoryPanel />
-      {/* 密钥与备份 */}
-      <VaultPanel />
-      {/* MCP 管理 */}
-      <McpPanel />
-      {/* 在线更新 */}
-      <UpdatePanel />
+        <div className="agent-list-summary">
+          <span>{loading ? <span role="status">正在读取 Agent 状态…</span> : error && agents.length === 0 ? '列表暂不可用' : `显示 ${filteredAgents.length} / ${agents.length} 款 Agent`}</span>
+          <span>{selectedAgent ? `当前选择：${selectedAgent.name}` : '尚未选择 Agent'}</span>
+        </div>
+
+        <div className="agent-list" aria-label="Agent 列表" aria-busy={loading}>
+          {filteredAgents.map((agent) => <AgentCard key={agent.id} agent={agent} busy={loading} selected={selectedAgentId === agent.id} onInstall={installAgent} onUninstall={uninstallAgent} onSelect={selectAgent} />)}
+          {loading && agents.length === 0 && <div className="empty-state agent-empty"><Icon name="agents" size={28} /><h2>正在加载 Agent</h2><p>读取注册表与本地安装状态。</p></div>}
+          {!loading && error && agents.length === 0 && <div className="empty-state agent-empty"><Icon name="alert" size={28} /><h2>暂时无法读取 Agent 列表</h2><p>检查桌面后端连接后重试。</p><button type="button" className="button" onClick={() => { void loadAgents(); }}><Icon name="refresh" size={15} />重新加载</button></div>}
+          {!loading && (!error || agents.length > 0) && filteredAgents.length === 0 && (
+            <div className="empty-state agent-empty">
+              <Icon name={query ? 'search' : 'agents'} size={28} />
+              <h2>{query ? '没有匹配的 Agent' : filter === 'installed' ? '还没有检测到已安装的 Agent' : filter === 'popular' ? '暂无热度推荐' : '暂无可显示的 Agent'}</h2>
+              <p>{query ? '试试其他名称、ID 或描述关键词。' : filter === 'installed' ? '无法自动检测的 Agent 不会计入已安装列表。' : '刷新列表，或更换筛选条件。'}</p>
+              {(query || filter !== 'all') && <button type="button" className="button" onClick={resetFilters}>查看全部 Agent</button>}
+            </div>
+          )}
+        </div>
+      </div>
+      <p className="agent-workspace-note"><Icon name="info" size={14} />安装状态来自本地检测；无法检测时显示未知。安装与卸载均需确认。</p>
     </div>
   );
 };
