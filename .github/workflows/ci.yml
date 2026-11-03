@@ -142,14 +142,61 @@ jobs:
         run: |
           test "$(tr -d '\r\n' < BUILD_COMMIT.txt)" = "$GITHUB_SHA"
           sha256sum --check SHA256SUMS.txt
-      - name: Publish new version (never overwrite an existing release)
+      - name: Stage, verify and publish new version (never overwrite a release)
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           version=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          if gh release view "v$version" >/dev/null 2>&1; then
-            echo "Release v$version already exists; preserving it. Bump the app version for another release."
-            exit 0
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag="v$version"
+          installer_name="AgentDeck_${version}_x64-setup.exe"
+          test -f "installer/$installer_name"
+          test "$(find installer -type f | wc -l)" -eq 3
+          expected_checksums=$(cd installer && sha256sum "$installer_name")
+          test "$(tr -d '\r' < installer/SHA256SUMS.txt)" = "$expected_checksums"
+
+          # Listing must succeed; an API/network error is not evidence of absence.
+          existing_tags=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name')
+          if grep -Fxq "$tag" <<< "$existing_tags"; then
+            echo "::error::Release $tag already exists. Preserve it and verify it manually; this workflow never overwrites or silently accepts existing releases."
+            exit 1
           fi
-          gh release create "v$version" installer/*-setup.exe installer/SHA256SUMS.txt installer/BUILD_COMMIT.txt \
-            --target "$GITHUB_SHA" --title "AgentDeck v$version" --notes-file docs/RELEASE-1.1.0.md --latest
+
+          tag_commit() {
+            git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}" |
+              awk -v ref="refs/tags/$tag" '$2 == ref { tag = $1 } $2 == ref "^{}" { peeled = $1 } END { print peeled ? peeled : tag }'
+          }
+          remote_commit=$(tag_commit)
+          if [ -z "$remote_commit" ]; then
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+          elif [ "$remote_commit" != "$GITHUB_SHA" ]; then
+            echo "::error::Tag $tag points to $remote_commit, not $GITHUB_SHA. Refusing to publish."
+            exit 1
+          fi
+          remote_commit=$(tag_commit)
+          test "$remote_commit" = "$GITHUB_SHA"
+
+          # Keep assets private until their uploaded bytes and source tag are verified.
+          gh release create "$tag" "installer/$installer_name" installer/SHA256SUMS.txt installer/BUILD_COMMIT.txt \
+            --verify-tag --target "$GITHUB_SHA" --title "AgentDeck v$version" --notes-file "docs/RELEASE-$version.md" --draft --latest=false
+          is_draft=$(gh release view "$tag" --json isDraft --jq .isDraft)
+          test "$is_draft" = true
+          gh release download "$tag" --dir verified \
+            --pattern "$installer_name" --pattern SHA256SUMS.txt --pattern BUILD_COMMIT.txt
+          for file in "$installer_name" SHA256SUMS.txt BUILD_COMMIT.txt; do
+            cmp "installer/$file" "verified/$file"
+          done
+          test "$(tr -d '\r\n' < verified/BUILD_COMMIT.txt)" = "$GITHUB_SHA"
+          (cd verified && sha256sum --check --strict SHA256SUMS.txt)
+          remote_commit=$(tag_commit)
+          test "$remote_commit" = "$GITHUB_SHA"
+
+          # Latest remains the signed registry feed; this is an installer-only release.
+          gh release edit "$tag" --draft=false --latest=false
+          is_draft=$(gh release view "$tag" --json isDraft --jq .isDraft)
+          test "$is_draft" = false
+          remote_commit=$(tag_commit)
+          test "$remote_commit" = "$GITHUB_SHA"

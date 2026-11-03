@@ -13,9 +13,17 @@ This release hardens and completes the existing Windows desktop workflow without
 
 ## Verify this download
 
+After the release gates pass, download the installer from the explicit [AgentDeck v1.1.0 release page](https://github.com/MOSHOULI/agentdeck/releases/tag/v1.1.0). A missing page means this installer has not yet been published.
+
 `SHA256SUMS.txt` identifies installer bytes. `BUILD_COMMIT.txt` identifies the exact source revision used by the release build. Compare both with the successful CI run for the release commit.
 
+CI first uploads a draft release, downloads its assets again, and verifies the installer bytes, checksums, build commit and actual Git tag commit before publishing. An existing release (including a draft) or a tag pointing to another commit stops publication for manual review; no existing assets are overwritten. A failed upload or verification can leave an unpublished draft that must be inspected before any retry.
+
 **The Windows installer is not Authenticode-signed.** Checksums are integrity evidence, not publisher certificate validation.
+
+## Installer and registry release channels
+
+This installer-only release is published with `--latest=false`. The application's registry update check uses GitHub's `latest` download endpoint, which must continue to serve the existing signed registry manifest and signature. Use the explicit v1.1.0 link above for the desktop installer; the Latest label identifies the preserved registry feed, not the newest desktop binary. No new signed registry update is included because the original signing private key is unavailable. Signature and download failures remain errors, and the existing trust anchor is unchanged.
 
 ## Scope and known limitations
 
