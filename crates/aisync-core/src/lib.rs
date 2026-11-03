@@ -45,3 +45,43 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Resolve the user profile used by all application data and source adapters.
+/// The explicit absolute override is used by the isolated test runner on every
+/// platform; Windows Known Folder APIs ignore HOME/USERPROFILE overrides.
+pub fn home_dir() -> Option<std::path::PathBuf> {
+    resolve_home(std::env::var_os("AGENTDECK_TEST_HOME"), dirs::home_dir)
+}
+
+fn resolve_home(
+    override_path: Option<std::ffi::OsString>,
+    system_home: impl FnOnce() -> Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    match override_path {
+        Some(path) => {
+            let path = std::path::PathBuf::from(path);
+            path.is_absolute().then_some(path)
+        }
+        None => system_home(),
+    }
+}
+
+#[cfg(test)]
+mod home_tests {
+    use super::*;
+    #[test]
+    fn explicit_home_wins_without_calling_platform_profile_api() {
+        let temporary = std::env::temp_dir();
+        assert_eq!(
+            resolve_home(Some(temporary.clone().into_os_string()), || panic!(
+                "must not consult real profile"
+            )),
+            Some(temporary)
+        );
+        assert_eq!(
+            resolve_home(Some("relative".into()), || panic!("must fail closed")),
+            None
+        );
+        assert_eq!(resolve_home(None, || None), None);
+    }
+}

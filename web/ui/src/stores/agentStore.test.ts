@@ -19,6 +19,8 @@ const agents: AgentInfo[] = [
     id: 'opencode',
     name: 'OpenCode',
     installed: false,
+    canInstall: true,
+    canUninstall: true,
     authVerified: false,
     source: 'open',
     uiType: 'all',
@@ -32,6 +34,8 @@ const agents: AgentInfo[] = [
     id: 'cli-tool',
     name: 'CLI Tool',
     installed: false,
+    canInstall: true,
+    canUninstall: true,
     authVerified: false,
     source: 'open',
     uiType: 'cli',
@@ -64,4 +68,39 @@ describe('agentStore', () => {
     expect(useAgentStore.getState().agents).toHaveLength(0);
     expect(useAgentStore.getState().loading).toBe(false);
   });
+});
+
+it('serializes installer calls even before a React rerender', async () => {
+  useAgentStore.setState({ loading: false });
+  let resolve!: (outcome: bridge.InstallOutcome) => void;
+  vi.mocked(bridge.installAgent).mockReset().mockImplementation(() => new Promise((done) => { resolve = done; }));
+  vi.mocked(bridge.getAgents).mockResolvedValue(agents);
+  const first = useAgentStore.getState().installAgent('opencode');
+  await useAgentStore.getState().installAgent('opencode');
+  await useAgentStore.getState().uninstallAgent('opencode');
+  expect(bridge.installAgent).toHaveBeenCalledTimes(1);
+  resolve({ warnings: [] });
+  await first;
+  expect(useAgentStore.getState().loading).toBe(false);
+});
+
+it('refreshes installed state after a configuration failure without claiming rollback', async () => {
+  useAgentStore.setState({ agents, loading: false, error: null });
+  vi.mocked(bridge.installAgent).mockRejectedValueOnce(new Error('configuration write failed'));
+  vi.mocked(bridge.getAgents).mockResolvedValueOnce([{ ...agents[0], installed: true }]);
+  await useAgentStore.getState().installAgent('opencode');
+  expect(useAgentStore.getState().agents[0].installed).toBe(true);
+  expect(useAgentStore.getState().error).toContain('软件可能已安装');
+  expect(useAgentStore.getState().error).toContain('configuration write failed');
+  expect(useAgentStore.getState().loading).toBe(false);
+});
+
+it('surfaces skipped configuration warnings without calling installation failed', async () => {
+  useAgentStore.setState({ loading: false, error: null, notice: null });
+  vi.mocked(bridge.installAgent).mockResolvedValueOnce({ warnings: ['model_config: no adapter'] });
+  vi.mocked(bridge.getAgents).mockResolvedValueOnce([{ ...agents[0], installed: true }]);
+  await useAgentStore.getState().installAgent('opencode');
+  expect(useAgentStore.getState().error).toBeNull();
+  expect(useAgentStore.getState().notice).toContain('model_config: no adapter');
+  expect(useAgentStore.getState().notice).toContain('软件已安装');
 });

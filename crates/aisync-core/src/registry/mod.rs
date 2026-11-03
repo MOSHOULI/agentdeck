@@ -47,6 +47,8 @@ pub enum UiType {
 /// 安装配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstallConfig {
+    #[serde(default)]
+    pub extension_id: Option<String>,
     pub method: InstallMethod,
     #[serde(default)]
     pub command: Option<String>,
@@ -164,7 +166,22 @@ pub fn parse_registry(content: &str) -> crate::Result<RegistryDoc> {
     let mut doc: RegistryDoc = serde_json::from_str(content)
         .map_err(|e| crate::Error::Other(format!("注册表 JSON 解析失败: {}", e)))?;
 
+    if doc.version != 3 {
+        return Err(crate::Error::Other(format!(
+            "Unsupported registry schema: {}",
+            doc.version
+        )));
+    }
     for (key, agent) in doc.agents.iter_mut() {
+        if key.is_empty()
+            || key == "."
+            || key == ".."
+            || !key
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        {
+            return Err(crate::Error::Other(format!("Invalid agent id: {key}")));
+        }
         agent.id = key.clone();
     }
     Ok(doc)
@@ -177,31 +194,195 @@ pub fn load_registry(path: &std::path::Path) -> crate::Result<RegistryDoc> {
     parse_registry(&content)
 }
 
-/// 运行时注册表目录：~/.agentdeck/registry/（在线更新写入处）
-pub fn runtime_registry_dir() -> crate::Result<std::path::PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| crate::Error::Other("无法定位用户主目录".into()))?;
-    Ok(home.join(".agentdeck").join("registry"))
+/// Explicit data locations keep tests and callers independent of process HOME.
+#[derive(Debug, Clone)]
+pub struct DataPaths {
+    pub registry_dir: std::path::PathBuf,
 }
 
-/// 运行时优先加载注册表：数据目录有文件用它，否则用编译期内置
-pub fn load_registry_runtime() -> crate::Result<RegistryDoc> {
-    const BUILTIN: &str = include_str!("../../../../agents/registry-v3.json");
-    let runtime = runtime_registry_dir()?.join("registry-v3.json");
-    if runtime.exists() {
-        load_registry(&runtime)
-    } else {
-        parse_registry(BUILTIN)
+impl DataPaths {
+    pub fn from_data_dir(data_dir: impl AsRef<std::path::Path>) -> Self {
+        Self {
+            registry_dir: data_dir.as_ref().join("registry"),
+        }
+    }
+
+    pub fn discover() -> crate::Result<Self> {
+        let home =
+            crate::home_dir().ok_or_else(|| crate::Error::Other("无法定位用户主目录".into()))?;
+        Ok(Self::from_data_dir(home.join(".agentdeck")))
     }
 }
 
-/// 运行时优先读取 MCP 注册表内容
+/// Serializes readers and writers across processes. OS releases the lock on crash;
+/// never unlink the inode, which could let another process lock a different file.
+pub(crate) fn lock_and_recover(paths: &DataPaths) -> crate::Result<std::fs::File> {
+    let parent = paths
+        .registry_dir
+        .parent()
+        .ok_or_else(|| crate::Error::Other("Invalid registry directory".into()))?;
+    std::fs::create_dir_all(parent)?;
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(parent.join("registry-update.lock"))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        match lock.try_lock() {
+            Ok(()) => break,
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(crate::Error::Other("Registry lock timed out; retry".into()));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+        }
+    }
+    recover_locked(paths)?;
+    Ok(lock)
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct UpdateJournal {
+    pub stage: String,
+    pub backup: String,
+    pub had_previous: bool,
+}
+
+pub(crate) fn sync_directory(path: &std::path::Path) -> crate::Result<()> {
+    #[cfg(unix)]
+    std::fs::File::open(path)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+fn recover_locked(paths: &DataPaths) -> crate::Result<()> {
+    let parent = paths.registry_dir.parent().unwrap();
+    let journal_path = parent.join("registry-update.json");
+    if journal_path
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        return Err(crate::Error::Other(
+            "Registry recovery journal must not be a symbolic link".into(),
+        ));
+    }
+    let data = match std::fs::read(&journal_path) {
+        Ok(data) => data,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    let journal: UpdateJournal = serde_json::from_slice(&data)
+        .map_err(|e| crate::Error::Other(format!("Invalid registry recovery journal: {e}")))?;
+    for (name, prefix) in [
+        (&journal.stage, ".registry-stage-"),
+        (&journal.backup, "registry-backup-"),
+    ] {
+        if !name
+            .strip_prefix(prefix)
+            .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
+        {
+            return Err(crate::Error::Other("Unsafe registry recovery path".into()));
+        }
+    }
+    let backup = parent.join(&journal.backup);
+    for path in [&backup, &parent.join(&journal.stage), &paths.registry_dir] {
+        if path
+            .symlink_metadata()
+            .is_ok_and(|m| m.file_type().is_symlink())
+        {
+            return Err(crate::Error::Other(
+                "Registry recovery directories must not be symbolic links".into(),
+            ));
+        }
+    }
+    if !paths.registry_dir.try_exists()? && journal.had_previous {
+        // An interrupted commit rolls back rather than exposing embedded data.
+        std::fs::rename(&backup, &paths.registry_dir)?;
+        sync_directory(parent)?;
+    }
+    let stage = parent.join(&journal.stage);
+    if stage.try_exists()? {
+        std::fs::remove_dir_all(stage)?;
+    }
+    std::fs::remove_file(journal_path)?;
+    sync_directory(parent)?;
+    Ok(())
+}
+
+pub fn runtime_registry_dir() -> crate::Result<std::path::PathBuf> {
+    Ok(DataPaths::discover()?.registry_dir)
+}
+
+pub fn load_registry_runtime() -> crate::Result<RegistryDoc> {
+    load_registry_at(&DataPaths::discover()?)
+}
+
+pub fn load_registry_at(paths: &DataPaths) -> crate::Result<RegistryDoc> {
+    let _lock = lock_and_recover(paths)?;
+    installed_version_locked(paths, env!("CARGO_PKG_VERSION"))?;
+    const BUILTIN: &str = include_str!("../../../../agents/registry-v3.json");
+    let runtime = paths.registry_dir.join("registry-v3.json");
+    match std::fs::read_to_string(runtime) {
+        Ok(content) => parse_registry(&content),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => parse_registry(BUILTIN),
+        Err(e) => Err(e.into()),
+    }
+}
+
 pub fn load_mcp_registry_runtime() -> crate::Result<String> {
+    load_mcp_registry_at(&DataPaths::discover()?)
+}
+
+pub fn load_mcp_registry_at(paths: &DataPaths) -> crate::Result<String> {
+    let _lock = lock_and_recover(paths)?;
+    installed_version_locked(paths, env!("CARGO_PKG_VERSION"))?;
     const BUILTIN: &str = include_str!("../../../../agents/mcp-registry.json");
-    let runtime = runtime_registry_dir()?.join("mcp-registry.json");
-    if runtime.exists() {
-        Ok(std::fs::read_to_string(&runtime)?)
-    } else {
-        Ok(BUILTIN.to_string())
+    match std::fs::read_to_string(paths.registry_dir.join("mcp-registry.json")) {
+        Ok(content) => Ok(content),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(BUILTIN.to_string()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// The manifest version travels in the same directory transaction as its files.
+pub fn installed_version_at(paths: &DataPaths, builtin: &str) -> crate::Result<String> {
+    let _lock = lock_and_recover(paths)?;
+    installed_version_locked(paths, builtin)
+}
+
+pub(crate) fn installed_version_locked(paths: &DataPaths, builtin: &str) -> crate::Result<String> {
+    match std::fs::read_to_string(paths.registry_dir.join("installed-version")) {
+        Ok(version) if crate::update::valid_version(version.trim()) => {
+            for name in crate::update::REGISTRY_FILES {
+                if !paths.registry_dir.join(name).is_file() {
+                    return Err(crate::Error::Other(format!(
+                        "Installed registry is incomplete: {name}"
+                    )));
+                }
+            }
+            Ok(version.trim().to_string())
+        }
+        Ok(_) => Err(crate::Error::Other(
+            "Invalid installed registry version".into(),
+        )),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Pre-versioned installations cannot truthfully claim the binary's
+            // embedded data version. Treat them as an unknown legacy baseline.
+            if crate::update::REGISTRY_FILES
+                .iter()
+                .any(|name| paths.registry_dir.join(name).exists())
+            {
+                Ok("0.0.0".to_string())
+            } else {
+                Ok(builtin.to_string())
+            }
+        }
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -259,5 +440,56 @@ mod tests {
     #[test]
     fn rejects_invalid_json() {
         assert!(parse_registry("{ not json").is_err());
+    }
+    #[test]
+    fn runtime_loader_prefers_installed_and_only_falls_back_when_absent() {
+        let root =
+            std::env::temp_dir().join(format!("agentdeck-registry-test-{}", uuid::Uuid::new_v4()));
+        let paths = DataPaths::from_data_dir(&root);
+        assert!(!load_registry_at(&paths).unwrap().agents.is_empty());
+        std::fs::create_dir_all(&paths.registry_dir).unwrap();
+        let mut doc = parse_registry(REGISTRY_JSON).unwrap();
+        doc.description = "runtime marker".into();
+        std::fs::write(
+            paths.registry_dir.join("registry-v3.json"),
+            serde_json::to_vec(&doc).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            load_registry_at(&paths).unwrap().description,
+            "runtime marker"
+        );
+        std::fs::write(paths.registry_dir.join("registry-v3.json"), "invalid").unwrap();
+        assert!(load_registry_at(&paths).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn concurrent_readers_wait_for_short_lived_writer_without_spurious_errors() {
+        let root = std::env::temp_dir().join(format!(
+            "agentdeck-registry-concurrent-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let paths = DataPaths::from_data_dir(&root);
+        let lock = lock_and_recover(&paths).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(9));
+        let readers: Vec<_> = (0..8)
+            .map(|_| {
+                let paths = paths.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    assert!(!load_registry_at(&paths).unwrap().agents.is_empty());
+                    assert!(!load_mcp_registry_at(&paths).unwrap().is_empty());
+                    assert_eq!(installed_version_at(&paths, "1.1.0").unwrap(), "1.1.0");
+                })
+            })
+            .collect();
+        barrier.wait();
+        std::thread::sleep(std::time::Duration::from_millis(80));
+        drop(lock);
+        for reader in readers {
+            reader.join().unwrap();
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

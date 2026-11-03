@@ -4,7 +4,7 @@
  * 备份：事件驱动 git 备份列表，按操作回滚 / 按时间点整体恢复。
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import type { ApiKeyInfo, BackupInfo } from '../bridge';
 import * as bridge from '../bridge';
 
@@ -38,6 +38,7 @@ export const VaultPanel: React.FC = () => {
   const [name, setName] = useState('');
   const [provider, setProvider] = useState('');
   const [key, setKey] = useState('');
+  const operation = useRef(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -51,10 +52,12 @@ export const VaultPanel: React.FC = () => {
   }, []);
 
   const onSave = async () => {
+    if (operation.current) return;
     if (!name.trim() || !key.trim()) {
       setNotice('名称和密钥不能为空');
       return;
     }
+    operation.current = true;
     setBusy('save');
     setNotice(null);
     try {
@@ -67,11 +70,14 @@ export const VaultPanel: React.FC = () => {
     } catch (e) {
       setNotice(`保存失败: ${e}`);
     } finally {
+      operation.current = false;
       setBusy(null);
     }
   };
 
   const onCopy = async (info: ApiKeyInfo) => {
+    if (operation.current) return;
+    operation.current = true;
     setBusy(`copy-${info.agentId}`);
     try {
       const plain = await bridge.getApiKey(info.agentId);
@@ -84,25 +90,31 @@ export const VaultPanel: React.FC = () => {
     } catch (e) {
       setNotice(`复制失败: ${e}`);
     } finally {
+      operation.current = false;
       setBusy(null);
     }
   };
 
   const onDelete = async (info: ApiKeyInfo) => {
+    if (operation.current) return;
     if (!window.confirm(`确认删除 ${info.agentId} 的 API Key？删除前会自动备份。`)) return;
+    operation.current = true;
     setBusy(`del-${info.agentId}`);
     try {
-      await bridge.deleteApiKey(info.agentId);
+      const deleted = await bridge.deleteApiKey(info.agentId);
       await refresh();
-      setNotice(`已删除 ${info.agentId}`);
+      setNotice(deleted ? `已删除 ${info.agentId}` : `密钥 ${info.agentId} 已不存在`);
     } catch (e) {
       setNotice(`删除失败: ${e}`);
     } finally {
+      operation.current = false;
       setBusy(null);
     }
   };
 
   const onImportV2 = async () => {
+    if (operation.current) return;
+    operation.current = true;
     setBusy('import-v2');
     try {
       const count = await bridge.importV2Keys();
@@ -111,11 +123,13 @@ export const VaultPanel: React.FC = () => {
     } catch (e) {
       setNotice(`V2 导入失败: ${e}`);
     } finally {
+      operation.current = false;
       setBusy(null);
     }
   };
 
   const onRollback = async (info: BackupInfo, full: boolean) => {
+    if (operation.current) return;
     const label = full ? '整体恢复到该时间点' : '按操作回滚';
     if (
       !window.confirm(
@@ -123,6 +137,7 @@ export const VaultPanel: React.FC = () => {
       )
     )
       return;
+    operation.current = true;
     setBusy(`restore-${info.hash}`);
     try {
       const restored = await bridge.restoreBackup(info.timestamp, full);
@@ -131,6 +146,7 @@ export const VaultPanel: React.FC = () => {
     } catch (e) {
       setNotice(`回滚失败: ${e}`);
     } finally {
+      operation.current = false;
       setBusy(null);
     }
   };
@@ -166,13 +182,13 @@ export const VaultPanel: React.FC = () => {
         <input
           value={key}
           onChange={(e) => setKey(e.target.value)}
-          placeholder="API Key（加密存储，绝不落盘明文）"
+          placeholder="API Key（由本机 vault 加密存储）"
           style={inputStyle}
           type="password"
         />
         <button
           onClick={onSave}
-          disabled={busy === 'save'}
+          disabled={busy !== null}
           style={{
             padding: '8px 18px',
             borderRadius: 8,
@@ -190,7 +206,7 @@ export const VaultPanel: React.FC = () => {
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
         <button
           onClick={onImportV2}
-          disabled={busy === 'import-v2'}
+          disabled={busy !== null}
           style={{
             padding: '6px 14px',
             borderRadius: 8,
@@ -206,7 +222,7 @@ export const VaultPanel: React.FC = () => {
       </div>
 
       {notice && (
-        <div style={{ fontSize: 13, color: '#6ee7b7', marginBottom: 10 }}>{notice}</div>
+        <div role="status" style={{ fontSize: 13, color: '#6ee7b7', marginBottom: 10 }}>{notice}</div>
       )}
 
       {/* 密钥列表 */}
@@ -246,14 +262,14 @@ export const VaultPanel: React.FC = () => {
               <code style={{ fontSize: 13, color: '#d1d5db', flex: 1 }}>{info.maskedKey}</code>
               <button
                 onClick={() => onCopy(info)}
-                disabled={busy === `copy-${info.agentId}`}
+                disabled={busy !== null}
                 style={smallBtn}
               >
                 复制
               </button>
               <button
                 onClick={() => onDelete(info)}
-                disabled={busy === `del-${info.agentId}`}
+                disabled={busy !== null}
                 style={{ ...smallBtn, borderColor: '#dc2626', color: '#fca5a5' }}
               >
                 删除
@@ -291,14 +307,14 @@ export const VaultPanel: React.FC = () => {
               <span style={{ fontSize: 13, color: '#d1d5db', flex: 1 }}>{info.message}</span>
               <button
                 onClick={() => onRollback(info, false)}
-                disabled={busy === `restore-${info.hash}`}
+                disabled={busy !== null}
                 style={smallBtn}
               >
                 按操作回滚
               </button>
               <button
                 onClick={() => onRollback(info, true)}
-                disabled={busy === `restore-${info.hash}`}
+                disabled={busy !== null}
                 style={{ ...smallBtn, borderColor: '#b45309', color: '#fcd34d' }}
               >
                 整体恢复

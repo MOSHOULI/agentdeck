@@ -6,7 +6,8 @@
 
 use std::path::Path;
 
-use zeroize::Zeroize;
+#[cfg(windows)]
+use zeroize::Zeroizing;
 
 use crate::Error;
 
@@ -47,6 +48,8 @@ mod dpapi {
                 &mut out,
             )
         };
+        use zeroize::Zeroize;
+        buf.zeroize();
         if ret == 0 {
             return Err(crate::Error::VaultError(format!(
                 "DPAPI 加密失败: {}",
@@ -56,6 +59,8 @@ mod dpapi {
         let result =
             unsafe { std::slice::from_raw_parts(out.pbData, out.cbData as usize) }.to_vec();
         unsafe {
+            use zeroize::Zeroize;
+            std::slice::from_raw_parts_mut(out.pbData, out.cbData as usize).zeroize();
             LocalFree(out.pbData as HLOCAL);
         }
         Ok(result)
@@ -88,17 +93,21 @@ mod dpapi {
         let result =
             unsafe { std::slice::from_raw_parts(out.pbData, out.cbData as usize) }.to_vec();
         unsafe {
+            use zeroize::Zeroize;
+            std::slice::from_raw_parts_mut(out.pbData, out.cbData as usize).zeroize();
             LocalFree(out.pbData as HLOCAL);
         }
         Ok(result)
     }
 }
 
+#[cfg(windows)]
 fn base64_encode(data: &[u8]) -> String {
     use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
     B64.encode(data)
 }
 
+#[cfg(windows)]
 fn base64_decode(text: &str) -> crate::Result<Vec<u8>> {
     use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
     B64.decode(text.trim())
@@ -127,6 +136,23 @@ pub(crate) fn dpapi_decrypt_bytes(_data: &[u8]) -> crate::Result<Vec<u8>> {
     Err(Error::VaultError("非 Windows 平台暂不支持 DPAPI".into()))
 }
 
+fn reject_symlinks(path: &Path) -> crate::Result<()> {
+    for ancestor in path.ancestors() {
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(Error::VaultError(format!(
+                    "路径不允许符号链接: {}",
+                    ancestor.display()
+                )));
+            }
+            Ok(_) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
 /// 原子写（临时文件 + 替换）
 pub(crate) fn atomic_write(path: &Path, content: &str) -> crate::Result<()> {
     atomic_write_bytes(path, content.as_bytes())
@@ -134,14 +160,27 @@ pub(crate) fn atomic_write(path: &Path, content: &str) -> crate::Result<()> {
 
 /// 原子写二进制（临时文件 + 替换）
 pub(crate) fn atomic_write_bytes(path: &Path, content: &[u8]) -> crate::Result<()> {
+    reject_symlinks(path)?;
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)?;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let tmp = parent.join(format!(".tmp-{}", nanos));
-    std::fs::write(&tmp, content)?;
+    use std::io::Write;
+    let tmp = parent.join(format!(".tmp-{}", uuid::Uuid::new_v4()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let result = (|| -> std::io::Result<()> {
+        let mut file = options.open(&tmp)?;
+        file.write_all(content)?;
+        file.sync_all()
+    })();
+    if let Err(error) = result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error.into());
+    }
 
     #[cfg(windows)]
     {
@@ -169,48 +208,43 @@ pub(crate) fn atomic_write_bytes(path: &Path, content: &[u8]) -> crate::Result<(
     }
     #[cfg(not(windows))]
     {
-        std::fs::rename(&tmp, path)?;
+        if let Err(error) = std::fs::rename(&tmp, path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(error.into());
+        }
         Ok(())
     }
 }
 
-/// vault 目录级文件锁（跨进程/跨线程互斥，create_new + 轮询）
+/// OS-backed advisory lock: released on panic/process exit, never stolen by age.
+/// The persistent lock file must not be removed (unlinking splits lock ownership).
 pub(crate) fn with_file_lock<T>(
     dir: &Path,
     f: impl FnOnce() -> crate::Result<T>,
 ) -> crate::Result<T> {
+    reject_symlinks(dir)?;
     std::fs::create_dir_all(dir)?;
     let lock_path = dir.join(".vault.lock");
+    reject_symlinks(&lock_path)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let lock = options.open(lock_path)?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-        {
-            Ok(_) => {
-                let result = f();
-                let _ = std::fs::remove_file(&lock_path);
-                return result;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                // 崩溃残留的锁文件：超过 30 秒视为陈旧，强制接管
-                if let Ok(meta) = std::fs::metadata(&lock_path)
-                    && let Ok(modified) = meta.modified()
-                    && modified
-                        .elapsed()
-                        .map(|d| d.as_secs() > 30)
-                        .unwrap_or(false)
-                {
-                    let _ = std::fs::remove_file(&lock_path);
-                    continue;
-                }
-                if std::time::Instant::now() > deadline {
+        match lock.try_lock() {
+            Ok(()) => return f(), // Dropping the file releases its lock, also on unwind.
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if std::time::Instant::now() >= deadline {
                     return Err(Error::VaultError("vault 锁等待超时".into()));
                 }
                 std::thread::sleep(std::time::Duration::from_millis(25));
             }
-            Err(e) => return Err(e.into()),
+            Err(std::fs::TryLockError::Error(e)) => return Err(e.into()),
         }
     }
 }
@@ -228,20 +262,27 @@ pub(crate) fn load_or_create_master_unlocked(dir: &Path) -> crate::Result<[u8; M
     if path.exists() {
         return load_master(dir);
     }
-    let mut key = [0u8; MASTER_LEN];
-    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut key);
-    let blob = dpapi::encrypt(&key)?;
+    // Existing ciphertext with a missing key is corruption, not a fresh vault.
+    if dir.join("vault.json").exists() {
+        return Err(Error::VaultError(
+            "主密钥丢失；拒绝生成替代密钥，请恢复原 master.key".into(),
+        ));
+    }
+    let mut key = Zeroizing::new([0u8; MASTER_LEN]);
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut *key);
+    let blob = dpapi::encrypt(&*key)?;
     atomic_write(&path, &base64_encode(&blob))?;
-    Ok(key)
+    Ok(*key)
 }
 
 /// 读取已存在的主密钥（V2 导入用；DPAPI 绑定当前用户，换用户会失败）
 #[cfg(windows)]
 pub fn load_master(dir: &Path) -> crate::Result<[u8; MASTER_LEN]> {
     let path = dir.join("master.key");
+    reject_symlinks(&path)?;
     let text = std::fs::read_to_string(&path)?;
     let blob = base64_decode(&text)?;
-    let mut key = dpapi::decrypt(&blob)?;
+    let key = Zeroizing::new(dpapi::decrypt(&blob)?);
     if key.len() != MASTER_LEN {
         return Err(Error::VaultError(format!(
             "主密钥长度异常: {}（应为 32）",
@@ -250,7 +291,6 @@ pub fn load_master(dir: &Path) -> crate::Result<[u8; MASTER_LEN]> {
     }
     let mut out = [0u8; MASTER_LEN];
     out.copy_from_slice(&key);
-    key.zeroize();
     Ok(out)
 }
 
@@ -259,6 +299,11 @@ pub fn load_or_create_master(_dir: &Path) -> crate::Result<[u8; MASTER_LEN]> {
     Err(Error::VaultError(
         "非 Windows 平台暂不支持 DPAPI 主密钥（M4 仅实现 Windows）".into(),
     ))
+}
+
+#[cfg(not(windows))]
+pub(crate) fn load_or_create_master_unlocked(dir: &Path) -> crate::Result<[u8; MASTER_LEN]> {
+    load_or_create_master(dir)
 }
 
 #[cfg(not(windows))]
@@ -301,5 +346,67 @@ mod tests {
         let blob = dpapi::encrypt(&master).unwrap();
         let back = dpapi::decrypt(&blob).unwrap();
         assert_eq!(master.as_slice(), back.as_slice());
+    }
+    #[test]
+    fn lock_released_after_panic_and_serializes_threads() {
+        let dir = temp_dir("lock");
+        let _ = std::panic::catch_unwind(|| {
+            let _ = with_file_lock(&dir, || -> crate::Result<()> { panic!("test unwind") });
+        });
+        with_file_lock(&dir, || Ok(())).unwrap();
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let dir = dir.clone();
+                let count = count.clone();
+                std::thread::spawn(move || {
+                    with_file_lock(&dir, || {
+                        use std::sync::atomic::Ordering;
+                        assert_eq!(count.fetch_add(1, Ordering::SeqCst), 0);
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        assert_eq!(count.fetch_sub(1, Ordering::SeqCst), 1);
+                        Ok(())
+                    })
+                    .unwrap()
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_is_private_and_replaces_existing() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("atomic");
+        let file = dir.join("secret");
+        atomic_write_bytes(&file, b"old").unwrap();
+        atomic_write_bytes(&file, b"new").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"new");
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(std::fs::read_dir(dir).unwrap().count(), 1);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unsupported_platform_never_creates_plaintext_master() {
+        let dir = temp_dir("unsupported");
+        assert!(load_or_create_master_unlocked(&dir).is_err());
+        assert!(load_or_create_master(&dir).is_err());
+        assert!(load_master(&dir).is_err());
+        assert!(!dir.join("master.key").exists());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn missing_master_with_existing_vault_never_rotates_key() {
+        let dir = temp_dir("missing-key");
+        std::fs::write(dir.join("vault.json"), br#"{"keys":{}}"#).unwrap();
+        assert!(load_or_create_master(&dir).is_err());
+        assert!(!dir.join("master.key").exists());
     }
 }

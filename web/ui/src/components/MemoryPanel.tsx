@@ -3,9 +3,10 @@
  * 采集 Codex/Claude/OpenCode 会话 → FTS5 搜索 → 注入记忆文件。
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useAgentStore } from '../stores/agentStore';
-import type { MemoryEntry } from '../bridge';
+import type { MemoryEntry, CollectionStatus } from '../bridge';
+import { getMemoryCollectionStatus, setMemoryCollectionEnabled } from '../bridge';
 
 const AGENTS = [
   { id: 'codex', label: 'Codex' },
@@ -24,10 +25,38 @@ function formatTime(ts: number): string {
 
 export const MemoryPanel: React.FC = () => {
   const { collectMemories, searchMemories, injectMemories, toggleAutoInject } = useAgentStore();
+  const [collection, setCollection] = useState<CollectionStatus | null>(null);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<MemoryEntry[]>([]);
+  const operation = useRef(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getMemoryCollectionStatus()
+      .then((status) => { if (active) setCollection(status); })
+      .catch((e) => { if (active) setNotice(`读取自动采集设置失败: ${e}`); });
+    return () => { active = false; };
+  }, []);
+
+  const onAutoCollection = async (enabled: boolean) => {
+    if (operation.current || !collection) return;
+    if (enabled && !window.confirm('启用后将立即并每小时读取 Codex、Claude 与 OpenCode 本地会话，保存到本机记忆库。确认允许自动采集？')) return;
+    operation.current = true;
+    setBusy('auto-collection');
+    setNotice(null);
+    try {
+      await setMemoryCollectionEnabled(enabled);
+      setCollection({ ...collection, enabled });
+      setNotice(enabled ? '已启用自动采集，可随时关闭。' : '已关闭自动采集；已有记忆不会删除。');
+    } catch (e) {
+      setNotice(`更新自动采集设置失败: ${e}`);
+    } finally {
+      operation.current = false;
+      setBusy(null);
+    }
+  };
 
   const refreshAll = async () => {
     const entries = await searchMemories('');
@@ -35,6 +64,8 @@ export const MemoryPanel: React.FC = () => {
   };
 
   const onCollect = async (agentId: string) => {
+    if (operation.current) return;
+    operation.current = true;
     setBusy(agentId);
     setNotice(null);
     try {
@@ -44,21 +75,31 @@ export const MemoryPanel: React.FC = () => {
     } catch (e) {
       setNotice(`采集失败: ${e}`);
     } finally {
+      operation.current = false;
       setBusy(null);
     }
   };
 
   const onSearch = async () => {
+    if (operation.current) return;
+    operation.current = true;
     setBusy('search');
     setNotice(null);
     try {
       setResults(await searchMemories(query));
+    } catch (e) {
+      setNotice(`搜索失败: ${e}`);
     } finally {
+      operation.current = false;
       setBusy(null);
     }
   };
 
   const onToggleAuto = async (entry: MemoryEntry, enabled: boolean) => {
+    if (operation.current) return;
+    operation.current = true;
+    setBusy(`toggle-${entry.id}`);
+    setNotice(null);
     const previous = entry.autoInject;
     setResults((prev) =>
       prev.map((r) => (r.id === entry.id ? { ...r, autoInject: enabled } : r))
@@ -70,17 +111,23 @@ export const MemoryPanel: React.FC = () => {
         prev.map((r) => (r.id === entry.id ? { ...r, autoInject: previous } : r))
       );
       setNotice(`切换自动注入失败: ${e}`);
+    } finally {
+      operation.current = false;
+      setBusy(null);
     }
   };
 
   const onInject = async (entry: MemoryEntry) => {
+    if (operation.current) return;
+    operation.current = true;
     setBusy(`inject-${entry.id}`);
     try {
       await injectMemories(entry.agentId, [entry.id]);
-      setNotice(`已注入到 ${entry.agentId} 的记忆文件`);
+      setNotice(`已导出到 ~/.agentdeck/memory/${entry.agentId}.md（不代表 Agent 已读取）`);
     } catch (e) {
       setNotice(`注入失败: ${e}`);
     } finally {
+      operation.current = false;
       setBusy(null);
     }
   };
@@ -99,13 +146,21 @@ export const MemoryPanel: React.FC = () => {
         🧠 记忆管理
       </h2>
 
+      <p style={{ color: "#9ca3af", fontSize: 13 }}>采集会读取所选 Agent 的本地会话，并保存到本机记忆库。请勿采集含敏感信息的会话。注入仅导出到 ~/.agentdeck/memory/，需自行让 Agent 读取；自动注入仅维护此导出文件。</p>
+      <label style={{ display: 'block', color: '#d1d5db', marginBottom: 14, fontSize: 13 }}>
+        <input type="checkbox" checked={collection?.enabled ?? false}
+          disabled={collection === null || busy !== null}
+          onChange={(e) => onAutoCollection(e.target.checked)} />
+        允许每小时自动采集本地会话（默认关闭；下方按钮仅手动采集）
+      </label>
+      {collection?.lastError && <p role="status">最近自动采集失败：{collection.lastError}</p>}
       {/* 采集按钮 */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
         {AGENTS.map((a) => (
           <button
             key={a.id}
             onClick={() => onCollect(a.id)}
-            disabled={busy === a.id}
+            disabled={busy !== null}
             style={{
               padding: '6px 14px',
               borderRadius: 8,
@@ -141,7 +196,7 @@ export const MemoryPanel: React.FC = () => {
         />
         <button
           onClick={onSearch}
-          disabled={busy === 'search'}
+          disabled={busy !== null}
           style={{
             padding: '8px 18px',
             borderRadius: 8,
@@ -157,13 +212,13 @@ export const MemoryPanel: React.FC = () => {
       </div>
 
       {notice && (
-        <div style={{ fontSize: 13, color: '#6ee7b7', marginBottom: 10 }}>{notice}</div>
+        <div role="status" style={{ fontSize: 13, color: '#6ee7b7', marginBottom: 10 }}>{notice}</div>
       )}
 
       {/* 结果 */}
       {results.length === 0 ? (
         <p style={{ color: '#6b7280', fontSize: 13 }}>
-          暂无记忆，先点击上方「采集」按钮同步会话历史。
+          暂无搜索结果。可搜索已有记忆，或点击「采集」导入本地会话历史。
         </p>
       ) : (
         <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
@@ -209,6 +264,7 @@ export const MemoryPanel: React.FC = () => {
                 <label style={{ fontSize: 12, color: '#9ca3af', display: 'flex', gap: 6 }}>
                   <input
                     type="checkbox"
+                    disabled={busy !== null}
                     checked={entry.autoInject}
                     onChange={(e) => onToggleAuto(entry, e.target.checked)}
                   />
@@ -216,7 +272,7 @@ export const MemoryPanel: React.FC = () => {
                 </label>
                 <button
                   onClick={() => onInject(entry)}
-                  disabled={busy === `inject-${entry.id}`}
+                  disabled={busy !== null}
                   style={{
                     padding: '4px 12px',
                     borderRadius: 6,

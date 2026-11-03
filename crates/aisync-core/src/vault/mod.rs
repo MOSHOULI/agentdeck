@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 use crate::Error;
 
@@ -45,7 +45,7 @@ struct KeyEntry {
 }
 
 fn home_dir() -> crate::Result<PathBuf> {
-    dirs::home_dir().ok_or_else(|| Error::Other("无法定位用户主目录".into()))
+    crate::home_dir().ok_or_else(|| Error::Other("无法定位用户主目录".into()))
 }
 
 fn default_vault_dir() -> crate::Result<PathBuf> {
@@ -103,16 +103,16 @@ fn decrypt(master: &[u8; 32], nonce_b64: &str, ct_b64: &str) -> crate::Result<St
         )));
     }
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(master));
-    let mut plain = cipher
+    let plain = cipher
         .decrypt(
             Nonce::from_slice(&nonce_bytes),
             Payload { msg: &ct, aad: AAD },
         )
         .map_err(|_| Error::VaultError("解密失败（主密钥不匹配或数据损坏）".into()))?;
-    let text = String::from_utf8(plain.clone())
-        .map_err(|_| Error::VaultError("解密结果非 UTF-8".into()))?;
-    plain.zeroize();
-    Ok(text)
+    String::from_utf8(plain).map_err(|e| {
+        let _plain = Zeroizing::new(e.into_bytes());
+        Error::VaultError("解密结果非 UTF-8".into())
+    })
 }
 
 fn load_file(dir: &Path) -> crate::Result<VaultFile> {
@@ -149,7 +149,7 @@ impl Vault {
     pub fn save(&self, name: &str, provider: &str, key: &str) -> crate::Result<()> {
         validate_name(name)?;
         keystore::with_file_lock(&self.dir, || {
-            let master = keystore::load_or_create_master_unlocked(&self.dir)?;
+            let master = Zeroizing::new(keystore::load_or_create_master_unlocked(&self.dir)?);
             let (nonce, ct) = encrypt(&master, key)?;
             let mut file = load_file(&self.dir)?;
             file.keys.insert(
@@ -168,28 +168,37 @@ impl Vault {
 
     /// 取明文密钥（复制用；主密钥不匹配时明确报错）
     pub fn get(&self, name: &str) -> crate::Result<Option<String>> {
-        let master = keystore::load_or_create_master(&self.dir)?;
-        let file = load_file(&self.dir)?;
-        match file.keys.get(name) {
-            None => Ok(None),
-            Some(entry) => decrypt(&master, &entry.nonce, &entry.ct).map(Some),
-        }
+        keystore::with_file_lock(&self.dir, || {
+            let file = load_file(&self.dir)?;
+            match file.keys.get(name) {
+                None => Ok(None),
+                Some(entry) => {
+                    let master = Zeroizing::new(keystore::load_master(&self.dir)?);
+                    decrypt(&master, &entry.nonce, &entry.ct).map(Some)
+                }
+            }
+        })
     }
 
     /// 列出密钥（脱敏）
     pub fn list(&self) -> crate::Result<Vec<KeyInfo>> {
-        let master = keystore::load_or_create_master(&self.dir)?;
-        let file = load_file(&self.dir)?;
-        let mut out = Vec::new();
-        for (name, entry) in file.keys {
-            let plain = decrypt(&master, &entry.nonce, &entry.ct)?;
-            out.push(KeyInfo {
-                name,
-                provider: entry.provider,
-                masked: mask_key(&plain),
-            });
-        }
-        Ok(out)
+        keystore::with_file_lock(&self.dir, || {
+            let file = load_file(&self.dir)?;
+            if file.keys.is_empty() {
+                return Ok(Vec::new());
+            }
+            let master = Zeroizing::new(keystore::load_master(&self.dir)?);
+            let mut out = Vec::new();
+            for (name, entry) in file.keys {
+                let plain = Zeroizing::new(decrypt(&master, &entry.nonce, &entry.ct)?);
+                out.push(KeyInfo {
+                    name,
+                    provider: entry.provider,
+                    masked: mask_key(&plain),
+                });
+            }
+            Ok(out)
+        })
     }
 
     /// 删除密钥，返回是否存在
@@ -238,29 +247,52 @@ fn import_from_v2_at(v2_dir: &Path, v3_dir: &Path) -> crate::Result<usize> {
     if !v2_file.exists() {
         return Ok(0);
     }
-    // V2 master.key 与 V3 同为 DPAPI 保护，可直接解密
-    let v2_master = keystore::load_master(v2_dir)?;
-    let text = std::fs::read_to_string(&v2_file)?;
-    let file: VaultFile = serde_json::from_str(&text)
-        .map_err(|e| Error::VaultError(format!("V2 vault.json 解析失败: {}", e)))?;
-
-    let v3 = Vault::open(v3_dir);
-    let mut count = 0usize;
-    for (name, entry) in file.keys {
-        if v3.get(&name)?.is_some() {
-            continue;
+    // Snapshot the source under its lock; release it before locking the target.
+    let imported = keystore::with_file_lock(v2_dir, || {
+        let master = Zeroizing::new(keystore::load_master(v2_dir)?);
+        let file = load_file(v2_dir)?;
+        let mut imported = Vec::new();
+        for (name, entry) in file.keys {
+            validate_name(&name)?;
+            let plain = Zeroizing::new(decrypt(&master, &entry.nonce, &entry.ct)?);
+            imported.push((name, entry.provider, plain));
         }
-        let plain = decrypt(&v2_master, &entry.nonce, &entry.ct)?;
-        v3.save(&name, &entry.provider, &plain)?;
-        count += 1;
-    }
-    Ok(count)
+        Ok(imported)
+    })?;
+    keystore::with_file_lock(v3_dir, || {
+        let mut file = load_file(v3_dir)?;
+        let imported: Vec<_> = imported
+            .into_iter()
+            .filter(|(name, _, _)| !file.keys.contains_key(name))
+            .collect();
+        if imported.is_empty() {
+            return Ok(0);
+        }
+        let master = Zeroizing::new(keystore::load_or_create_master_unlocked(v3_dir)?);
+        let count = imported.len();
+        for (name, provider, plain) in imported {
+            let (nonce, ct) = encrypt(&master, &plain)?;
+            file.keys.insert(
+                name,
+                KeyEntry {
+                    provider,
+                    nonce,
+                    ct,
+                },
+            );
+        }
+        let text = serde_json::to_string_pretty(&file)
+            .map_err(|e| Error::VaultError(format!("序列化失败: {e}")))?;
+        keystore::atomic_write(&v3_dir.join("vault.json"), &text)?;
+        Ok(count)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
     fn temp_dir(tag: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

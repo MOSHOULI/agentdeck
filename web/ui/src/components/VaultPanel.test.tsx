@@ -55,7 +55,7 @@ describe('VaultPanel', () => {
     fireEvent.change(screen.getByPlaceholderText('名称（如 codex）'), {
       target: { value: 'claude-code' },
     });
-    fireEvent.change(screen.getByPlaceholderText('API Key（加密存储，绝不落盘明文）'), {
+    fireEvent.change(screen.getByPlaceholderText('API Key（由本机 vault 加密存储）'), {
       target: { value: 'sk-claude-123456' },
     });
     fireEvent.click(screen.getByText('保存'));

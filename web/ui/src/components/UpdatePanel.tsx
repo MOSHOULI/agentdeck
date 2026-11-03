@@ -3,7 +3,7 @@
  * 启动时后台静默检查注册表更新；有新版提示并一键应用（ed25519 验签 + SHA-256 校验）。
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import type { UpdateSummary } from '../bridge';
 import * as bridge from '../bridge';
 
@@ -16,16 +16,21 @@ type UpdateState =
 
 export const UpdatePanel: React.FC = () => {
   const [state, setState] = useState<UpdateState>({ kind: 'checking' });
-  const [version, setVersion] = useState('v1.0.0');
+  const [version, setVersion] = useState('未知');
+  const operation = useRef(false);
   const [busy, setBusy] = useState(false);
 
   const check = async () => {
+    if (operation.current) return;
+    operation.current = true;
     setState({ kind: 'checking' });
     try {
       const summary = await bridge.checkUpdates();
       setState(summary ? { kind: 'available', summary } : { kind: 'upToDate' });
     } catch (e) {
       setState({ kind: 'error', message: String(e) });
+    } finally {
+      operation.current = false;
     }
   };
 
@@ -38,6 +43,8 @@ export const UpdatePanel: React.FC = () => {
   }, []);
 
   const onApply = async () => {
+    if (operation.current) return;
+    operation.current = true;
     setBusy(true);
     try {
       const files = await bridge.applyUpdates();
@@ -45,6 +52,7 @@ export const UpdatePanel: React.FC = () => {
     } catch (e) {
       setState({ kind: 'error', message: String(e) });
     } finally {
+      operation.current = false;
       setBusy(false);
     }
   };
@@ -66,7 +74,7 @@ export const UpdatePanel: React.FC = () => {
         <span style={{ fontSize: 13, color: '#9ca3af' }}>当前版本 {version}</span>
         <button
           onClick={check}
-          disabled={state.kind === 'checking'}
+          disabled={busy || state.kind === 'checking'}
           style={{
             padding: '6px 14px',
             borderRadius: 8,
@@ -109,12 +117,12 @@ export const UpdatePanel: React.FC = () => {
       )}
       {state.kind === 'applied' && (
         <p style={{ fontSize: 13, color: '#6ee7b7', margin: '10px 0 0 0' }}>
-          已更新：{state.files.join('、')}（重启应用后生效）
+          已更新：{state.files.join('、')}（注册表已应用，可刷新 Agent 列表查看）
         </p>
       )}
       {state.kind === 'error' && (
         <p style={{ fontSize: 12, color: '#fca5a5', margin: '10px 0 0 0' }}>
-          更新检查失败：{state.message}
+          更新失败：{state.message}
         </p>
       )}
     </div>

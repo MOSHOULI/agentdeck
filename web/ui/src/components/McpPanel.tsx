@@ -4,7 +4,7 @@
  * 开关 agent 列表来自后端 supportedAgents（registry-v3.json config_inject.mcp）。
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import type { McpServer } from '../bridge';
 import * as bridge from '../bridge';
 import { useAgentStore } from '../stores/agentStore';
@@ -12,6 +12,7 @@ import { useAgentStore } from '../stores/agentStore';
 export const McpPanel: React.FC = () => {
   const agents = useAgentStore((s) => s.agents);
   const [servers, setServers] = useState<McpServer[] | null>(null);
+  const operation = useRef(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -20,10 +21,11 @@ export const McpPanel: React.FC = () => {
   };
 
   useEffect(() => {
-    refresh().catch((e) => setNotice(`加载 MCP 列表失败: ${e}`));
+    refresh().catch((e) => { setServers([]); setNotice(`加载 MCP 列表失败: ${e}`); });
   }, []);
 
   const onToggle = async (server: McpServer, agentId: string, enabled: boolean) => {
+    if (operation.current) return;
     const previous = server.enabledAgents;
     setServers((prev) =>
       prev
@@ -39,6 +41,7 @@ export const McpPanel: React.FC = () => {
           )
         : prev
     );
+    operation.current = true;
     setBusy(`${server.name}-${agentId}`);
     setNotice(null);
     try {
@@ -52,6 +55,7 @@ export const McpPanel: React.FC = () => {
       );
       setNotice(`切换失败: ${e}`);
     } finally {
+      operation.current = false;
       setBusy(null);
     }
   };
@@ -74,7 +78,7 @@ export const McpPanel: React.FC = () => {
       </p>
 
       {notice && (
-        <div style={{ fontSize: 13, color: '#6ee7b7', marginBottom: 10 }}>{notice}</div>
+        <div role="status" style={{ fontSize: 13, color: '#6ee7b7', marginBottom: 10 }}>{notice}</div>
       )}
 
       {servers === null ? (
@@ -119,7 +123,7 @@ export const McpPanel: React.FC = () => {
                   const label =
                     agents.find((a) => a.id === agentId)?.name ?? agentId;
                   const enabled = server.enabledAgents.includes(agentId);
-                  const isBusy = busy === `${server.name}-${agentId}`;
+                  const isBusy = busy !== null;
                   return (
                     <label
                       key={agentId}

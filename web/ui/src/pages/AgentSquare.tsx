@@ -17,6 +17,7 @@ export const AgentSquare: React.FC = () => {
     agents,
     loading,
     error,
+    notice,
     selectedAgentId,
     loadAgents,
     installAgent,
@@ -49,7 +50,7 @@ export const AgentSquare: React.FC = () => {
     ['all', 'cli+desktop', 'desktop', 'vscode-extension', 'ide-extension'].includes(a.uiType)
   );
   const pureCli = filteredAgents.filter((a) =>
-    ['cli', 'cli-bot'].includes(a.uiType)
+    !['all', 'cli+desktop', 'desktop', 'vscode-extension', 'ide-extension'].includes(a.uiType)
   );
 
   return (
@@ -86,9 +87,10 @@ export const AgentSquare: React.FC = () => {
         ))}
       </div>
 
+      {notice && <p role="status" style={{ color: '#fcd34d' }}>{notice}</p>}
       {/* 错误提示 */}
       {error && (
-        <div
+        <div role="alert"
           style={{
             padding: 12,
             borderRadius: 8,
@@ -117,6 +119,7 @@ export const AgentSquare: React.FC = () => {
         </div>
       )}
 
+      <button onClick={loadAgents} disabled={loading}>刷新列表</button>
       {/* 加载中 */}
       {loading && <p style={{ color: '#6b7280', fontSize: 14 }}>加载中...</p>}
 
@@ -138,6 +141,7 @@ export const AgentSquare: React.FC = () => {
               <AgentCard
                 key={agent.id}
                 agent={agent}
+                busy={loading}
                 selected={selectedAgentId === agent.id}
                 onInstall={installAgent}
                 onUninstall={uninstallAgent}
@@ -165,6 +169,7 @@ export const AgentSquare: React.FC = () => {
               <AgentCard
                 key={agent.id}
                 agent={agent}
+                busy={loading}
                 selected={selectedAgentId === agent.id}
                 onInstall={installAgent}
                 onUninstall={uninstallAgent}

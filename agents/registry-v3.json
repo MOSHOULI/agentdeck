@@ -1,7 +1,7 @@
 {
   "version": 3,
   "description": "AgentDeck（AI 中枢）Agent 注册表。9 款核心（v0.1 交付）+ 8 款预留接口（v0.2+）。按 GitHub Stars 热度排序。",
-  "updated_at": "2026-08-11",
+  "updated_at": "2026-11-02",
   "agents": {
     "opencode": {
       "name": "OpenCode",
@@ -18,7 +18,9 @@
         "command": "npm install -g opencode-ai",
         "verify_cmd": "opencode --version",
         "uninstall_cmd": "npm uninstall -g opencode-ai",
-        "dependencies": ["node >= 18"]
+        "dependencies": [
+          "node >= 18"
+        ]
       },
       "auth_type": "api_key",
       "config_inject": {
@@ -56,7 +58,10 @@
         "command": "npm install -g @anthropic-ai/claude-code",
         "verify_cmd": "claude --version",
         "uninstall_cmd": "npm uninstall -g @anthropic-ai/claude-code",
-        "dependencies": ["node >= 18", "git"]
+        "dependencies": [
+          "node >= 18",
+          "git"
+        ]
       },
       "auth_type": "oauth_cli",
       "auth_guide": {
@@ -65,7 +70,7 @@
           "也可通过 ANTHROPIC_API_KEY 环境变量使用 API Key 模式"
         ],
         "completion_check": {
-          "file_contains": "~/.claude/credentials.json"
+          "file_exists": "~/.claude/credentials.json"
         }
       },
       "config_inject": {
@@ -104,7 +109,9 @@
         "command": "npm install -g @openai/codex",
         "verify_cmd": "codex --version",
         "uninstall_cmd": "npm uninstall -g @openai/codex",
-        "dependencies": ["node >= 18"]
+        "dependencies": [
+          "node >= 18"
+        ]
       },
       "auth_type": "account_login",
       "auth_guide": {
@@ -151,7 +158,9 @@
         "method": "vscode_extension",
         "extension_id": "saoudrizwan.claude-dev",
         "verify_cmd": null,
-        "dependencies": ["vscode"]
+        "dependencies": [
+          "vscode"
+        ]
       },
       "auth_type": "api_key",
       "config_inject": {
@@ -246,31 +255,20 @@
       "ui_type": "cli",
       "category": "personal-agent",
       "popular": true,
-      "description": "Nous Research 出品的开源自进化 AI 代理。持久化记忆、自学习技能系统、20+ 消息平台接入。MIT 永久免费。",
+      "description": "Nous Research 出品的开源自进化 AI 代理。持久化记忆、自学习技能系统、20+ 消息平台接入。MIT 永久免费。 请通过官网手动安装；AgentDeck 暂不自动写入 Hermes 配置（平台路径和 HERMES_HOME 需用户确认）。",
       "install": {
-        "method": "pip",
-        "command": "pip install -U hermes-agent",
+        "method": "manual",
+        "url": "https://hermes-agent.nousresearch.com/",
         "verify_cmd": "hermes --version",
-        "uninstall_cmd": "pip uninstall -y hermes-agent",
-        "dependencies": ["python >= 3.10"]
+        "dependencies": []
       },
       "auth_type": "api_key",
       "config_inject": {
         "skills": true,
-        "mcp": {
-          "file": "~/.hermes/config.yaml",
-          "format": "yaml_section",
-          "section": "mcp_servers"
-        },
+        "mcp": null,
         "memory": false,
-        "personalization": {
-          "template": "hermes",
-          "target": "~/.hermes/config.yaml"
-        },
-        "model_config": {
-          "file": "~/.hermes/config.yaml",
-          "format": "yaml_section"
-        }
+        "personalization": null,
+        "model_config": null
       },
       "memory_collector": "hermes_memory",
       "icon": "hermes",
@@ -291,7 +289,9 @@
         "command": "npm install -g @google/gemini-cli",
         "verify_cmd": "gemini --version",
         "uninstall_cmd": "npm uninstall -g @google/gemini-cli",
-        "dependencies": ["node >= 18"]
+        "dependencies": [
+          "node >= 18"
+        ]
       },
       "auth_type": "oauth_cli",
       "auth_guide": {
@@ -335,10 +335,12 @@
       "description": "Mario Zechner 的极简开源终端 AI 代理。核心工具极少、快速 TUI、TypeScript 可扩展。架构学习最佳参照。",
       "install": {
         "method": "npm",
-        "command": "npm install -g @mariozechner/pi",
+        "command": "npm install -g @earendil-works/pi-coding-agent",
         "verify_cmd": "pi --version",
-        "uninstall_cmd": "npm uninstall -g @mariozechner/pi",
-        "dependencies": ["node >= 18"]
+        "uninstall_cmd": "npm uninstall -g @earendil-works/pi-coding-agent",
+        "dependencies": [
+          "node >= 18"
+        ]
       },
       "auth_type": "api_key",
       "config_inject": {
@@ -353,7 +355,7 @@
       },
       "memory_collector": null,
       "icon": "pi",
-      "homepage": "https://github.com/earendil-works/pi"
+      "homepage": "https://pi.dev"
     }
   },
   "future_registry": {
@@ -368,7 +370,9 @@
         "ui_type": "cli",
         "category": "ai-coding",
         "popular": false,
-        "install": { "method": "manual" },
+        "install": {
+          "method": "manual"
+        },
         "auth_type": "api_key",
         "status": "v0.2_pending"
       },
@@ -381,7 +385,9 @@
         "ui_type": "cli",
         "category": "ai-coding",
         "popular": false,
-        "install": { "method": "pip" },
+        "install": {
+          "method": "pip"
+        },
         "auth_type": "api_key",
         "status": "v0.2_pending"
       },
@@ -394,7 +400,9 @@
         "ui_type": "ide-extension",
         "category": "ai-coding",
         "popular": false,
-        "install": { "method": "vscode_extension" },
+        "install": {
+          "method": "vscode_extension"
+        },
         "auth_type": "api_key",
         "status": "v0.2_pending"
       },
@@ -407,7 +415,9 @@
         "ui_type": "vscode-extension",
         "category": "ai-coding",
         "popular": false,
-        "install": { "method": "vscode_extension" },
+        "install": {
+          "method": "vscode_extension"
+        },
         "auth_type": "api_key",
         "status": "v0.2_pending"
       },
@@ -420,7 +430,9 @@
         "ui_type": "cli",
         "category": "ai-coding",
         "popular": false,
-        "install": { "method": "manual" },
+        "install": {
+          "method": "manual"
+        },
         "auth_type": "api_key",
         "status": "v0.2_pending"
       },
@@ -433,7 +445,9 @@
         "ui_type": "vscode-extension",
         "category": "ai-coding",
         "popular": false,
-        "install": { "method": "vscode_extension" },
+        "install": {
+          "method": "vscode_extension"
+        },
         "auth_type": "api_key",
         "status": "v0.2_pending"
       },
@@ -446,7 +460,9 @@
         "ui_type": "cli",
         "category": "ai-coding",
         "popular": false,
-        "install": { "method": "manual" },
+        "install": {
+          "method": "manual"
+        },
         "auth_type": "api_key",
         "status": "v0.3_pending"
       },
@@ -458,7 +474,9 @@
         "ui_type": "cli",
         "category": "ai-coding",
         "popular": false,
-        "install": { "method": "manual" },
+        "install": {
+          "method": "manual"
+        },
         "auth_type": "api_key",
         "status": "v0.3_pending"
       }

@@ -15,6 +15,11 @@ CREATE TABLE IF NOT EXISTS memories (
   auto_inject INTEGER NOT NULL DEFAULT 0,
   tags TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS manual_injections (
+  agent_id TEXT NOT NULL,
+  memory_id INTEGER NOT NULL,
+  PRIMARY KEY (agent_id, memory_id)
+);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_dedup ON memories(source, content);
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
   content, tags, content='memories', content_rowid='id'
@@ -218,11 +223,51 @@ impl MemoryStore {
         Ok(out)
     }
 
+    pub fn manual_injection_ids(&self, agent_id: &str) -> crate::Result<Vec<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT memory_id FROM manual_injections WHERE agent_id = ?1")?;
+        let rows = stmt.query_map(params![agent_id], |r| r.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn set_manual_injection_ids(&self, agent_id: &str, ids: &[i64]) -> crate::Result<()> {
+        let transaction = self.conn.unchecked_transaction()?;
+        transaction.execute(
+            "DELETE FROM manual_injections WHERE agent_id = ?1",
+            params![agent_id],
+        )?;
+        for id in ids {
+            transaction.execute(
+                "INSERT OR IGNORE INTO manual_injections (agent_id, memory_id) VALUES (?1, ?2)",
+                params![agent_id, id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Explicit manual selections survive automatic refreshes. Missing/deleted
+    /// rows naturally disappear, while automatic revocations remove only auto selections.
+    pub fn injection_entries(&self, agent_id: &str) -> crate::Result<Vec<MemoryEntry>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, agent_id, content, collected_at, source, auto_inject, tags FROM memories
+             WHERE (agent_id = ?1 AND auto_inject = 1) OR id IN
+             (SELECT memory_id FROM manual_injections WHERE agent_id = ?1)
+             ORDER BY collected_at DESC, id DESC",
+        )?;
+        let rows = stmt.query_map(params![agent_id], row_to_entry)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     pub fn set_auto_inject(&self, id: i64, enabled: bool) -> crate::Result<()> {
-        self.conn.execute(
+        let changed = self.conn.execute(
             "UPDATE memories SET auto_inject = ?1 WHERE id = ?2",
             params![enabled, id],
         )?;
+        if changed == 0 {
+            return Err(crate::Error::Other(format!("Memory {} does not exist", id)));
+        }
         Ok(())
     }
 

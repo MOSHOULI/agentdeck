@@ -5,43 +5,151 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+
+env:
+  BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   frontend:
-    name: 前端（build + test + tsc）
+    name: Frontend build, types and tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: web/ui
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_SHA }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: web/ui/package-lock.json
       - run: npm ci
-      - run: npm run build
+      - run: npm audit --audit-level=moderate
+      - run: npm run typecheck
       - run: npm test
-      - run: npx tsc --noEmit
+      - run: npm run build
 
-  rust:
-    name: Rust（fmt + clippy + test）
-    runs-on: windows-latest
+  portable-core:
+    name: Linux core and CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_SHA }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked -p aisync-core -p aisync-cli --all-targets -- -D warnings
+      - run: python scripts/run-isolated.py cargo test --locked -p aisync-core -p aisync-cli
+      - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- health
+      - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- agents
+
+  dependency-audit:
+    name: Rust dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_SHA }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-audit --version 0.22.2 --locked
+      - run: cargo audit --json > cargo-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-audit-${{ env.BUILD_SHA }}
+          path: cargo-audit.json
+          if-no-files-found: warn
+
+  windows:
+    name: Windows native tests and installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_SHA }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: web/ui/package-lock.json
-      - name: 构建前端（tauri 编译需要 dist 产物）
-        working-directory: web/ui
-        run: npm ci && npm run build
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
-      - run: cargo clippy --workspace -- -D warnings
-      - run: cargo test --workspace
+      - run: npm ci --prefix web/ui
+      - run: npm run build --prefix web/ui
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: python scripts/run-isolated.py cargo test --locked --workspace
+      - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- health
+      - name: Build NSIS installer
+        run: npm exec --prefix web/ui -- tauri build --bundles nsis --ci -- --locked
+      - name: Record installer integrity
+        shell: pwsh
+        run: |
+          $installers = Get-ChildItem target/release/bundle/nsis/*-setup.exe
+          if ($installers.Count -lt 1) { throw "NSIS installer missing" }
+          $installers | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)" | Out-File -FilePath "$($_.DirectoryName)/SHA256SUMS.txt" -Append -Encoding ascii
+          }
+          "${{ env.BUILD_SHA }}" | Out-File target/release/bundle/nsis/BUILD_COMMIT.txt -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AgentDeck-windows-${{ env.BUILD_SHA }}
+          path: |
+            target/release/bundle/nsis/*-setup.exe
+            target/release/bundle/nsis/SHA256SUMS.txt
+            target/release/bundle/nsis/BUILD_COMMIT.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish verified Windows installer
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [frontend, portable-core, dependency-audit, windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: AgentDeck-windows-${{ github.sha }}
+          path: installer
+      - name: Verify provenance and checksums
+        working-directory: installer
+        run: |
+          test "$(tr -d '\r\n' < BUILD_COMMIT.txt)" = "$GITHUB_SHA"
+          sha256sum --check SHA256SUMS.txt
+      - name: Publish new version (never overwrite an existing release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "Release v$version already exists; preserving it. Bump the app version for another release."
+            exit 0
+          fi
+          gh release create "v$version" installer/*-setup.exe installer/SHA256SUMS.txt installer/BUILD_COMMIT.txt \
+            --target "$GITHUB_SHA" --title "AgentDeck v$version" --notes-file docs/RELEASE-1.1.0.md --latest

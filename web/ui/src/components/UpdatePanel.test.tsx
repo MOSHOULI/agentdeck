@@ -49,7 +49,22 @@ describe('UpdatePanel', () => {
     vi.mocked(bridge.checkUpdates).mockRejectedValue(new Error('签名校验失败'));
     render(<UpdatePanel />);
     await waitFor(() =>
-      expect(screen.getByText(/更新检查失败/)).toBeInTheDocument()
+      expect(screen.getByText(/更新失败/)).toBeInTheDocument()
     );
   });
+});
+
+it('cannot check again or apply twice while applying', async () => {
+  vi.mocked(bridge.checkUpdates).mockReset().mockResolvedValue(summary);
+  vi.mocked(bridge.getAppVersion).mockResolvedValue('v1.0.0');
+  let resolve!: (files: string[]) => void;
+  vi.mocked(bridge.applyUpdates).mockReset().mockImplementation(() => new Promise((done) => { resolve = done; }));
+  render(<UpdatePanel />);
+  const apply = await screen.findByText('应用更新');
+  fireEvent.click(apply);
+  fireEvent.click(apply);
+  expect(bridge.applyUpdates).toHaveBeenCalledTimes(1);
+  expect(screen.getByText('检查更新')).toBeDisabled();
+  resolve(['registry-v3.json']);
+  await screen.findByText(/已更新：registry-v3.json/);
 });

@@ -1,6 +1,6 @@
 [package]
 name = "agentdeck"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 description = "AgentDeck 桌面应用（AI 中枢）—— Tauri 2 桌面壳"
 

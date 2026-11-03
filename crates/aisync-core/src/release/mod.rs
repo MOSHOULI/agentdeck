@@ -37,7 +37,7 @@ pub struct ReleaseManifest {
 }
 
 fn home_dir() -> crate::Result<PathBuf> {
-    dirs::home_dir().ok_or_else(|| Error::Other("无法定位用户主目录".into()))
+    crate::home_dir().ok_or_else(|| Error::Other("无法定位用户主目录".into()))
 }
 
 pub fn release_dir() -> crate::Result<PathBuf> {

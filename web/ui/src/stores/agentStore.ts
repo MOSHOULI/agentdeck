@@ -13,6 +13,7 @@ interface AgentState {
   selectedAgentId: string | null;
   loading: boolean;
   error: string | null;
+  notice: string | null;
 
   // 记忆缓存
   memories: Record<string, MemoryEntry[]>; // agentId → entries
@@ -30,15 +31,17 @@ interface AgentState {
   clearError: () => void;
 }
 
-export const useAgentStore = create<AgentState>((set) => ({
+export const useAgentStore = create<AgentState>((set, get) => ({
   agents: [],
   selectedAgentId: null,
   loading: false,
   error: null,
+  notice: null,
   memories: {},
 
   loadAgents: async () => {
-    set({ loading: true, error: null });
+    if (get().loading) return;
+    set({ loading: true, error: null, notice: null });
     try {
       const agents = await bridge.getAgents();
       set({ agents, loading: false });
@@ -48,23 +51,36 @@ export const useAgentStore = create<AgentState>((set) => ({
   },
 
   installAgent: async (id: string) => {
-    set({ loading: true, error: null });
+    if (get().loading) return;
+    set({ loading: true, error: null, notice: null });
     try {
-      await bridge.installAgent(id);
+      const outcome = await bridge.installAgent(id);
       const agents = await bridge.getAgents();
-      set({ agents, loading: false });
+      set({ agents, loading: false, notice: outcome.warnings.length
+        ? `软件已安装；部分配置未应用：${outcome.warnings.join('；')}`
+        : '软件已安装并完成支持的配置。' });
     } catch (e) {
-      set({ error: `安装失败: ${e}`, loading: false });
+      // Installation may succeed before configuration fails. Refresh observed
+      // state so retry never pretends that the software was rolled back.
+      try {
+        set({ agents: await bridge.getAgents() });
+      } catch { /* Keep the original operation error if refresh also fails. */ }
+      set({ error: `安装或配置失败（软件可能已安装，请查看当前状态）: ${e}`, loading: false });
     }
   },
 
   uninstallAgent: async (id: string) => {
-    set({ loading: true, error: null });
+    if (get().loading) return;
+    if (get().loading) return;
+    set({ loading: true, error: null, notice: null });
     try {
       await bridge.uninstallAgent(id);
       const agents = await bridge.getAgents();
       set({ agents, loading: false });
     } catch (e) {
+      try {
+        set({ agents: await bridge.getAgents() });
+      } catch { /* Preserve the original uninstall error. */ }
       set({ error: `卸载失败: ${e}`, loading: false });
     }
   },
@@ -78,7 +94,8 @@ export const useAgentStore = create<AgentState>((set) => ({
         ),
       }));
       return verified;
-    } catch {
+    } catch (e) {
+      set({ error: `认证检查失败: ${e}` });
       return false;
     }
   },

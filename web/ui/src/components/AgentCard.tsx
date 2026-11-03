@@ -12,6 +12,7 @@ interface AgentCardProps {
   onUninstall: (id: string) => void;
   onSelect: (id: string) => void;
   selected: boolean;
+  busy?: boolean;
 }
 
 function formatStars(n: number): string {
@@ -44,12 +45,21 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   onUninstall,
   onSelect,
   selected,
+  busy = false,
 }) => {
   const { text: sourceText, color: sourceColor } = getSourceBadge(agent.source);
 
   return (
     <div
       onClick={() => onSelect(agent.id)}
+      tabIndex={0}
+      aria-label={`选择 ${agent.name}`}
+      onKeyDown={(e) => {
+        if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          onSelect(agent.id);
+        }
+      }}
       style={{
         border: selected ? '2px solid #6366f1' : '1px solid #374151',
         borderRadius: 12,
@@ -129,6 +139,14 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         {agent.description}
       </p>
 
+      {agent.canInstall !== true && !agent.installed && (
+        <p style={{ fontSize: 12, color: '#fcd34d', margin: 0 }}>
+          {agent.installHelp || '此 Agent 暂不支持自动安装，请参阅官方安装说明。'}
+          {agent.homepage && /^https:\/\//.test(agent.homepage) && (
+            <> <a href={agent.homepage} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>官方网站</a></>
+          )}
+        </p>
+      )}
       {/* 状态 + 操作 */}
       <div
         style={{
@@ -144,12 +162,14 @@ export const AgentCard: React.FC<AgentCardProps> = ({
               ✓ 已安装{agent.version ? ` v${agent.version}` : ''}
             </span>
           ) : (
-            '未安装'
+            agent.canVerifyInstall === false ? '安装状态未知' : '未安装'
           )}
         </div>
 
         {agent.installed ? (
           <button
+            disabled={busy || agent.canUninstall !== true}
+            title={agent.canUninstall !== true ? '请使用该 Agent 的官方卸载方式' : undefined}
             onClick={(e) => {
               e.stopPropagation();
               if (window.confirm(`确定卸载 ${agent.name} 吗？`)) {
@@ -167,13 +187,15 @@ export const AgentCard: React.FC<AgentCardProps> = ({
               fontWeight: 500,
             }}
           >
-            卸载
+            {busy ? '处理中...' : agent.canUninstall === true ? '卸载' : '手动卸载'}
           </button>
         ) : (
           <button
+            disabled={busy || agent.canInstall !== true}
+            title={agent.installHelp ?? '该平台不支持自动安装，请使用官方安装方式'}
             onClick={(e) => {
               e.stopPropagation();
-              if (window.confirm(`确定安装 ${agent.name} 吗？`)) {
+              if (window.confirm(`确定安装 ${agent.name} 吗？安装后会应用默认 profile，更新个性化指令与支持的模型配置（写前备份）。`)) {
                 onInstall(agent.id);
               }
             }}
@@ -188,7 +210,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
               fontWeight: 500,
             }}
           >
-            一键安装
+            {busy ? '处理中...' : agent.canInstall === true ? '一键安装' : '手动安装'}
           </button>
         )}
       </div>

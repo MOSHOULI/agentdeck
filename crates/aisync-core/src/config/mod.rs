@@ -11,6 +11,14 @@ use serde_json::Value;
 
 use crate::registry::AgentDefinition;
 
+// Shared with MCP writers: config read/modify/write and transaction rollback
+// must not interleave within this process.
+static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn write_lock() -> std::sync::MutexGuard<'static, ()> {
+    CONFIG_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
     TomlSection,
@@ -76,7 +84,7 @@ const BUILTIN_PROFILE_FILES: &[(&str, &str)] = &[
 
 /// 返回 AgentDeck 默认 profile；缺失文件会从内置模板初始化，已有文件保持不变。
 pub fn profile_source_dir() -> crate::Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| crate::Error::Other("无法定位用户主目录".into()))?;
+    let home = crate::home_dir().ok_or_else(|| crate::Error::Other("无法定位用户主目录".into()))?;
     profile_source_dir_in(&home)
 }
 
@@ -118,7 +126,7 @@ fn expand_home_in(path: &str, home: &Path) -> PathBuf {
 }
 
 fn expand_home(path: &str) -> PathBuf {
-    dirs::home_dir()
+    crate::home_dir()
         .map(|home| expand_home_in(path, &home))
         .unwrap_or_else(|| PathBuf::from(path))
 }
@@ -148,15 +156,48 @@ fn backup_file(path: &Path) -> crate::Result<Option<PathBuf>> {
     if !path.is_file() {
         return Ok(None);
     }
-    let home = dirs::home_dir().ok_or_else(|| crate::Error::Other("无法定位用户主目录".into()))?;
+    let home = crate::home_dir().ok_or_else(|| crate::Error::Other("无法定位用户主目录".into()))?;
     backup_file_in(path, &home)
 }
 
 fn write_file(path: &Path, content: &str) -> crate::Result<()> {
+    write_bytes(path, content.as_bytes())
+}
+
+fn write_bytes(path: &Path, content: &[u8]) -> crate::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, content)?;
+    let temporary = path.with_file_name(format!(".agentdeck-{}.tmp", uuid::Uuid::new_v4()));
+    let result = (|| -> std::io::Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        if let Ok(metadata) = fs::metadata(path) {
+            fs::set_permissions(&temporary, metadata.permissions())?;
+        }
+        file.write_all(content)?;
+        file.sync_all()?;
+        drop(file);
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStrExt;
+            use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MoveFileExW};
+            let src: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
+            let dst: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            if unsafe { MoveFileExW(src.as_ptr(), dst.as_ptr(), MOVEFILE_REPLACE_EXISTING) } == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        }
+        #[cfg(not(windows))]
+        fs::rename(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result?;
     Ok(())
 }
 
@@ -227,51 +268,12 @@ fn merge_json(base: &mut Value, additions: Value) {
     }
 }
 
-fn json_to_toml_literal(value: &Value) -> String {
-    match value {
-        Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
-        Value::Number(n) => n.to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Array(items) => {
-            let inner: Vec<String> = items.iter().map(json_to_toml_literal).collect();
-            format!("[{}]", inner.join(", "))
-        }
-        Value::Null => "\"\"".into(),
-        Value::Object(_) => "\"\"".into(),
-    }
-}
-
-/// 把 codex.json 的 sections 对象转成 TOML 段文本（嵌套对象转子段）
-fn sections_to_toml(sections: &Value) -> String {
-    fn emit(map: &serde_json::Map<String, Value>, prefix: &str, out: &mut String) {
-        for (name, value) in map {
-            let header = if prefix.is_empty() {
-                name.clone()
-            } else {
-                format!("{}.{}", prefix, name)
-            };
-            if let Value::Object(fields) = value {
-                out.push_str(&format!("[{}]\n", header));
-                let mut nested = serde_json::Map::new();
-                for (k, v) in fields {
-                    if v.is_object() {
-                        nested.insert(k.clone(), v.clone());
-                    } else {
-                        out.push_str(&format!("{} = {}\n", k, json_to_toml_literal(v)));
-                    }
-                }
-                if !nested.is_empty() {
-                    emit(&nested, &header, out);
-                }
-                out.push('\n');
-            }
-        }
-    }
-    let mut out = String::new();
-    if let Value::Object(map) = sections {
-        emit(map, "", &mut out);
-    }
-    out
+/// Serialize section objects through TOML rather than interpolating keys/strings.
+fn sections_to_toml(sections: &Value) -> crate::Result<String> {
+    let value = toml::Value::try_from(sections)
+        .map_err(|e| crate::Error::InjectFailed(format!("Invalid TOML profile: {e}")))?;
+    toml::to_string(&value)
+        .map_err(|e| crate::Error::InjectFailed(format!("Invalid TOML profile: {e}")))
 }
 
 /// 把注入内容合并进目标 TOML（逐 key 合并，保留目标文件的注释与顺序）
@@ -283,6 +285,8 @@ fn merge_toml_tables(target: &mut toml_edit::Table, additions: &toml_edit::Table
                 .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
             if let Some(target_table) = entry.as_table_mut() {
                 merge_toml_tables(target_table, add_table);
+            } else {
+                *entry = item.clone();
             }
         } else {
             target.insert(key, item.clone());
@@ -322,7 +326,16 @@ fn merge_yaml(target: &Path, additions: &str) -> crate::Result<()> {
     };
     let additions: Value = serde_yml::from_str(additions)
         .map_err(|e| crate::Error::InjectFailed(format!("YAML 注入内容解析失败: {}", e)))?;
-    let mut merged = base;
+    let mut merged = if base.is_null() {
+        Value::Object(Default::default())
+    } else {
+        base
+    };
+    if !merged.is_object() || !additions.is_object() {
+        return Err(crate::Error::InjectFailed(
+            "YAML merge requires mapping objects".into(),
+        ));
+    }
     merge_json(&mut merged, additions);
     let out = serde_yml::to_string(&merged)
         .map_err(|e| crate::Error::InjectFailed(format!("YAML 序列化失败: {}", e)))?;
@@ -333,7 +346,7 @@ fn inject_with_backup(
     format: Format,
     target_path: &Path,
     content: &str,
-    backup: Option<PathBuf>,
+    _backup: Option<PathBuf>,
 ) -> crate::Result<()> {
     let result = match format {
         Format::PlainText => write_file(target_path, content),
@@ -350,8 +363,18 @@ fn inject_with_backup(
                 serde_json::from_str(&cleaned)
                     .map_err(|e| crate::Error::InjectFailed(format!("JSON 解析失败: {}", e)))?
             };
-            let additions: Value = serde_json::from_str(content)
+            let cleaned_additions = if format == Format::JsoncMerge {
+                strip_jsonc_comments(content)
+            } else {
+                content.to_owned()
+            };
+            let additions: Value = serde_json::from_str(&cleaned_additions)
                 .map_err(|e| crate::Error::InjectFailed(format!("注入内容解析失败: {}", e)))?;
+            if !base.is_object() || !additions.is_object() {
+                return Err(crate::Error::InjectFailed(
+                    "JSON merge requires objects".into(),
+                ));
+            }
             merge_json(&mut base, additions);
             let out = serde_json::to_string_pretty(&base)
                 .map_err(|e| crate::Error::InjectFailed(format!("JSON 序列化失败: {}", e)))?;
@@ -361,23 +384,15 @@ fn inject_with_backup(
         Format::YamlSection => merge_yaml(target_path, content),
     };
 
-    if let Err(e) = &result {
-        if let Some(backup) = backup {
-            if let Some(parent) = target_path.parent() {
-                let _ = fs::create_dir_all(parent);
-            }
-            let _ = fs::copy(&backup, target_path);
-        }
-        return Err(crate::Error::InjectFailed(format!(
-            "注入失败（已回滚）: {}",
-            e
-        )));
-    }
-    Ok(())
+    // Each writer stages bytes beside the destination and atomically replaces it.
+    // A failed write therefore leaves the original intact; never perform an
+    // unchecked, truncating restore and falsely report successful rollback.
+    result
 }
 
 /// 注入配置到目标文件（先备份，失败自动回滚）
 pub fn inject(format: Format, target_path: &Path, content: &str) -> crate::Result<()> {
+    let _guard = write_lock();
     let backup = backup_file(target_path)?;
     inject_with_backup(format, target_path, content, backup)
 }
@@ -406,7 +421,49 @@ fn inject_target(
 ) -> crate::Result<()> {
     match target_home {
         Some(home) => inject_in_home(format, target, content, home),
-        None => inject(format, target, content),
+        None => {
+            let backup = backup_file(target)?;
+            inject_with_backup(format, target, content, backup)
+        }
+    }
+}
+
+const INSTRUCTIONS_START: &str = "<!-- agentdeck:personalization:start -->";
+const INSTRUCTIONS_END: &str = "<!-- agentdeck:personalization:end -->";
+
+/// Replace only our managed block; never replace user-authored instructions.
+fn managed_instructions(target: &Path, template: &str) -> crate::Result<String> {
+    if template.contains(INSTRUCTIONS_START) || template.contains(INSTRUCTIONS_END) {
+        return Err(crate::Error::InjectFailed(
+            "Instruction template contains reserved AgentDeck markers".into(),
+        ));
+    }
+    let existing = match fs::read_to_string(target) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e.into()),
+    };
+    let block = format!(
+        "{INSTRUCTIONS_START}\n{}\n{INSTRUCTIONS_END}",
+        template.trim_end()
+    );
+    let starts: Vec<_> = existing.match_indices(INSTRUCTIONS_START).collect();
+    let ends: Vec<_> = existing.match_indices(INSTRUCTIONS_END).collect();
+    match (starts.as_slice(), ends.as_slice()) {
+        ([], []) if existing.is_empty() => Ok(format!("{block}\n")),
+        ([], []) => Ok(format!("{existing}\n\n{block}\n")),
+        ([(start, _)], [(end, _)]) if start < end => {
+            let after = end + INSTRUCTIONS_END.len();
+            Ok(format!(
+                "{}{}{}",
+                &existing[..*start],
+                block,
+                &existing[after..]
+            ))
+        }
+        _ => Err(crate::Error::InjectFailed(
+            "Instruction file has ambiguous or incomplete AgentDeck markers; left unchanged".into(),
+        )),
     }
 }
 
@@ -420,32 +477,49 @@ fn template_agents_md(source_dir: &Path, template: &str) -> Option<String> {
 }
 
 /// model_config 注入内容源（按 agent 特化；缺失返回 None）
-fn model_config_content(agent: &AgentDefinition, source_dir: &Path) -> Option<String> {
-    match agent.id.as_str() {
-        "opencode" => fs::read_to_string(
-            source_dir
-                .join("personalization")
-                .join("opencode")
-                .join("opencode.jsonc"),
-        )
-        .ok(),
-        "codex" => {
-            let raw =
-                fs::read_to_string(source_dir.join("personalization").join("codex.json")).ok()?;
-            let value: Value = serde_json::from_str(&raw).ok()?;
-            let sections = value.get("sections").cloned().unwrap_or(Value::Null);
-            let toml = sections_to_toml(&sections);
-            if toml.trim().is_empty() {
-                None
-            } else {
-                Some(toml)
-            }
-        }
-        _ => None,
+fn model_config_content(
+    agent: &AgentDefinition,
+    source_dir: &Path,
+) -> crate::Result<Option<String>> {
+    let relative = match agent.id.as_str() {
+        "opencode" => "personalization/opencode/opencode.jsonc",
+        "codex" => "personalization/codex.json",
+        _ => return Ok(None),
+    };
+    let raw = match fs::read_to_string(source_dir.join(relative)) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    if agent.id == "codex" {
+        let value: Value = serde_json::from_str(&raw)
+            .map_err(|e| crate::Error::InjectFailed(format!("Invalid Codex profile: {e}")))?;
+        let sections = value
+            .get("sections")
+            .filter(|v| v.is_object())
+            .ok_or_else(|| {
+                crate::Error::InjectFailed("Codex profile requires a sections object".into())
+            })?;
+        return sections_to_toml(sections).map(Some);
     }
+    Ok(Some(raw))
 }
 
-fn inject_for_agent_with_home(
+/// Whether this agent has a personalization destination handled by our adapter.
+/// This is a non-mutating capability check; profile content is validated on apply.
+pub fn supports_personalization(agent: &AgentDefinition) -> bool {
+    agent
+        .config_inject
+        .personalization
+        .as_ref()
+        .is_some_and(|p| {
+            !p.target.contains("://")
+                && (p.target.starts_with("~/") || p.target.starts_with("~\\"))
+                && p.target.ends_with(".md")
+        })
+}
+
+fn inject_for_agent_apply(
     agent: &AgentDefinition,
     source_dir: &Path,
     target_home: Option<&Path>,
@@ -458,8 +532,12 @@ fn inject_for_agent_with_home(
             personalization = Some(InjectStatus::Skipped("特殊通道暂不支持".into()));
         } else if !p.target.starts_with("~/") && !p.target.starts_with("~\\") {
             personalization = Some(InjectStatus::Skipped("非绝对路径目标暂不支持".into()));
+        } else if !p.target.ends_with(".md") {
+            // An instruction markdown template must never overwrite structured settings.
+            personalization = Some(InjectStatus::Skipped("目标不是 Markdown 指令文件".into()));
         } else if let Some(content) = template_agents_md(source_dir, &p.template) {
             let target = target_path(&p.target, target_home);
+            let content = managed_instructions(&target, &content)?;
             match inject_target(Format::PlainText, &target, &content, target_home) {
                 Ok(()) => personalization = Some(InjectStatus::Ok),
                 Err(e) => return Err(e),
@@ -473,9 +551,9 @@ fn inject_for_agent_with_home(
     }
 
     if let Some(mc) = &agent.config_inject.model_config {
-        if mc.file.contains("://") {
+        if mc.file.contains("://") || !(mc.file.starts_with("~/") || mc.file.starts_with("~\\")) {
             model_config = Some(InjectStatus::Skipped("特殊通道暂不支持".into()));
-        } else if let Some(content) = model_config_content(agent, source_dir) {
+        } else if let Some(content) = model_config_content(agent, source_dir)? {
             let format = match mc.format.as_str() {
                 "json_merge" => Some(Format::JsonMerge),
                 "jsonc_merge" => Some(Format::JsoncMerge),
@@ -503,6 +581,68 @@ fn inject_for_agent_with_home(
         personalization,
         model_config,
     })
+}
+
+/// Snapshot every eligible target before applying any writes. On failure restore
+/// earlier targets as well, including removing files that did not exist before.
+fn inject_for_agent_with_home(
+    agent: &AgentDefinition,
+    source_dir: &Path,
+    target_home: Option<&Path>,
+) -> crate::Result<InjectReport> {
+    let _guard = write_lock();
+    let mut snapshots: Vec<(PathBuf, Option<Vec<u8>>)> = Vec::new();
+    let targets = agent
+        .config_inject
+        .personalization
+        .as_ref()
+        .map(|p| p.target.as_str())
+        .into_iter()
+        .chain(
+            agent
+                .config_inject
+                .model_config
+                .as_ref()
+                .map(|m| m.file.as_str()),
+        );
+    for raw in targets {
+        if raw.contains("://") || !(raw.starts_with("~/") || raw.starts_with("~\\")) {
+            continue;
+        }
+        let path = target_path(raw, target_home);
+        if snapshots.iter().any(|(p, _)| *p == path) {
+            continue;
+        }
+        let before = match fs::read(&path) {
+            Ok(bytes) => Some(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.into()),
+        };
+        snapshots.push((path, before));
+    }
+    let result = inject_for_agent_apply(agent, source_dir, target_home);
+    if let Err(error) = result {
+        let mut failures = Vec::new();
+        for (path, before) in snapshots.into_iter().rev() {
+            let restore = match before {
+                Some(bytes) => write_bytes(&path, &bytes),
+                None if path.is_file() => fs::remove_file(&path).map_err(crate::Error::from),
+                None => Ok(()),
+            };
+            if let Err(e) = restore {
+                failures.push(format!("{}: {}", path.display(), e));
+            }
+        }
+        if !failures.is_empty() {
+            return Err(crate::Error::InjectFailed(format!(
+                "{}; rollback failed: {}",
+                error,
+                failures.join("; ")
+            )));
+        }
+        return Err(error);
+    }
+    result
 }
 
 /// 为单个 agent 执行个性化 + model_config 注入，返回逐项报告
@@ -747,7 +887,7 @@ mod tests {
             }
         }
 
-        assert_eq!(personalization_writes, 5);
+        assert_eq!(personalization_writes, 4);
         for relative in [
             ".codex/AGENTS.md",
             ".codex/config.toml",
@@ -755,7 +895,6 @@ mod tests {
             ".config/opencode/opencode.jsonc",
             ".claude/CLAUDE.md",
             ".gemini/GEMINI.md",
-            ".hermes/config.yaml",
         ] {
             let target = target_home.join(relative);
             assert!(target.starts_with(&target_home));
@@ -778,6 +917,7 @@ mod tests {
             description: "t".into(),
             install: crate::registry::InstallConfig {
                 method: crate::registry::InstallMethod::Npm,
+                extension_id: None,
                 command: None,
                 url: None,
                 verify_cmd: None,
@@ -821,6 +961,135 @@ mod tests {
             report.model_config,
             Some(InjectStatus::Skipped("缺少配置内容源".into()))
         );
+    }
+
+    #[test]
+    fn failed_second_target_restores_first_target() {
+        let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        let agent = doc.agents.get("codex").unwrap();
+        let home = temp_dir("transaction");
+        let source = profile_source_dir_in(&home).unwrap();
+        let first = home.join(".codex/AGENTS.md");
+        let second = home.join(".codex/config.toml");
+        fs::create_dir_all(first.parent().unwrap()).unwrap();
+        fs::write(&first, "user instructions").unwrap();
+        fs::write(&second, "not valid TOML [[[}").unwrap();
+        assert!(inject_for_agent_in_home(agent, &source, &home).is_err());
+        assert_eq!(fs::read_to_string(&first).unwrap(), "user instructions");
+        assert_eq!(fs::read_to_string(&second).unwrap(), "not valid TOML [[[}");
+        fs::remove_file(&first).unwrap();
+        assert!(inject_for_agent_in_home(agent, &source, &home).is_err());
+        assert!(!first.exists(), "new target must be removed on rollback");
+    }
+
+    #[test]
+    fn yaml_merge_initializes_missing_target_and_rejects_scalar() {
+        let (home, target) = temp_home_target("yaml-empty", "settings.yaml");
+        inject_in_home(Format::YamlSection, &target, "enabled: true", &home).unwrap();
+        let value: Value = serde_yml::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+        assert_eq!(value["enabled"], true);
+        fs::write(&target, "42").unwrap();
+        assert!(inject_in_home(Format::YamlSection, &target, "enabled: true", &home).is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "42");
+    }
+
+    #[test]
+    fn markdown_never_overwrites_structured_agent_config() {
+        let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        let home = temp_dir("hermes-safe");
+        let source = profile_source_dir_in(&home).unwrap();
+        let target = home.join(".hermes/config.yaml");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, "user_setting: true").unwrap();
+        let mut unsafe_definition = doc.agents.get("hermes").unwrap().clone();
+        unsafe_definition.config_inject.personalization =
+            Some(crate::registry::PersonalizationInject {
+                template: "hermes".into(),
+                target: "~/.hermes/config.yaml".into(),
+            });
+        let report = inject_for_agent_in_home(&unsafe_definition, &source, &home).unwrap();
+        assert!(matches!(
+            report.personalization,
+            Some(InjectStatus::Skipped(_))
+        ));
+        assert_eq!(fs::read_to_string(target).unwrap(), "user_setting: true");
+    }
+
+    #[test]
+    fn invalid_profile_is_an_error_and_rolls_back_instructions() {
+        let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        let home = temp_dir("invalid-profile");
+        let source = profile_source_dir_in(&home).unwrap();
+        fs::write(source.join("personalization/codex.json"), "invalid JSON").unwrap();
+        assert!(
+            inject_for_agent_in_home(doc.agents.get("codex").unwrap(), &source, &home).is_err()
+        );
+        assert!(!home.join(".codex/AGENTS.md").exists());
+    }
+
+    #[test]
+    fn toml_profile_escapes_keys_and_multiline_strings() {
+        let sections = serde_json::json!({"a.b": {"odd key": "line one\nline two"}});
+        let output = sections_to_toml(&sections).unwrap();
+        let parsed: toml::Value = toml::from_str(&output).unwrap();
+        assert_eq!(
+            parsed["a.b"]["odd key"].as_str(),
+            Some("line one\nline two")
+        );
+    }
+
+    #[test]
+    fn personalization_preserves_user_content_and_updates_only_managed_block() {
+        let home = temp_dir("managed-instructions");
+        let target = home.join("AGENTS.md");
+        let original = "# My instructions\nNever delete these.\n";
+        fs::write(&target, original).unwrap();
+        let first = managed_instructions(&target, "Version one").unwrap();
+        assert!(first.starts_with(original));
+        fs::write(&target, format!("{first}User footer\n")).unwrap();
+        let second = managed_instructions(&target, "Version two").unwrap();
+        assert!(second.starts_with(original));
+        assert!(second.ends_with("User footer\n"));
+        assert!(!second.contains("Version one"));
+        assert_eq!(second.matches(INSTRUCTIONS_START).count(), 1);
+        assert!(second.contains("Version two"));
+        fs::write(&target, &second).unwrap();
+        assert_eq!(
+            managed_instructions(&target, "Version two").unwrap(),
+            second
+        );
+    }
+
+    #[test]
+    fn malformed_managed_markers_do_not_modify_instructions() {
+        let home = temp_dir("managed-invalid");
+        let target = home.join("AGENTS.md");
+        for text in [
+            INSTRUCTIONS_START.to_owned(),
+            format!("{INSTRUCTIONS_END}{INSTRUCTIONS_START}"),
+            format!("{INSTRUCTIONS_START}{INSTRUCTIONS_END}{INSTRUCTIONS_START}{INSTRUCTIONS_END}"),
+        ] {
+            fs::write(&target, &text).unwrap();
+            assert!(managed_instructions(&target, "replacement").is_err());
+            assert_eq!(fs::read_to_string(&target).unwrap(), text);
+        }
+    }
+
+    #[test]
+    fn personalization_capability_matches_supported_destinations() {
+        let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        for id in ["codex", "claude-code", "opencode", "gemini-cli"] {
+            assert!(
+                supports_personalization(doc.agents.get(id).unwrap()),
+                "{id}"
+            );
+        }
+        for id in ["hermes", "cline", "zcode", "openclaw", "pi"] {
+            assert!(
+                !supports_personalization(doc.agents.get(id).unwrap()),
+                "{id}"
+            );
+        }
     }
 
     const REGISTRY_JSON: &str = include_str!("../../../../agents/registry-v3.json");

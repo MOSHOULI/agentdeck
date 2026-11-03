@@ -4,6 +4,8 @@ import { AgentSquare } from './AgentSquare';
 import type { AgentInfo } from '../bridge';
 
 vi.mock('../bridge', () => ({
+  getMemoryCollectionStatus: vi.fn().mockResolvedValue({ enabled: false, lastRunAt: null, lastError: null, nextRunAt: null }),
+  setMemoryCollectionEnabled: vi.fn(),
   getAgents: vi.fn(),
   installAgent: vi.fn(),
   uninstallAgent: vi.fn(),
@@ -33,6 +35,8 @@ const agents: AgentInfo[] = [
     id: 'opencode',
     name: 'OpenCode',
     installed: false,
+    canInstall: true,
+    canUninstall: true,
     authVerified: false,
     source: 'open',
     uiType: 'all',
@@ -46,6 +50,8 @@ const agents: AgentInfo[] = [
     id: 'cli-tool',
     name: 'CLI Tool',
     installed: false,
+    canInstall: true,
+    canUninstall: true,
     authVerified: false,
     source: 'open',
     uiType: 'cli',
