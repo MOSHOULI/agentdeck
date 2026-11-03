@@ -5,7 +5,7 @@
 //! failures never uninstall software that may have existed before this operation.
 use crate::registry::AgentDefinition;
 
-use std::process::Command;
+use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
 /// 执行注册表里的 shell 命令（Windows 用 cmd /C）
@@ -14,15 +14,23 @@ fn run_shell(cmdline: &str) -> std::io::Result<()> {
 }
 
 fn run_shell_with_timeout(cmdline: &str, timeout: Duration) -> std::io::Result<()> {
+    wait_for_shell_with_timeout(spawn_shell(cmdline)?, timeout)
+}
+
+fn spawn_shell(cmdline: &str) -> std::io::Result<Child> {
     if cmdline.trim().is_empty() {
         return Err(std::io::Error::other("Empty deployment command"));
     }
     #[cfg(windows)]
     let mut command = {
         use std::os::windows::process::CommandExt;
-        let mut c = Command::new("cmd");
+        let mut c = Command::new("cmd.exe");
         c.creation_flags(0x08000000); // CREATE_NO_WINDOW: background enumeration must not flash consoles.
-        c.args(["/C", cmdline]);
+        // This is a trusted shell program, not one C-runtime argument. `arg`
+        // escapes embedded quotes with backslashes, which cmd.exe does not
+        // decode. /S removes only our outer quotes, preserving quoted paths and
+        // nested commands. /D prevents unrelated AutoRun commands from running.
+        c.args(["/D", "/S", "/C"]).raw_arg(format!("\"{cmdline}\""));
         c
     };
     #[cfg(not(windows))]
@@ -38,7 +46,10 @@ fn run_shell_with_timeout(cmdline: &str, timeout: Duration) -> std::io::Result<(
     }
     // Never let unattended deployment wait for an interactive prompt.
     command.stdin(std::process::Stdio::null());
-    let mut child = command.spawn()?;
+    command.spawn()
+}
+
+fn wait_for_shell_with_timeout(mut child: Child, timeout: Duration) -> std::io::Result<()> {
     let started = Instant::now();
     loop {
         match child.try_wait() {
@@ -251,21 +262,87 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn windows_shell_executes_nested_quoted_powershell_commands() {
+        let directory = std::env::temp_dir().join(format!(
+            "agentdeck quoted & nested-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let marker = directory.join("quoted output.txt");
+        let quoted_marker = marker.to_string_lossy().replace("'", "''");
+        let command = format!(
+            "powershell.exe -NoLogo -NoProfile -NonInteractive -Command \"$ErrorActionPreference = 'Stop'; Set-Content -LiteralPath '{quoted_marker}' -Value 'quoted value & literal text' -Encoding ascii\""
+        );
+        let result = run_shell_with_timeout(&command, Duration::from_secs(30));
+        let contents = std::fs::read_to_string(&marker);
+        std::fs::remove_dir_all(directory).unwrap();
+        result.expect("quoted PowerShell code must execute, not print as a string");
+        assert_eq!(contents.unwrap().trim(), "quoted value & literal text");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_shell_executes_quoted_script_paths_and_arguments() {
+        let directory = std::env::temp_dir().join(format!(
+            "agentdeck quoted & script-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let script = directory.join("write marker.cmd");
+        let marker = directory.join("quoted output.txt");
+        std::fs::write(&script, "@echo off\r\n> \"%~1\" echo %~2\r\n").unwrap();
+        let command = format!(
+            "\"{}\" \"{}\" \"argument with spaces\"",
+            script.display(),
+            marker.display()
+        );
+        let result = run_shell_with_timeout(&command, Duration::from_secs(10));
+        let contents = std::fs::read_to_string(&marker);
+        std::fs::remove_dir_all(directory).unwrap();
+        result.expect("a quoted script path and its arguments must remain intact");
+        assert_eq!(contents.unwrap().trim(), "argument with spaces");
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn timeout_terminates_windows_descendant_before_late_write() {
         let directory =
             std::env::temp_dir().join(format!("agentdeck-timeout-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&directory).unwrap();
+        let ready = directory.join("descendant-ready.txt");
         let marker = directory.join("late-write.txt");
         // PowerShell is a descendant of cmd.exe, not the shell handle we reap.
+        let quoted_ready = ready.to_string_lossy().replace("'", "''");
         let quoted_marker = marker.to_string_lossy().replace("'", "''");
         let command = format!(
-            "powershell.exe -NoLogo -NoProfile -NonInteractive -Command \"Start-Sleep -Seconds 5; Set-Content -LiteralPath '{quoted_marker}' -Value 'leaked'\""
+            "powershell.exe -NoLogo -NoProfile -NonInteractive -Command \"$ErrorActionPreference = 'Stop'; Set-Content -LiteralPath '{quoted_ready}' -Value $PID -Encoding ascii; Start-Sleep -Seconds 5; Set-Content -LiteralPath '{quoted_marker}' -Value 'leaked'\""
         );
-        let error = run_shell_with_timeout(&command, Duration::from_secs(3)).unwrap_err();
-        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        let mut child = spawn_shell(&command).unwrap();
+        let shell_id = child.id();
+        let startup = Instant::now();
+        // Prove a real descendant has started before exercising timeout cleanup.
+        // Slow PowerShell startup must not turn broken quoting into a false pass.
+        let descendant_id = loop {
+            if let Ok(contents) = std::fs::read_to_string(&ready)
+                && let Ok(pid) = contents.trim().parse::<u32>()
+            {
+                break pid;
+            }
+            if child.try_wait().unwrap().is_some() || startup.elapsed() > Duration::from_secs(30) {
+                let result = wait_for_shell_with_timeout(child, Duration::ZERO);
+                std::fs::remove_dir_all(directory).unwrap();
+                panic!("PowerShell descendant did not signal readiness: {result:?}");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        let result = wait_for_shell_with_timeout(child, Duration::from_millis(40));
         std::thread::sleep(Duration::from_secs(6));
-        assert!(!marker.exists(), "timed-out Windows descendant survived");
+        let late_write = marker.exists();
         std::fs::remove_dir_all(directory).unwrap();
+        assert_ne!(descendant_id, shell_id, "fixture must run in a descendant");
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(!late_write, "timed-out Windows descendant survived");
     }
 
     #[test]
