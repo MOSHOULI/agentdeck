@@ -1006,10 +1006,12 @@ mod tests {
                 std::fs::write(npm_cli, "Synthetic npm CLI, never run.").unwrap();
             } else {
                 #[cfg(unix)]
-                std::os::unix::fs::symlink(&bin, &launcher).unwrap();
+                {
+                    std::os::unix::fs::symlink(&bin, &launcher).unwrap();
+                    write_executable(&bindir.join("npm"), "Synthetic npm executable, never run.");
+                }
                 #[cfg(not(unix))]
                 unreachable!("Unix link fixtures are Unix-only");
-                write_executable(&bindir.join("npm"), "Synthetic npm executable, never run.");
             }
             let search = SearchPath {
                 directories: vec![bindir],
