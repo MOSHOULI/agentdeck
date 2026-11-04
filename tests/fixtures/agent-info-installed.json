@@ -1,0 +1,23 @@
+{
+  "id": "contract-agent",
+  "name": "Contract Agent",
+  "installed": true,
+  "installationStatus": "installed",
+  "installationMessage": null,
+  "installSource": "unknown",
+  "authVerified": true,
+  "source": "open",
+  "uiType": "cli",
+  "stars": 0,
+  "popular": false,
+  "description": "Synthetic contract fixture",
+  "icon": "test",
+  "category": "test",
+  "canInstall": true,
+  "canVerifyInstall": true,
+  "canUninstall": false,
+  "canConfigure": true,
+  "installHelp": null,
+  "uninstallHelp": "安装来源未确认，暂不支持自动卸载；请使用原安装方式手动卸载。",
+  "homepage": null
+}

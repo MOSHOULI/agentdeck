@@ -5,43 +5,204 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish the verified Windows installer (main only)
+        required: false
+        default: false
+        type: boolean
+
+env:
+  BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   frontend:
-    name: 前端（build + test + tsc）
+    name: Frontend build, types and tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: web/ui
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_SHA }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: web/ui/package-lock.json
       - run: npm ci
-      - run: npm run build
+      - run: npm audit --audit-level=moderate
+      - run: npm run typecheck
       - run: npm test
-      - run: npx tsc --noEmit
+      - run: npm run build
 
-  rust:
-    name: Rust（fmt + clippy + test）
-    runs-on: windows-latest
+  portable-core:
+    name: Linux core and CLI
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_SHA }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked -p aisync-core -p aisync-cli --all-targets -- -D warnings
+      - run: python scripts/run-isolated.py cargo test --locked -p aisync-core -p aisync-cli
+      - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- health
+      - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- agents
+
+  dependency-audit:
+    name: Rust dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_SHA }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-audit --version 0.22.2 --locked
+      - run: cargo audit --json > cargo-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-audit-${{ env.BUILD_SHA }}
+          path: cargo-audit.json
+          if-no-files-found: warn
+
+  windows:
+    name: Windows native tests and installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_SHA }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: web/ui/package-lock.json
-      - name: 构建前端（tauri 编译需要 dist 产物）
-        working-directory: web/ui
-        run: npm ci && npm run build
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
-      - run: cargo clippy --workspace -- -D warnings
-      - run: cargo test --workspace
+      - run: npm ci --prefix web/ui
+      - run: npm run build --prefix web/ui
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: python scripts/run-isolated.py cargo test --locked --workspace
+      - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- health
+      - name: Build NSIS installer
+        run: npm exec --prefix web/ui -- tauri build --bundles nsis --ci -- --locked
+      - name: Record installer integrity
+        shell: pwsh
+        run: |
+          $installers = Get-ChildItem target/release/bundle/nsis/*-setup.exe
+          if ($installers.Count -lt 1) { throw "NSIS installer missing" }
+          $installers | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)" | Out-File -FilePath "$($_.DirectoryName)/SHA256SUMS.txt" -Append -Encoding ascii
+          }
+          "${{ env.BUILD_SHA }}" | Out-File target/release/bundle/nsis/BUILD_COMMIT.txt -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AgentDeck-windows-${{ env.BUILD_SHA }}
+          path: |
+            target/release/bundle/nsis/*-setup.exe
+            target/release/bundle/nsis/SHA256SUMS.txt
+            target/release/bundle/nsis/BUILD_COMMIT.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish verified Windows installer
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release == true
+    needs: [frontend, portable-core, dependency-audit, windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: AgentDeck-windows-${{ github.sha }}
+          path: installer
+      - name: Verify provenance and checksums
+        working-directory: installer
+        run: |
+          test "$(tr -d '\r\n' < BUILD_COMMIT.txt)" = "$GITHUB_SHA"
+          sha256sum --check SHA256SUMS.txt
+      - name: Stage, verify and publish new version (never overwrite a release)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag="v$version"
+          installer_name="AgentDeck_${version}_x64-setup.exe"
+          test -f "installer/$installer_name"
+          test "$(find installer -type f | wc -l)" -eq 3
+          expected_checksums=$(cd installer && sha256sum "$installer_name")
+          test "$(tr -d '\r' < installer/SHA256SUMS.txt)" = "$expected_checksums"
+
+          # Listing must succeed; an API/network error is not evidence of absence.
+          existing_tags=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq '.[].tag_name')
+          if grep -Fxq "$tag" <<< "$existing_tags"; then
+            echo "::error::Release $tag already exists. Preserve it and verify it manually; this workflow never overwrites or silently accepts existing releases."
+            exit 1
+          fi
+
+          tag_commit() {
+            git ls-remote --tags origin "refs/tags/$tag" "refs/tags/$tag^{}" |
+              awk -v ref="refs/tags/$tag" '$2 == ref { tag = $1 } $2 == ref "^{}" { peeled = $1 } END { print peeled ? peeled : tag }'
+          }
+          remote_commit=$(tag_commit)
+          if [ -z "$remote_commit" ]; then
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+          elif [ "$remote_commit" != "$GITHUB_SHA" ]; then
+            echo "::error::Tag $tag points to $remote_commit, not $GITHUB_SHA. Refusing to publish."
+            exit 1
+          fi
+          remote_commit=$(tag_commit)
+          test "$remote_commit" = "$GITHUB_SHA"
+
+          # Keep assets private until their uploaded bytes and source tag are verified.
+          gh release create "$tag" "installer/$installer_name" installer/SHA256SUMS.txt installer/BUILD_COMMIT.txt \
+            --verify-tag --target "$GITHUB_SHA" --title "AgentDeck v$version" --notes-file "docs/RELEASE-$version.md" --draft --latest=false
+          is_draft=$(gh release view "$tag" --json isDraft --jq .isDraft)
+          test "$is_draft" = true
+          gh release download "$tag" --dir verified \
+            --pattern "$installer_name" --pattern SHA256SUMS.txt --pattern BUILD_COMMIT.txt
+          for file in "$installer_name" SHA256SUMS.txt BUILD_COMMIT.txt; do
+            cmp "installer/$file" "verified/$file"
+          done
+          test "$(tr -d '\r\n' < verified/BUILD_COMMIT.txt)" = "$GITHUB_SHA"
+          (cd verified && sha256sum --check --strict SHA256SUMS.txt)
+          remote_commit=$(tag_commit)
+          test "$remote_commit" = "$GITHUB_SHA"
+
+          # Latest remains the signed registry feed; this is an installer-only release.
+          gh release edit "$tag" --draft=false --latest=false
+          is_draft=$(gh release view "$tag" --json isDraft --jq .isDraft)
+          test "$is_draft" = false
+          remote_commit=$(tag_commit)
+          test "$remote_commit" = "$GITHUB_SHA"

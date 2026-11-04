@@ -81,7 +81,7 @@ fn find_server(name: &str) -> crate::Result<McpServerDef> {
 /// 展开路径：支持 `~` 与白名单环境变量（`%APPDATA%` 等，大小写不敏感）
 fn expand_path(raw: &str) -> PathBuf {
     let trimmed = raw.trim();
-    if let Some(home) = dirs::home_dir()
+    if let Some(home) = crate::home_dir()
         && let Some(rest) = trimmed
             .strip_prefix("~/")
             .or_else(|| trimmed.strip_prefix("~\\"))
@@ -117,11 +117,14 @@ fn read_text(path: &Path) -> crate::Result<String> {
 }
 
 fn write_text(path: &Path, content: &str) -> crate::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    if let Ok(metadata) = std::fs::symlink_metadata(path)
+        && (metadata.file_type().is_symlink() || !metadata.is_file())
+    {
+        return Err(Error::Other(
+            "MCP destination must be a regular file".into(),
+        ));
     }
-    std::fs::write(path, content)?;
-    Ok(())
+    crate::vault::keystore::atomic_write_bytes(path, content.as_bytes())
 }
 
 // ─── TOML ─────────────────────────────────────────
@@ -416,38 +419,44 @@ pub fn list_servers() -> crate::Result<Vec<McpServerInfo>> {
     Ok(out)
 }
 
-/// 切换某 agent 的 MCP 服务器开关（实时写回配置文件）
-pub fn toggle(agent_id: &str, server_name: &str, enabled: bool) -> crate::Result<()> {
-    let target = agent_target(agent_id)?;
-    let def = find_server(server_name)?;
-    if let Some(cmd) = &def.command
-        && !ALLOWED_BINARIES.contains(&cmd.as_str())
-    {
-        return Err(Error::Other(format!(
-            "MCP 启动命令不在白名单，拒绝写入: {}",
-            cmd
-        )));
+/// Pure transformation: every operation is validated before the destination changes.
+fn apply_server(
+    text: &str,
+    target: &crate::registry::McpInject,
+    server_name: &str,
+    def: &McpServerDef,
+    enabled: bool,
+) -> crate::Result<String> {
+    if enabled {
+        if let Some(command) = &def.command {
+            if !ALLOWED_BINARIES.contains(&command.as_str()) {
+                return Err(Error::Other(format!(
+                    "MCP command is not allowed: {command}"
+                )));
+            }
+        } else if def.url.is_none() {
+            return Err(Error::Other(
+                "MCP server has neither command nor URL".into(),
+            ));
+        }
     }
-
-    let path = expand_path(&target.file);
-    let text = read_text(&path)?;
     let format = target.format.as_str();
     let new_text = match format {
         "toml_section" => {
             let section = target.section.as_deref().unwrap_or("mcp_servers");
             if enabled {
-                toml_set_server(&text, section, server_name, &def)?
+                toml_set_server(text, section, server_name, def)?
             } else {
-                toml_remove_server(&text, section, server_name)?
+                toml_remove_server(text, section, server_name)?
             }
         }
         "json_merge" | "jsonc_merge" => {
             let key = target.key.as_deref().unwrap_or("mcpServers");
             let is_jsonc = format == "jsonc_merge";
             let local_array_command = is_jsonc; // opencode 的 local/remote 数组格式
-            let mut value = json_value(&text, is_jsonc)?;
+            let mut value = json_value(text, is_jsonc)?;
             if enabled {
-                json_set_server(&mut value, key, server_name, &def, local_array_command)?;
+                json_set_server(&mut value, key, server_name, def, local_array_command)?;
             } else {
                 json_remove_server(&mut value, key, server_name);
             }
@@ -459,11 +468,11 @@ pub fn toggle(agent_id: &str, server_name: &str, enabled: bool) -> crate::Result
             let mut value: serde_json::Value = if text.trim().is_empty() {
                 serde_json::Value::Object(Default::default())
             } else {
-                serde_yml::from_str(&text)
+                serde_yml::from_str(text)
                     .map_err(|e| Error::Other(format!("YAML 解析失败: {}", e)))?
             };
             if enabled {
-                yaml_set_server(&mut value, section, server_name, &def)?;
+                yaml_set_server(&mut value, section, server_name, def)?;
             } else {
                 yaml_remove_server(&mut value, section, server_name);
             }
@@ -472,23 +481,96 @@ pub fn toggle(agent_id: &str, server_name: &str, enabled: bool) -> crate::Result
         }
         other => return Err(Error::Other(format!("未知 MCP 格式: {}", other))),
     };
-    write_text(&path, &new_text)
+    Ok(new_text)
 }
 
-/// 批量同步（安装流程可复用）：确保 enabled 列表中的服务器已注入，其余移除
-pub fn sync(agent_id: &str, enabled_servers: &[String]) -> crate::Result<Vec<String>> {
-    let current = current_servers(agent_id)?;
-    for server in &current {
-        if !enabled_servers.contains(server) {
-            toggle(agent_id, server, false)?;
+fn save_config(path: &Path, original: &str, updated: &str) -> crate::Result<()> {
+    if original == updated {
+        return Ok(());
+    }
+    if !path.is_absolute() {
+        return Err(Error::Other(format!(
+            "MCP path cannot be resolved on this platform: {}",
+            path.display()
+        )));
+    }
+    // Retain the exact pre-write configuration as a private local backup. The
+    // next git snapshot encrypts it; do not commit these plaintext local files.
+    if path.is_file() {
+        let home =
+            crate::home_dir().ok_or_else(|| Error::Other("Cannot locate home directory".into()))?;
+        let backup = home
+            .join(".agentdeck/backups")
+            .join(format!("mcp-{}", uuid::Uuid::new_v4()));
+        let name = path
+            .file_name()
+            .ok_or_else(|| Error::Other("MCP destination has no filename".into()))?;
+        crate::vault::keystore::atomic_write_bytes(&backup.join(name), original.as_bytes())?;
+    }
+    write_text(path, updated)
+}
+
+/// Toggle a managed server atomically. Independent configuration writers share a lock.
+pub fn toggle(agent_id: &str, server_name: &str, enabled: bool) -> crate::Result<()> {
+    let _guard = crate::config::write_lock();
+    let target = agent_target(agent_id)?;
+    let def = if enabled {
+        find_server(server_name)?
+    } else {
+        // A disabled/removed registry entry must still be removable locally.
+        McpServerDef {
+            name: server_name.into(),
+            description: None,
+            url: None,
+            command: None,
+            args: vec![],
+            disabled: true,
+        }
+    };
+    let path = expand_path(&target.file);
+    let text = read_text(&path)?;
+    let updated = apply_server(&text, &target, server_name, &def, enabled)?;
+    save_config(&path, &text, &updated)
+}
+
+fn sync_text(
+    text: &str,
+    target: &crate::registry::McpInject,
+    definitions: &[McpServerDef],
+    enabled: &[String],
+) -> crate::Result<String> {
+    // Validate the full request first, including entries later in the list.
+    for name in enabled {
+        if !definitions.iter().any(|d| &d.name == name && !d.disabled) {
+            return Err(Error::Other(format!(
+                "Unknown or disabled MCP server: {name}"
+            )));
         }
     }
-    let mut applied = Vec::new();
-    for server in enabled_servers {
-        toggle(agent_id, server, true)?;
-        applied.push(server.clone());
+    let mut updated = text.to_string();
+    for def in definitions {
+        updated = apply_server(
+            &updated,
+            target,
+            &def.name,
+            def,
+            enabled.contains(&def.name) && !def.disabled,
+        )?;
     }
-    Ok(applied)
+    Ok(updated)
+}
+
+/// Synchronize only registry-managed entries in one atomic write. User-owned MCP
+/// servers are preserved; invalid requests never partially apply.
+pub fn sync(agent_id: &str, enabled_servers: &[String]) -> crate::Result<Vec<String>> {
+    let _guard = crate::config::write_lock();
+    let target = agent_target(agent_id)?;
+    let definitions = load_mcp_registry()?;
+    let path = expand_path(&target.file);
+    let original = read_text(&path)?;
+    let updated = sync_text(&original, &target, &definitions, enabled_servers)?;
+    save_config(&path, &original, &updated)?;
+    Ok(enabled_servers.to_vec())
 }
 
 #[cfg(test)]
@@ -525,17 +607,10 @@ mod tests {
     }
 
     #[test]
-    fn agent_targets_cover_six_agents() {
+    fn agent_targets_cover_five_verified_adapters() {
         let targets = load_agent_targets().unwrap();
         let ids: Vec<&str> = targets.iter().map(|(id, _)| id.as_str()).collect();
-        for expected in [
-            "claude-code",
-            "cline",
-            "codex",
-            "gemini-cli",
-            "hermes",
-            "opencode",
-        ] {
+        for expected in ["claude-code", "cline", "codex", "gemini-cli", "opencode"] {
             assert!(ids.contains(&expected), "缺少 {}", expected);
         }
         let codex = targets.iter().find(|(id, _)| id == "codex").unwrap();
@@ -705,11 +780,11 @@ mod tests {
         let _ = codex_orig;
     }
 
-    /// 真实环境验证：已安装的开源 agent（gemini-cli/hermes）安装→MCP 注入→还原（手动运行）
+    /// 真实环境验证：已安装的开源 agent（gemini-cli）MCP 注入→还原（手动运行）
     #[test]
-    #[ignore = "真实环境验证：修改 ~/.gemini/settings.json 与 ~/.hermes/config.yaml"]
+    #[ignore = "真实环境验证：修改 ~/.gemini/settings.json"]
     fn real_mcp_e2e_installed_agents() {
-        for (bin, agent_id) in [("gemini", "gemini-cli"), ("hermes", "hermes")] {
+        for (bin, agent_id) in [("gemini", "gemini-cli")] {
             let installed = std::process::Command::new(bin)
                 .arg("--version")
                 .output()
@@ -737,5 +812,49 @@ mod tests {
             );
             println!("{} MCP 注入/移除往返通过", agent_id);
         }
+    }
+    #[test]
+    fn sync_preserves_unmanaged_servers_and_removes_disabled_managed_entries() {
+        let target = crate::registry::McpInject {
+            file: "unused".into(),
+            format: "json_merge".into(),
+            key: Some("mcpServers".into()),
+            section: None,
+        };
+        let input = r#"{"mcpServers":{"private":{"command":"mine"},"ragflow":{"url":"old"}}}"#;
+        let output = sync_text(input, &target, &[toml_def()], &[]).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert!(value["mcpServers"].get("private").is_some());
+        assert!(value["mcpServers"].get("ragflow").is_none());
+    }
+
+    #[test]
+    fn sync_rejects_invalid_selection_before_writing() {
+        let target = crate::registry::McpInject {
+            file: "unused".into(),
+            format: "json_merge".into(),
+            key: None,
+            section: None,
+        };
+        assert!(
+            sync_text(
+                "{}",
+                &target,
+                &[toml_def()],
+                &["ragflow".into(), "missing".into()]
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn atomic_config_write_replaces_existing_file() {
+        let directory = temp_dir("atomic");
+        let path = directory.join("config.json");
+        write_text(&path, "before").unwrap();
+        write_text(&path, "after").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "after");
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

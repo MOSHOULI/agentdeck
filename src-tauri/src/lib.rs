@@ -3,6 +3,7 @@
 /// 注册 Tauri commands，加载 aisync-core 引擎。
 /// M3：启动时挂定时采集线程（每小时），状态存 CollectionState。
 mod commands;
+use tauri::Manager;
 
 /// 运行 Tauri 应用
 pub fn run() {
@@ -13,6 +14,7 @@ pub fn run() {
             commands::health_check,
             commands::deploy::get_agents,
             commands::deploy::install_agent,
+            commands::deploy::configure_agent,
             commands::deploy::uninstall_agent,
             commands::deploy::verify_agent_auth,
             commands::memory::collect_memory,
@@ -21,6 +23,7 @@ pub fn run() {
             commands::memory::toggle_auto_inject,
             commands::memory::recent_memories,
             commands::memory::memory_collection_status,
+            commands::memory::set_memory_collection_enabled,
             commands::vault::save_api_key,
             commands::vault::list_api_keys,
             commands::vault::get_api_key,
@@ -34,10 +37,16 @@ pub fn run() {
             commands::update::apply_updates,
         ])
         .setup(|app| {
-            let handle = app.handle().clone();
-            std::thread::spawn(move || commands::memory::scheduled_collect_loop(handle));
+            let collection = app.state::<commands::memory::CollectionState>();
+            collection.load_settings();
+            collection.start()?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("启动 AgentDeck 失败");
+        .build(tauri::generate_context!())
+        .expect("启动 AgentDeck 失败")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<commands::memory::CollectionState>().stop();
+            }
+        });
 }

@@ -1,76 +1,94 @@
 # AgentDeck（AI 中枢）
 
-AgentDeck 是一款跨平台桌面应用，帮助你**一站式发现、安装、配置和管理本地 AI 代理工具**。它把安装、配置注入、对话记忆、密钥加密、MCP 服务器管理整合到一个界面里。
+在一个桌面界面中管理本机 AI Agent：发现与安装、配置、可选择的对话记忆导出、加密密钥、MCP 和配置备份。
 
-## 功能特性
+**当前支持的完整桌面平台是 Windows 10/11 x64。** React + Tauri 2 + Rust 架构；Linux 可运行非密钥相关的核心/CLI，尚不提供 Linux/macOS 的受保护密钥库或完整安装包。
 
-- **Agent 广场**：卡片式浏览支持的 AI Agent，一键安装 / 卸载 / 验证
-- **配置注入**：自动把个性化模板与模型配置写入各 Agent 的配置文件（JSON / JSONC / TOML / YAML），写入前自动备份，失败自动回滚
-- **统一记忆**：采集 Codex / Claude Code / OpenCode 的会话历史，全文搜索，跨 Agent 注入记忆文件；支持定时采集与自动标签注入
-- **密钥库（vault）**：API Key 用 AES-256-GCM 加密存储，主密钥由 Windows DPAPI 保护；支持从旧版 vault 一键迁移
-- **备份回滚**：每次安装 / 注入 / 密钥变动前自动生成 git 备份，支持按操作回滚或按时间点整体恢复；备份内容加密后入库
-- **MCP 管理**：内置 MCP 服务器注册表，按 Agent 独立开关，实时写回各 Agent 的 MCP 配置
-- **在线更新**：启动时静默检查注册表更新，ed25519 签名校验，一键应用
+## 安装与运行
 
-## 安装
+1. 从 [AgentDeck v1.1.0 安装包发布页](https://github.com/MOSHOULI/agentdeck/releases/tag/v1.1.0) 下载 `AgentDeck_1.1.0_x64-setup.exe`，用同一发布中的 `SHA256SUMS.txt` 验证文件。发布须通过下述 CI 门禁；若页面尚不存在，安装包尚未发布。
+2. 安装 [Git for Windows](https://git-scm.com/downloads/win) 并确保 `git` 在 PATH（加密备份需要）。使用 npm 类型 Agent 前还需要 Node.js/npm。
+3. 安装包目前**未做 Windows Authenticode 代码签名**。SHA256 用于完整性核对，不等同于发布者身份签名。
 
-### 下载安装包（推荐）
+### 从源码构建（Windows）
 
-前往 [GitHub Releases](https://github.com/MOSHOULI/agentdeck/releases) 下载最新的 Windows 安装包（`AgentDeck_x.y.z_x64-setup.exe`），双击运行，按向导安装即可。安装包支持中文 / English 界面。
-
-### 从源码构建
-
-环境要求：
-
-- Windows 10 / 11
-- Rust（MSVC 工具链）
-- Node.js 18+ 与 npm
-- Tauri CLI
+要求：Rust stable（MSVC）、Node.js 24 LTS、Git、Microsoft C++ Build Tools 与 WebView2。
 
 ```powershell
-# 克隆仓库
 git clone https://github.com/MOSHOULI/agentdeck.git
 cd agentdeck
-
-# 启动开发窗口
-cargo tauri dev
-
-# 构建安装包（NSIS）
-cargo tauri build
+npm ci --prefix web/ui
+npm exec --prefix web/ui -- tauri dev
+# NSIS 安装包输出到 target/release/bundle/nsis/
+npm exec --prefix web/ui -- tauri build --bundles nsis --ci -- --locked
 ```
 
-## 快速开始
+无需全局安装 Tauri CLI；Rust 和 npm 依赖锁文件都提交到仓库。
 
-1. 启动 AgentDeck，在「Agent 广场」选择要使用的 Agent，点击安装（安装与卸载前会弹出确认）
-2. 安装完成后，配置注入会自动写入对应 Agent 的配置文件（写入前有备份）
-3. 在「记忆管理」面板点击「采集」，同步 Codex / Claude / OpenCode 的会话历史；勾选「自动注入」的记忆会在每次采集后自动写入记忆文件
-4. 在「密钥与备份」面板添加 API Key（加密存储，界面只显示脱敏内容），并可查看历史备份、执行回滚
-5. 在「MCP 服务器」面板按 Agent 开启需要的 MCP 服务器，配置实时生效
-6. 在「在线更新」面板检查并应用注册表更新
+## 使用
 
-## 数据与安全
+桌面界面分为 Agent 管理、记忆管理、MCP 服务、密钥与备份、注册表更新五个工作区。侧栏可折叠，支持浅色、深色或跟随系统；导航不会中断正在执行的操作，顶部与侧栏会保留操作状态。Agent 搜索只筛选当前真实列表，详情中的未知状态不会被替换成成功。
 
-- 应用数据统一存放在用户主目录下的 `~/.agentdeck/`：记忆库（`memory.db`）、密钥库（`vault/`）、备份仓库（`git-backup/`）、在线更新注册表（`registry/`）
-- Agent 配置模板存放在 `~/.agentdeck/profiles/default/`；缺失的目录或文件会自动初始化，已有文件不会被覆盖
-- API Key 以密文存储，明文绝不落盘；主密钥由 Windows DPAPI 绑定当前用户保护
-- 配置写入前自动备份，注入失败自动回滚；备份文件加密后进入备份仓库，提交前做密钥特征扫描
-- 安装 / 卸载 / 删除密钥 / 回滚等操作均有确认提示
+- **Agent 管理**：安装前确认，默认只安装软件，不初始化 profile、密钥库或 Git 备份，也不自动应用配置。检测区分已验证、PATH 中未发现、检测失败及无法检测；PATH 未发现不代表整台机器都未安装。已有安装、检测失败或无法检测时，不会隐式重装或升级。操作完成与列表刷新失败分别显示，状态过期时暂停写操作。
+- **安装来源与卸载**：当前没有可核验的安装来源记录，不能把注册表中的 npm 等安装方式当成本机安装归属。因此所有来源未确认的自动卸载均被前后端拒绝，包括本版本新安装的 Agent；请使用原安装方式手动卸载。Agent 软件升级尚未提供，不属于注册表更新。
+- **个性化与模型配置**：通过独立的“应用配置”操作确认后才应用默认 profile，不执行安装器。模板首次配置时初始化，保留用户已有模板。个性化使用受管理的 Markdown 区块，保留区块外原文；格式不兼容的目标不强行覆盖。跳过原因单独显示。当前尚无配置差异预览或本机改动三方对账，应用前请检查模板和现有配置。
+- **记忆**：采集 Codex、Claude Code、OpenCode 的本地会话；搜索、手动选择和自动注入标记分别管理。撤销自动标记会立即刷新导出文件；显式手动选择会保留。导出位置为 `~/.agentdeck/memory/<agent>.md`，**外部 Agent 不保证自动读取此文件**，需将其作为上下文或配置引用。定时采集默认关闭，需明确开启后才每小时读取本地会话；可随时关闭。手动采集保持独立。采集有取消/时间预算和部分失败反馈。
+- **密钥与备份**：vault 使用 AES-256-GCM，主密钥由 Windows DPAPI 保护。列表只显示脱敏值；复制密钥才取明文。Git 快照中的配置备份加密，随机 nonce，旧快照仍可解密。恢复保留主密钥及未管理文件。
+- **MCP**：只修改注册表管理的服务器，保留用户自建服务器；批量变更验证完成后一次写入。HTTP 服务器需要自行启动，AgentDeck 不托管 RAGFlow。
+- **在线更新**：只更新 Agent/MCP 注册表，不更新桌面二进制；通过内置公钥验签，校验所有文件后提交，持久化注册表版本。安装程序升级请下载新的 Release。
 
-## 常见问题
+浏览器直接打开前端时不会模拟操作成功。仅 `?demo=1` 显式启用**只读演示**，有清晰标识，禁止安装、写配置和读取密钥。
 
-**采集不到某个 Agent 的记忆？**
+## 数据与恢复边界
 
-确认对应 Agent 已安装并产生过会话记录。当前支持 Codex（`~/.codex/sessions`）、Claude Code（`~/.claude/projects`）、OpenCode（`~/.local/share/opencode`）。
+数据在 `~/.agentdeck/`：`memory.db`、`memory/`、`vault/`、`profiles/default/`、`backups/`、`git-backup/`、`registry/`。
 
-**在线更新提示失败？**
+- 本地会话和记忆数据库为明文；配置写入前的本地恢复副本也可能含凭据。保护账户与磁盘，不要分享整个数据目录。只有进入 Git 快照的配置副本会加密；vault 的 API Key 不以明文落盘。
+- 备份恢复针对 **AgentDeck 管理的 vault 与配置副本**，不是系统还原，也不会卸载/重装软件或自动将副本覆盖回外部 Agent 的配置路径。
+- 不要删除 `vault/master.key`。DPAPI 密钥绑定 Windows 用户/机器；只复制 vault.json 或 Git 仓库不是跨机器可恢复备份。已有加密历史缺少主密钥时程序拒绝静默重建。
+- 多文件配置/恢复有错误回滚，但不承诺断电原子性。遇到失败应保留数据目录并检查错误，不要删除恢复副本。
+- v1.0.0 历史 Git 提交保留旧加密格式；新快照使用随机 nonce，不能消除已分享旧历史的风险。
+- 技能分发没有适配器，目前明确报“不支持”，不会空实现成功。
 
-更新源需要能访问 GitHub Releases；网络受限时请配置系统代理后重试。
+## CLI
 
-**如何迁移旧版 vault 密钥？**
+```powershell
+cargo run --locked -p aisync-cli -- health
+cargo run --locked -p aisync-cli -- agents
+cargo run --locked -p aisync-cli -- deploy --agent codex --action verify
+cargo run --locked -p aisync-cli -- deploy --agent codex --action install --yes
+# 可选的独立配置操作，需要 Git 备份与受保护密钥库支持
+cargo run --locked -p aisync-cli -- deploy --agent codex --action configure --yes
+cargo run --locked -p aisync-cli -- sync --tools codex,claude-code --yes
+cargo run --locked -p aisync-cli -- backup
+cargo run --locked -p aisync-cli -- backups
+cargo run --locked -p aisync-cli -- restore <timestamp> --full --yes
+```
 
-在「密钥与备份」面板点击「导入 V2 vault 密钥」，从旧版 vault 目录迁移（同名密钥不会被覆盖）。
+安装、配置、同步、恢复需要 `--yes`；安装不会隐式写配置。来源未确认的卸载即使传入 `--yes` 也会拒绝执行。受保护密钥/备份相关命令仅 Windows 可用，纯软件安装不依赖该备份流程。
 
-## 更新与反馈
+## 测试与发布
 
-- 发布与更新：[GitHub Releases](https://github.com/MOSHOULI/agentdeck/releases)
-- 问题反馈：欢迎在 [Issues](https://github.com/MOSHOULI/agentdeck/issues) 提交
+```powershell
+npm ci --prefix web/ui
+npm run typecheck --prefix web/ui
+npm test --prefix web/ui
+npm run build --prefix web/ui
+cargo fmt --all --check
+cargo clippy --locked --workspace --all-targets -- -D warnings
+python scripts/run-isolated.py cargo test --locked --workspace
+```
+
+Linux 核心检查：`python scripts/run-isolated.py cargo test --locked -p aisync-core -p aisync-cli`。
+
+测试运行器设置 `AGENTDECK_TEST_HOME`，核心路径解析显式尊重此绝对路径（Windows Known Folder API 不受普通 HOME 变量影响）。
+
+**所有测试使用隔离 HOME。不要运行 `--ignored` 或 `--include-ignored`**：标记忽略的真实环境测试可能安装/卸载第三方软件、访问会话和修改配置。常规 CI 只使用合成夹具。
+
+CI 验证前端、Linux 核心/CLI、Windows 全工作区（含 DPAPI），构建 NSIS 并记录 SHA256 和源码提交。主分支全部门禁通过后先上传草稿 Release，再下载核对安装包字节、SHA256、构建提交与实际标签提交，全部一致才公开发布。现有 Release（包括草稿）或指向其他提交的标签会阻止发布，需人工核查，不会覆盖或按成功跳过。
+
+安装包发布与已签名注册表更新分开：当前注册表检查使用 GitHub 的 `latest` 下载入口，因此仅含安装包的 v1.1.0 发布不会标记为 Latest，保留既有已签名注册表入口。下载桌面新版请使用上方 v1.1.0 链接，不要把 Latest 标签当作最新桌面安装包。
+
+升级时，仅当本地两份注册表与官方 v1.0.0 已签名资产的 SHA256 完全一致，且版本标记为 v1.0.0 或不存在，才改用新版内置注册表；原文件和版本标记保持不动。修改过、来源未知或版本更新的本地注册表继续保留并使用。在线更新版本必须同时高于当前实际使用版本与内置版本，不能用旧的 v1.0.0 更新覆盖新版内置修正。
+
+发布者注册表签名使用已有受保护私钥。本仓库不包含该私钥；构建安装包无需它。**没有私钥时不能发布新的可信注册表更新**，不要用新生成的密钥冒充已有信任链；详细验证范围见 [发布说明](docs/RELEASE-1.1.0.md)。

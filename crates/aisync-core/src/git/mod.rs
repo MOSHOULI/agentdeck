@@ -12,9 +12,10 @@
 //! - 按操作回滚：还原某次备份 commit 变更的文件（默认）
 //! - 按时间点整体恢复：还原到该 commit 的完整状态（`full=true`，UI 需确认）
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use zeroize::Zeroizing;
 
 use serde::Serialize;
 
@@ -36,7 +37,7 @@ pub struct BackupInfo {
 }
 
 fn home_dir() -> crate::Result<PathBuf> {
-    dirs::home_dir().ok_or_else(|| Error::Other("无法定位用户主目录".into()))
+    crate::home_dir().ok_or_else(|| Error::Other("无法定位用户主目录".into()))
 }
 
 pub fn default_repo_dir() -> crate::Result<PathBuf> {
@@ -117,23 +118,27 @@ fn copy_tree(src: &Path, dst: &Path) -> crate::Result<usize> {
         return Ok(0);
     }
     let mut count = 0usize;
-    for entry in walkdir::WalkDir::new(src)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in walkdir::WalkDir::new(src).follow_links(false).into_iter() {
+        let entry = entry.map_err(|e| Error::GitFailed(format!("备份目录读取失败: {e}")))?;
         let path = entry.path();
-        if !path.is_file() {
+        if entry.file_type().is_symlink() {
+            return Err(Error::GitFailed(format!(
+                "备份不允许符号链接: {}",
+                path.display()
+            )));
+        }
+        if !entry.file_type().is_file() {
             continue;
         }
         // master.key 等密钥文件绝不进仓库（即使被 .gitignore 兜底）
-        if path.extension().and_then(|e| e.to_str()) == Some("key") {
+        if protected_path(path) {
             continue;
         }
         let rel = path
             .strip_prefix(src)
             .map_err(|_| Error::GitFailed("备份路径解析失败".into()))?;
         let target = dst.join(rel);
+        check_no_symlinks(&target)?;
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -146,16 +151,21 @@ fn copy_tree(src: &Path, dst: &Path) -> crate::Result<usize> {
 /// 把 live backups 目录加密镜像到 repo（每个文件 → `*.gcm` = nonce(12)||密文）
 fn encrypt_backups_tree(src: &Path, dst: &Path, master: &[u8; 32]) -> crate::Result<usize> {
     if !src.exists() {
+        clear_dir(dst)?;
         return Ok(0);
     }
     let mut count = 0usize;
-    for entry in walkdir::WalkDir::new(src)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    let mut retained = HashSet::new();
+    for entry in walkdir::WalkDir::new(src).follow_links(false).into_iter() {
+        let entry = entry.map_err(|e| Error::GitFailed(format!("备份目录读取失败: {e}")))?;
         let path = entry.path();
-        if !path.is_file() {
+        if entry.file_type().is_symlink() {
+            return Err(Error::GitFailed(format!(
+                "备份不允许符号链接: {}",
+                path.display()
+            )));
+        }
+        if !entry.file_type().is_file() {
             continue;
         }
         let rel = path
@@ -169,10 +179,26 @@ fn encrypt_backups_tree(src: &Path, dst: &Path, master: &[u8; 32]) -> crate::Res
         let target = dst
             .join(rel.parent().unwrap_or_else(|| Path::new("")))
             .join(file_name);
+        check_no_symlinks(&target)?;
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let raw = std::fs::read(path)?;
+        let raw = Zeroizing::new(std::fs::read(path)?);
+        retained.insert(target.clone());
+        // Reuse authenticated ciphertext, never a public hash-derived nonce.
+        // Legacy deterministic ciphertext is migrated on the next backup.
+        if let Ok(existing) = std::fs::read(&target) {
+            use sha2::{Digest, Sha256};
+            let legacy_nonce = Sha256::digest(&*raw);
+            if existing.len() >= 28
+                && existing[..12] != legacy_nonce[..12]
+                && let Ok(plain) = decrypt_backup_file(master, &existing)
+                && Zeroizing::new(plain).as_slice() == raw.as_slice()
+            {
+                count += 1;
+                continue;
+            }
+        }
         let (nonce, ct) = encrypt_bytes(master, &raw)?;
         let mut data = Vec::with_capacity(nonce.len() + ct.len());
         data.extend_from_slice(&nonce);
@@ -180,21 +206,23 @@ fn encrypt_backups_tree(src: &Path, dst: &Path, master: &[u8; 32]) -> crate::Res
         crate::vault::keystore::atomic_write_bytes(&target, &data)?;
         count += 1;
     }
+    if dst.exists() {
+        for entry in walkdir::WalkDir::new(dst).follow_links(false) {
+            let entry = entry.map_err(|e| Error::GitFailed(e.to_string()))?;
+            if entry.file_type().is_file() && !retained.contains(entry.path()) {
+                std::fs::remove_file(entry.path())?;
+            }
+        }
+    }
     Ok(count)
 }
 
 fn encrypt_bytes(master: &[u8; 32], raw: &[u8]) -> crate::Result<([u8; 12], Vec<u8>)> {
     use aes_gcm::aead::{Aead, KeyInit, Payload};
     use aes_gcm::{Aes256Gcm, Key, Nonce};
-    use sha2::{Digest, Sha256};
-
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(master));
-    // 确定性 nonce = SHA-256(内容) 前 12 字节。
-    // 同一主密钥下：相同内容 → 相同 nonce → 相同密文（备份去重）；
-    // nonce 相同且内容相同不构成 GCM nonce 重用风险（仅暴露内容相等性，本就已知）。
-    let digest = Sha256::digest(raw);
     let mut nonce = [0u8; 12];
-    nonce.copy_from_slice(&digest[..12]);
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut nonce);
     let ct = cipher
         .encrypt(
             Nonce::from_slice(&nonce),
@@ -243,13 +271,30 @@ fn backup_at(
     live_backups: &Path,
     message: &str,
 ) -> crate::Result<usize> {
+    crate::vault::keystore::with_file_lock(live_vault, || {
+        refuse_key_rotation(repo, live_vault)?;
+        let master = Zeroizing::new(crate::vault::keystore::load_or_create_master_unlocked(
+            live_vault,
+        )?);
+        backup_with_master(repo, live_vault, live_backups, message, &master)
+    })
+}
+
+fn backup_with_master(
+    repo: &Path,
+    live_vault: &Path,
+    live_backups: &Path,
+    message: &str,
+    master: &[u8; 32],
+) -> crate::Result<usize> {
+    check_no_symlinks(repo)?;
+    check_no_symlinks(live_vault)?;
+    check_no_symlinks(live_backups)?;
     ensure_repo(repo)?;
-    let master = crate::vault::keystore::load_or_create_master(live_vault)?;
     // 重建镜像（git 历史兜底，删除可恢复）；防止上次残留的明文镜像被再次暂存
     clear_dir(&repo.join("vault"))?;
-    clear_dir(&repo.join("backups"))?;
     copy_tree(live_vault, &repo.join("vault"))?;
-    encrypt_backups_tree(live_backups, &repo.join("backups"), &master)?;
+    encrypt_backups_tree(live_backups, &repo.join("backups"), master)?;
     // 仓库只存放应用管理的文件（vault 密文 + 注入备份），.gitignore 已排除密钥类文件
     run_git(repo, &["add", "-A"])?;
 
@@ -285,6 +330,9 @@ fn list_backups_at(repo: &Path) -> crate::Result<Vec<BackupInfo>> {
     if !repo.join(".git").exists() {
         return Ok(Vec::new());
     }
+    if run_git(repo, &["rev-parse", "--verify", "HEAD"]).is_err() {
+        return Ok(Vec::new());
+    }
     let log = run_git(repo, &["log", "--format=%H|%ct|%s", "--max-count=100"])?;
     let mut out = Vec::new();
     for line in log.lines() {
@@ -305,22 +353,41 @@ fn list_backups_at(repo: &Path) -> crate::Result<Vec<BackupInfo>> {
 
 /// 按时间戳回滚：`full=false` 只还原该次备份变更的文件，`full=true` 还原到该时间点完整状态
 pub fn restore(timestamp: &str, full: bool) -> crate::Result<Vec<String>> {
-    // 回滚前先拍当前状态快照，防止选错时间戳导致数据不可逆丢失
-    backup("restore: 回滚前快照")?;
-    restore_at(
-        &default_repo_dir()?,
-        &live_vault_dir()?,
-        &live_backups_dir()?,
-        timestamp,
-        full,
-    )
+    let repo = default_repo_dir()?;
+    let vault = live_vault_dir()?;
+    let backups = live_backups_dir()?;
+    // One lock spans the safety snapshot and restore; otherwise a concurrent
+    // vault save could be overwritten without ever reaching the safety snapshot.
+    crate::vault::keystore::with_file_lock(&vault, || {
+        find_commit(&repo, timestamp)?;
+        let master = Zeroizing::new(crate::vault::keystore::load_master(&vault)?);
+        backup_with_master(&repo, &vault, &backups, "restore: 回滚前快照", &master)?;
+        restore_with_master(&repo, &vault, &backups, timestamp, full, &master)
+    })
+}
+
+fn refuse_key_rotation(repo: &Path, vault: &Path) -> crate::Result<()> {
+    if !vault.join("master.key").exists()
+        && (repo.join("backups").exists()
+            || (repo.join(".git").exists()
+                && run_git(repo, &["rev-parse", "--verify", "HEAD"]).is_ok()))
+    {
+        return Err(Error::GitFailed(
+            "备份历史存在但主密钥丢失；拒绝生成替代密钥，请恢复原 master.key".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn find_commit(repo: &Path, timestamp: &str) -> crate::Result<String> {
-    let log = list_backups_at(repo)?;
-    for info in log {
-        if info.timestamp == timestamp {
-            return Ok(info.hash);
+    // The pre-restore snapshot may push the requested item beyond the UI's 100-item window.
+    let log = run_git(repo, &["log", "--format=%H %s"])?;
+    for line in log.lines() {
+        let mut fields = line.split_whitespace();
+        if let (Some(hash), Some(ts)) = (fields.next(), fields.next())
+            && ts == timestamp
+        {
+            return Ok(hash.to_owned());
         }
     }
     Err(Error::GitFailed(format!(
@@ -329,38 +396,92 @@ fn find_commit(repo: &Path, timestamp: &str) -> crate::Result<String> {
     )))
 }
 
-/// 仓库相对路径 → 实际文件位置（`.gcm` 后缀还原为原文件名）
-fn map_path(repo_rel: &str, live_vault: &Path, live_backups: &Path) -> crate::Result<PathBuf> {
-    let safe = |rel: &str| -> crate::Result<PathBuf> {
-        let p = Path::new(rel);
-        if p.components().any(|c| {
-            matches!(
-                c,
-                std::path::Component::ParentDir | std::path::Component::RootDir
-            )
-        }) {
-            return Err(Error::GitFailed(format!("非法备份路径: {}", rel)));
-        }
-        Ok(p.to_path_buf())
-    };
-    if let Some(rel) = repo_rel.strip_prefix("vault/") {
-        Ok(live_vault.join(safe(rel)?))
-    } else if let Some(rel) = repo_rel.strip_prefix("backups/") {
-        let rel_path = safe(rel)?;
-        let name = rel_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or_else(|| Error::GitFailed("备份文件名非法".into()))?
-            .strip_suffix(".gcm")
-            .ok_or_else(|| Error::GitFailed("备份文件缺少 .gcm 后缀".into()))?;
-        let mut plain = rel_path.clone();
-        plain.set_file_name(name);
-        Ok(live_backups.join(plain))
-    } else {
-        Err(Error::GitFailed(format!("未知仓库路径: {}", repo_rel)))
-    }
+// Files deliberately excluded from backup must never be restored or removed.
+fn protected_path(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(extension.as_str(), "key" | "log")
+        || matches!(name.as_str(), ".env" | "memory.db" | ".vault.lock")
+        || name.starts_with(".tmp-")
 }
 
+/// Parse Git's portable slash-separated paths, rejecting Windows special names too.
+fn map_path(repo_rel: &str, live_vault: &Path, live_backups: &Path) -> crate::Result<PathBuf> {
+    let (root, rel, encrypted) = if let Some(rel) = repo_rel.strip_prefix("vault/") {
+        (live_vault, rel, false)
+    } else if let Some(rel) = repo_rel.strip_prefix("backups/") {
+        (live_backups, rel, true)
+    } else {
+        return Err(Error::GitFailed(format!("未知仓库路径: {repo_rel}")));
+    };
+    let rel = if encrypted {
+        rel.strip_suffix(".gcm")
+            .ok_or_else(|| Error::GitFailed("备份文件缺少 .gcm 后缀".into()))?
+    } else {
+        rel
+    };
+    let mut path = root.to_path_buf();
+    for part in rel.split('/') {
+        let stem = part.split('.').next().unwrap_or("").to_ascii_uppercase();
+        if part.is_empty()
+            || part == "."
+            || part == ".."
+            || part.ends_with(['.', ' '])
+            || part
+                .chars()
+                .any(|c| c.is_control() || "\\:<>\"|?*".contains(c))
+            || matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || (stem.len() == 4
+                && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                && stem.as_bytes()[3].is_ascii_digit())
+        {
+            return Err(Error::GitFailed(format!("非法备份路径: {repo_rel}")));
+        }
+        path.push(part);
+    }
+    if !encrypted && protected_path(&path) {
+        return Err(Error::GitFailed(format!("备份包含受保护文件: {repo_rel}")));
+    }
+    check_no_symlinks(&path)?;
+    Ok(path)
+}
+
+fn check_no_symlinks(path: &Path) -> crate::Result<()> {
+    for ancestor in path.ancestors() {
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(Error::GitFailed(format!(
+                    "路径不允许符号链接: {}",
+                    ancestor.display()
+                )));
+            }
+            Ok(_) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(())
+}
+
+fn git_paths(repo: &Path, args: &[&str]) -> crate::Result<Vec<String>> {
+    run_git_bytes(repo, args)?
+        .split(|b| *b == 0)
+        .filter(|p| !p.is_empty())
+        .map(|p| {
+            String::from_utf8(p.to_vec()).map_err(|_| Error::GitFailed("非 UTF-8 备份路径".into()))
+        })
+        .collect()
+}
+
+#[cfg(all(test, windows))]
 fn restore_at(
     repo: &Path,
     live_vault: &Path,
@@ -368,97 +489,144 @@ fn restore_at(
     timestamp: &str,
     full: bool,
 ) -> crate::Result<Vec<String>> {
+    // Never create a replacement key during restore: that would hide key loss.
+    crate::vault::keystore::with_file_lock(live_vault, || {
+        let master = Zeroizing::new(crate::vault::keystore::load_master(live_vault)?);
+        restore_with_master(repo, live_vault, live_backups, timestamp, full, &master)
+    })
+}
+
+fn restore_with_master(
+    repo: &Path,
+    live_vault: &Path,
+    live_backups: &Path,
+    timestamp: &str,
+    full: bool,
+    master: &[u8; 32],
+) -> crate::Result<Vec<String>> {
     let commit = find_commit(repo, timestamp)?;
-    let paths: Vec<String> = if full {
-        run_git(repo, &["ls-tree", "-r", "--name-only", &commit])?
-            .lines()
-            .map(|l| l.to_string())
-            .collect()
+    let tree: HashSet<String> = git_paths(repo, &["ls-tree", "-r", "-z", "--name-only", &commit])?
+        .into_iter()
+        .collect();
+    let paths = if full {
+        tree.iter().cloned().collect()
     } else {
-        run_git(
+        git_paths(
             repo,
             &[
                 "diff-tree",
                 "--root",
                 "--no-commit-id",
                 "--name-only",
+                "--no-renames",
+                "-z",
                 "-r",
                 &commit,
             ],
         )?
-        .lines()
-        .map(|l| l.to_string())
-        .collect()
     };
-
-    // 主密钥只加载一次（DPAPI 解密开销大）
-    let master = if paths.iter().any(|p| p.starts_with("backups/")) {
-        Some(crate::vault::keystore::load_or_create_master(live_vault)?)
-    } else {
-        None
-    };
-
-    let mut restored = Vec::new();
-    let mut tracked = HashSet::new();
-    for path in &paths {
+    type PlannedFile = (String, Option<Zeroizing<Vec<u8>>>);
+    let mut changes: HashMap<PathBuf, PlannedFile> = HashMap::new();
+    // Preflight every path and decrypt every blob before changing live state.
+    for path in paths {
         if path == ".gitignore" {
             continue;
         }
-        let live = map_path(path, live_vault, live_backups)?;
-        let repo_content = run_git_bytes(repo, &["show", &format!("{}:{}", commit, path)])?;
-        let content = if path.starts_with("backups/") {
-            let m = master
-                .as_ref()
-                .ok_or_else(|| Error::GitFailed("备份解密缺少主密钥".into()))?;
-            decrypt_backup_file(m, &repo_content)?
+        let live = map_path(&path, live_vault, live_backups)?;
+        let content = if tree.contains(&path) {
+            let blob = run_git_bytes(repo, &["show", &format!("{commit}:{path}")])?;
+            Some(Zeroizing::new(if path.starts_with("backups/") {
+                decrypt_backup_file(master, &blob)?
+            } else {
+                blob
+            }))
         } else {
-            repo_content
+            None
         };
-        if let Some(parent) = live.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&live, content)?;
-        // 用于整体恢复时与真实文件比对（去掉 .gcm 后缀）
-        let tracked_key = path
-            .strip_suffix(".gcm")
-            .unwrap_or(path.as_str())
-            .to_string();
-        tracked.insert(tracked_key);
-        restored.push(path.clone());
+        changes.insert(live, (path, content));
     }
-
-    // 整体恢复：删除目标时间点之后新增的文件，回到该时间点状态
     if full {
-        for (live_dir, prefix) in [(live_vault, "vault"), (live_backups, "backups")] {
-            if !live_dir.exists() {
+        // Only remove previously managed files. Unknown local files and all key /
+        // lock files are preserved, even if absent from the selected snapshot.
+        for path in git_paths(repo, &["ls-tree", "-r", "-z", "--name-only", "HEAD"])? {
+            if path == ".gitignore" || tree.contains(&path) {
                 continue;
             }
-            for entry in walkdir::WalkDir::new(live_dir)
-                .follow_links(false)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                if !entry.path().is_file() {
-                    continue;
-                }
-                let rel = entry
-                    .path()
-                    .strip_prefix(live_dir)
-                    .map_err(|_| Error::GitFailed("整体恢复路径解析失败".into()))?;
-                let key = format!("{}/{}", prefix, rel.display());
-                if !tracked.contains(&key) {
-                    let _ = std::fs::remove_file(entry.path());
-                    restored.push(format!("-{}", key));
-                }
-            }
+            let live = map_path(&path, live_vault, live_backups)?;
+            changes.entry(live).or_insert((path, None));
         }
     }
-    Ok(restored)
+    let mut changes: Vec<_> = changes.into_iter().collect();
+    changes.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut originals = Vec::new();
+    for (path, _) in &changes {
+        check_no_symlinks(path)?;
+        let old = match std::fs::read(path) {
+            Ok(bytes) => Some(Zeroizing::new(bytes)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.into()),
+        };
+        originals.push(old);
+    }
+    for (index, (path, (_, content))) in changes.iter().enumerate() {
+        let apply = apply_file(path, content.as_deref().map(|v| v.as_slice()));
+        if let Err(error) = apply {
+            let mut rollback_errors = Vec::new();
+            for i in (0..=index).rev() {
+                if let Err(e) =
+                    apply_file(&changes[i].0, originals[i].as_deref().map(|v| v.as_slice()))
+                {
+                    rollback_errors.push(e.to_string());
+                }
+            }
+            return Err(Error::GitFailed(format!(
+                "恢复失败: {error}; 回滚错误: {}",
+                rollback_errors.join("; ")
+            )));
+        }
+    }
+    Ok(changes
+        .into_iter()
+        .map(|(_, (name, content))| {
+            if content.is_some() {
+                name
+            } else {
+                format!("-{name}")
+            }
+        })
+        .collect())
+}
+
+fn apply_file(path: &Path, content: Option<&[u8]>) -> crate::Result<()> {
+    check_no_symlinks(path)?;
+    if let Some(bytes) = content {
+        crate::vault::keystore::atomic_write_bytes(path, bytes)
+    } else {
+        match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.into()),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Explicit test-only key injection; production non-Windows storage stays fail-closed.
+    fn backup_at(repo: &Path, vault: &Path, backups: &Path, message: &str) -> crate::Result<usize> {
+        backup_with_master(repo, vault, backups, message, &[42; 32])
+    }
+    fn restore_at(
+        repo: &Path,
+        vault: &Path,
+        backups: &Path,
+        timestamp: &str,
+        full: bool,
+    ) -> crate::Result<Vec<String>> {
+        restore_with_master(repo, vault, backups, timestamp, full, &[42; 32])
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
@@ -602,5 +770,193 @@ mod tests {
         write(&vault.join("vault.json"), "v1");
         backup_at(&repo, &vault, &backups, "first").unwrap();
         assert!(restore_at(&repo, &vault, &backups, "9999999999", false).is_err());
+    }
+    #[test]
+    fn full_restore_preserves_keys_unmanaged_files_and_nested_paths() {
+        let root = temp_dir("preserve");
+        let (repo, vault, backups) = (root.join("repo"), root.join("vault"), root.join("backups"));
+        write(&vault.join("master.key"), "irreplaceable wrapped key");
+        write(&vault.join(".vault.lock"), "");
+        write(&vault.join("nested/data.gcm"), "vault bytes");
+        write(&backups.join("nested/配置.toml"), "secret");
+        backup_at(&repo, &vault, &backups, "first").unwrap();
+        let timestamp = list_backups_at(&repo).unwrap()[0].timestamp.clone();
+        write(&vault.join("new.txt"), "managed later");
+        backup_at(&repo, &vault, &backups, "second").unwrap();
+        write(&vault.join("unmanaged.txt"), "local only");
+        restore_at(&repo, &vault, &backups, &timestamp, true).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(vault.join("master.key")).unwrap(),
+            "irreplaceable wrapped key"
+        );
+        assert!(vault.join(".vault.lock").exists());
+        assert!(vault.join("unmanaged.txt").exists());
+        assert!(!vault.join("new.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(vault.join("nested/data.gcm")).unwrap(),
+            "vault bytes"
+        );
+        assert_eq!(
+            std::fs::read_to_string(backups.join("nested/配置.toml")).unwrap(),
+            "secret"
+        );
+    }
+
+    #[test]
+    fn partial_restore_applies_deleted_paths() {
+        let root = temp_dir("deleted");
+        let (repo, vault, backups) = (root.join("repo"), root.join("vault"), root.join("backups"));
+        write(&backups.join("deleted.txt"), "old");
+        backup_at(&repo, &vault, &backups, "first").unwrap();
+        std::fs::remove_file(backups.join("deleted.txt")).unwrap();
+        backup_at(&repo, &vault, &backups, "delete").unwrap();
+        let timestamp = list_backups_at(&repo).unwrap()[0].timestamp.clone();
+        write(&backups.join("deleted.txt"), "recreated");
+        let restored = restore_at(&repo, &vault, &backups, &timestamp, false).unwrap();
+        assert!(!backups.join("deleted.txt").exists());
+        assert!(restored.contains(&"-backups/deleted.txt.gcm".to_owned()));
+    }
+
+    #[test]
+    fn restore_auth_failure_does_not_change_live_files() {
+        let root = temp_dir("preflight");
+        let (repo, vault, backups) = (root.join("repo"), root.join("vault"), root.join("backups"));
+        write(&vault.join("vault.json"), "old");
+        write(&backups.join("a.txt"), "secret");
+        backup_at(&repo, &vault, &backups, "first").unwrap();
+        let timestamp = list_backups_at(&repo).unwrap()[0].timestamp.clone();
+        write(&vault.join("vault.json"), "current");
+        write(&backups.join("a.txt"), "current secret");
+        assert!(restore_with_master(&repo, &vault, &backups, &timestamp, true, &[99; 32]).is_err());
+        assert_eq!(
+            std::fs::read_to_string(vault.join("vault.json")).unwrap(),
+            "current"
+        );
+        assert_eq!(
+            std::fs::read_to_string(backups.join("a.txt")).unwrap(),
+            "current secret"
+        );
+    }
+
+    #[test]
+    fn backup_nonce_is_random_and_legacy_ciphertext_still_decrypts() {
+        use aes_gcm::aead::{Aead, KeyInit, Payload};
+        use aes_gcm::{Aes256Gcm, Key, Nonce};
+        use sha2::{Digest, Sha256};
+        let key = [42; 32];
+        let raw = b"guessable secret";
+        let (first, _) = encrypt_bytes(&key, raw).unwrap();
+        let (second, _) = encrypt_bytes(&key, raw).unwrap();
+        assert_ne!(first, second);
+        let digest = Sha256::digest(raw);
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
+        let mut old = digest[..12].to_vec();
+        old.extend(
+            cipher
+                .encrypt(
+                    Nonce::from_slice(&digest[..12]),
+                    Payload {
+                        msg: raw,
+                        aad: b"backup",
+                    },
+                )
+                .unwrap(),
+        );
+        assert_eq!(decrypt_backup_file(&key, &old).unwrap(), raw);
+        let root = temp_dir("migration");
+        write(&root.join("live/file"), "guessable secret");
+        std::fs::create_dir_all(root.join("mirror")).unwrap();
+        std::fs::write(root.join("mirror/file.gcm"), &old).unwrap();
+        encrypt_backups_tree(&root.join("live"), &root.join("mirror"), &key).unwrap();
+        let migrated = std::fs::read(root.join("mirror/file.gcm")).unwrap();
+        assert_ne!(&migrated[..12], &digest[..12]);
+        encrypt_backups_tree(&root.join("live"), &root.join("mirror"), &key).unwrap();
+        assert_eq!(
+            std::fs::read(root.join("mirror/file.gcm")).unwrap(),
+            migrated
+        );
+    }
+
+    #[test]
+    fn restore_rejects_portable_traversal_and_protected_paths() {
+        let root = temp_dir("paths");
+        for path in [
+            "vault/../outside",
+            "vault/master.key",
+            "vault/.vault.lock",
+            "backups/../x.gcm",
+            "backups/.gcm",
+            "vault/C:stream",
+            "vault/a\\..\\outside",
+            "vault/CON",
+            "vault/a./x",
+            "vault//x",
+            "vault/./x",
+        ] {
+            assert!(
+                map_path(path, &root.join("vault"), &root.join("backups")).is_err(),
+                "{path}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_and_backup_reject_symlink_escape() {
+        use std::os::unix::fs::symlink;
+        let root = temp_dir("symlink");
+        std::fs::create_dir_all(root.join("vault")).unwrap();
+        std::fs::create_dir_all(root.join("outside")).unwrap();
+        write(&root.join("outside/secret"), "untouched");
+        symlink(root.join("outside"), root.join("vault/link")).unwrap();
+        assert!(
+            map_path(
+                "vault/link/secret",
+                &root.join("vault"),
+                &root.join("backups")
+            )
+            .is_err()
+        );
+        assert!(
+            backup_at(
+                &root.join("repo"),
+                &root.join("vault"),
+                &root.join("backups"),
+                "symlink"
+            )
+            .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("outside/secret")).unwrap(),
+            "untouched"
+        );
+    }
+    #[cfg(windows)]
+    #[test]
+    fn full_restore_keeps_real_vault_decryptable() {
+        let root = temp_dir("dpapi-restore");
+        let (repo, vault, backups) = (root.join("repo"), root.join("vault"), root.join("backups"));
+        let handle = crate::vault::Vault::open(&vault);
+        handle.save("test", "test", "old-secret").unwrap();
+        super::backup_at(&repo, &vault, &backups, "first").unwrap();
+        let timestamp = list_backups_at(&repo).unwrap()[0].timestamp.clone();
+        let key_before = std::fs::read(vault.join("master.key")).unwrap();
+        handle.save("test", "test", "new-secret").unwrap();
+        super::backup_at(&repo, &vault, &backups, "second").unwrap();
+        super::restore_at(&repo, &vault, &backups, &timestamp, true).unwrap();
+        assert_eq!(std::fs::read(vault.join("master.key")).unwrap(), key_before);
+        assert_eq!(handle.get("test").unwrap().as_deref(), Some("old-secret"));
+    }
+    #[test]
+    fn backup_history_without_master_refuses_rotation() {
+        let root = temp_dir("lost-master-history");
+        let (repo, vault, backups) = (root.join("repo"), root.join("vault"), root.join("backups"));
+        write(&backups.join("config"), "secret");
+        backup_at(&repo, &vault, &backups, "config-only").unwrap();
+        assert!(!vault.join("vault.json").exists());
+        assert!(refuse_key_rotation(&repo, &vault).is_err());
+        assert!(!vault.join("master.key").exists());
+        write(&vault.join("master.key"), "present");
+        refuse_key_rotation(&repo, &vault).unwrap();
     }
 }
