@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use aisync_core::deploy::{InstallationProbe, InstallationStatus};
+use aisync_core::deploy::{
+    InstallationDetails, InstallationProbe, InstallationSource, InstallationStatus,
+};
 use aisync_core::registry::{self, AgentDefinition};
 use serde::Serialize;
 
@@ -15,7 +17,9 @@ pub struct AgentInfo {
     installed: bool,
     installation_status: InstallationStatus,
     installation_message: Option<String>,
+    installation_details: InstallationDetails,
     install_source: &'static str,
+    version: Option<String>,
     auth_verified: bool,
     source: String,
     ui_type: String,
@@ -50,8 +54,20 @@ fn ui_type_string(ui_type: &registry::UiType) -> String {
     serde_json::from_value(serde_json::to_value(ui_type).unwrap_or_default()).unwrap_or_default()
 }
 
-fn to_agent_info(agent: AgentDefinition, probe: InstallationProbe) -> AgentInfo {
-    let installed = matches!(probe.status, InstallationStatus::Installed);
+fn to_agent_info(agent: AgentDefinition, details: InstallationDetails) -> AgentInfo {
+    let installed = matches!(details.probe.status, InstallationStatus::Installed);
+    let mut active_instances = details.instances.iter().filter(|instance| instance.active);
+    let first_active = active_instances.next();
+    let active = if active_instances.next().is_none() {
+        first_active
+    } else {
+        None
+    };
+    let version = active.and_then(|instance| instance.version.clone());
+    let install_source = match active.map(|instance| &instance.source) {
+        Some(InstallationSource::Npm { .. }) => "npm",
+        _ => "unknown",
+    };
     let auth_verified = installed && aisync_core::deploy::check_auth(&agent).unwrap_or(false);
     let nonempty = |value: &Option<String>| value.as_ref().is_some_and(|v| !v.trim().is_empty());
     let can_verify_install = nonempty(&agent.install.verify_cmd);
@@ -59,7 +75,7 @@ fn to_agent_info(agent: AgentDefinition, probe: InstallationProbe) -> AgentInfo 
     // A registry method is not evidence of this machine's installation source.
     let can_uninstall = aisync_core::deploy::can_uninstall(&agent);
     let uninstall_help = aisync_core::deploy::uninstall_block_reason(&agent).map(str::to_owned);
-    let can_configure = aisync_core::deploy::can_configure(&agent);
+    let can_configure = aisync_core::deploy::can_configure(&agent) && !details.ambiguous;
     let install_help = if can_install {
         None
     } else if can_verify_install {
@@ -78,9 +94,11 @@ fn to_agent_info(agent: AgentDefinition, probe: InstallationProbe) -> AgentInfo 
         id: agent.id,
         name: agent.name,
         installed,
-        installation_status: probe.status,
-        installation_message: probe.message,
-        install_source: "unknown",
+        installation_status: details.probe.status,
+        installation_message: details.probe.message.clone(),
+        installation_details: details,
+        install_source,
+        version,
         auth_verified,
         source: agent.source,
         ui_type: ui_type_string(&agent.ui_type),
@@ -92,7 +110,7 @@ fn to_agent_info(agent: AgentDefinition, probe: InstallationProbe) -> AgentInfo 
     }
 }
 
-/// 获取所有注册的 agent（含安装状态，并行验证，单条 3 秒超时）
+/// List registered agents with bounded, parallel instance and source inspection.
 #[tauri::command]
 pub async fn get_agents() -> Result<Vec<AgentInfo>, String> {
     tauri::async_runtime::spawn_blocking(list_agents_with_status)
@@ -108,23 +126,28 @@ fn list_agents_with_status() -> Result<Vec<AgentInfo>, String> {
         .map(|agent| {
             let agent = agent.clone();
             std::thread::spawn(move || {
-                let probe = aisync_core::deploy::probe_installation(&agent);
-                (agent.id.clone(), probe)
+                let details = aisync_core::deploy::inspect_installation(&agent);
+                (agent.id.clone(), details)
             })
         })
         .collect();
 
-    let mut probes: HashMap<String, InstallationProbe> =
+    let mut probes: HashMap<String, InstallationDetails> =
         handles.into_iter().filter_map(|h| h.join().ok()).collect();
 
     Ok(agents
         .into_iter()
         .map(|a| {
-            let probe = probes.remove(&a.id).unwrap_or(InstallationProbe {
-                status: InstallationStatus::Error,
-                message: Some("安装状态检测未完成，请刷新后重试。".to_string()),
+            let details = probes.remove(&a.id).unwrap_or(InstallationDetails {
+                probe: InstallationProbe {
+                    status: InstallationStatus::Error,
+                    message: Some("安装状态检测未完成，请刷新后重试。".to_string()),
+                },
+                instances: Vec::new(),
+                ambiguous: true,
+                message: Some("未取得完整实例证据，写操作保持受限。".to_string()),
             });
-            to_agent_info(a, probe)
+            to_agent_info(a, details)
         })
         .collect())
 }
@@ -152,8 +175,13 @@ pub async fn configure_agent(id: String) -> Result<aisync_core::deploy::InstallO
         return Err("此 Agent 暂无可用的配置适配器，未更改配置。".to_string());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let probe = aisync_core::deploy::probe_installation(&agent);
-        if !matches!(probe.status, InstallationStatus::Installed) {
+        let details = aisync_core::deploy::inspect_installation(&agent);
+        if details.ambiguous {
+            return Err(aisync_core::Error::InstallFailed(
+                "检测到多个或无法确定的安装实例，请先确认实际使用的实例；未应用配置。".to_string(),
+            ));
+        }
+        if !matches!(details.probe.status, InstallationStatus::Installed) {
             return Err(aisync_core::Error::InstallFailed(
                 "尚未验证软件已安装，无法应用配置；请先刷新安装状态。".to_string(),
             ));
@@ -190,6 +218,16 @@ pub fn verify_agent_auth(id: String) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aisync_core::deploy::InstallationInstance;
+
+    fn details_from_probe(probe: InstallationProbe) -> InstallationDetails {
+        InstallationDetails {
+            probe,
+            instances: Vec::new(),
+            ambiguous: false,
+            message: None,
+        }
+    }
 
     fn fixture_agent() -> AgentDefinition {
         serde_json::from_value(serde_json::json!({
@@ -221,10 +259,10 @@ mod tests {
     fn installed_dto_matches_shared_frontend_contract() {
         let info = to_agent_info(
             fixture_agent(),
-            InstallationProbe {
+            details_from_probe(InstallationProbe {
                 status: InstallationStatus::Installed,
                 message: None,
-            },
+            }),
         );
         let expected: serde_json::Value = serde_json::from_str(include_str!(
             "../../../tests/fixtures/agent-info-installed.json"
@@ -237,10 +275,10 @@ mod tests {
     fn failed_probe_is_not_reported_as_absence_or_managed_installation() {
         let info = to_agent_info(
             fixture_agent(),
-            InstallationProbe {
+            details_from_probe(InstallationProbe {
                 status: InstallationStatus::Error,
                 message: Some("synthetic timeout".to_string()),
-            },
+            }),
         );
         let actual = serde_json::to_value(info).unwrap();
         assert_eq!(actual["installationStatus"], "error");
@@ -249,7 +287,13 @@ mod tests {
         assert_eq!(actual["authVerified"], false);
         assert_eq!(actual["installSource"], "unknown");
         assert_eq!(actual["canUninstall"], false);
-        assert!(actual.get("version").is_none());
+        assert!(actual["version"].is_null());
+        assert!(
+            actual["installationDetails"]["instances"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -258,11 +302,63 @@ mod tests {
         agent.config_inject.personalization = None;
         let info = to_agent_info(
             agent,
-            InstallationProbe {
+            details_from_probe(InstallationProbe {
                 status: InstallationStatus::Installed,
                 message: None,
-            },
+            }),
         );
         assert!(!info.can_configure);
+    }
+
+    fn observed_instance(active: bool) -> InstallationInstance {
+        InstallationInstance {
+            path: "/synthetic/bin/contract-agent".into(),
+            resolved_path: Some("/synthetic/lib/node_modules/contract-agent/bin/cli.js".into()),
+            entrypoint_path: Some("/synthetic/lib/node_modules/contract-agent/bin/cli.js".into()),
+            version: Some("1.2.3".into()),
+            source: InstallationSource::Npm {
+                package: "contract-agent".into(),
+                package_root: "/synthetic/lib/node_modules/contract-agent".into(),
+                global_root: "/synthetic/lib/node_modules".into(),
+                prefix: "/synthetic".into(),
+                manager_path: "/synthetic/lib/node_modules/npm/bin/npm-cli.js".into(),
+            },
+            active,
+        }
+    }
+
+    #[test]
+    fn npm_observation_dto_matches_shared_frontend_contract_without_management_grant() {
+        let mut details = details_from_probe(InstallationProbe {
+            status: InstallationStatus::Installed,
+            message: None,
+        });
+        details.instances.push(observed_instance(true));
+        let actual = serde_json::to_value(to_agent_info(fixture_agent(), details)).unwrap();
+        let expected: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tests/fixtures/agent-info-npm.json"))
+                .unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(actual["canUninstall"], false);
+    }
+
+    #[test]
+    fn inactive_or_multiple_active_instances_do_not_supply_top_level_version_or_source() {
+        for instances in [
+            vec![observed_instance(false)],
+            vec![observed_instance(true), observed_instance(true)],
+        ] {
+            let mut details = details_from_probe(InstallationProbe {
+                status: InstallationStatus::Installed,
+                message: None,
+            });
+            details.instances = instances;
+            details.ambiguous = true;
+            let info = to_agent_info(fixture_agent(), details);
+            assert!(info.version.is_none());
+            assert_eq!(info.install_source, "unknown");
+            assert!(!info.can_configure);
+            assert!(!info.can_uninstall);
+        }
     }
 }

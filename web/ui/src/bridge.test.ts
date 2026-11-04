@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as bridge from './bridge';
 import nativeAgentContract from '../../../tests/fixtures/agent-info-installed.json';
+import nativeNpmContract from '../../../tests/fixtures/agent-info-npm.json';
+import { npmMatchedAgent, ambiguousAgent, installedAgent } from './test-fixtures/agents';
 import { invoke } from '@tauri-apps/api/core';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 afterEach(() => {
@@ -33,8 +35,30 @@ describe('runtime boundary', () => {
     const agents = await bridge.getAgents();
     expect(agents).toEqual([nativeAgentContract]);
     expect(agents[0]).toMatchObject({ installationStatus: 'installed', installSource: 'unknown', canUninstall: false, canConfigure: true });
-    expect(agents[0].version).toBeUndefined();
+    expect(agents[0].version).toBeNull();
+    expect(agents[0].installationDetails).toMatchObject({ probe: { status: 'installed' }, instances: [], ambiguous: false });
     expect(invoke).toHaveBeenCalledExactlyOnceWith('get_agents');
+  });
+  it.each([nativeNpmContract, npmMatchedAgent, ambiguousAgent])('preserves instance/source observations without elevating them to management permission (%s)', async (agent) => {
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    vi.mocked(invoke).mockResolvedValue([agent]);
+    expect(await bridge.getAgents()).toEqual([agent]);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('get_agents');
+  });
+  it('does not invent details or provenance for an older DTO', async () => {
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    const legacy = { ...installedAgent, installationDetails: undefined, installSource: undefined, version: undefined };
+    vi.mocked(invoke).mockResolvedValue([legacy]);
+    const [agent] = await bridge.getAgents();
+    expect(agent.installationDetails).toBeUndefined();
+    expect(agent.installSource).toBeUndefined();
+    expect(agent.version).toBeUndefined();
+  });
+  it.each(['native', 'demo', 'unavailable'] as const)('blocks every direct automatic uninstall request in %s mode', async (mode) => {
+    if (mode === 'native') Object.assign(window, { __TAURI_INTERNALS__: {} });
+    if (mode === 'demo') window.history.replaceState({}, '', '/?demo=1');
+    await expect(bridge.uninstallAgent('synthetic-agent')).rejects.toThrow(mode === 'native' ? '自动卸载功能尚未提供' : mode === 'demo' ? '只读演示' : '未连接桌面后端');
+    expect(invoke).not.toHaveBeenCalled();
   });
   it('uses distinct native IPC commands for software installation and explicit configuration', async () => {
     Object.assign(window, { __TAURI_INTERNALS__: {} });

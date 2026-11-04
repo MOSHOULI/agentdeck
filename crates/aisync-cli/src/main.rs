@@ -103,6 +103,7 @@ fn run_deploy_with(
     definition: &registry::AgentDefinition,
     action: DeployAction,
     yes: bool,
+    inspect: impl FnOnce(&registry::AgentDefinition) -> deploy::InstallationDetails,
     install: impl FnOnce(&registry::AgentDefinition) -> aisync_core::Result<()>,
     prepare_profile: impl FnOnce() -> anyhow::Result<PathBuf>,
 ) -> anyhow::Result<()> {
@@ -112,17 +113,18 @@ fn run_deploy_with(
     }
     match action {
         DeployAction::Verify => {
-            let probe = deploy::probe_installation(definition);
+            let details = inspect(definition);
             println!(
                 "{}: installation={}, local_auth_evidence={}",
                 agent,
-                serde_json::to_string(&probe)?,
+                serde_json::to_string(&details)?,
                 deploy::check_auth(definition)?
             );
             anyhow::ensure!(
-                probe.status == deploy::InstallationStatus::Installed,
+                details.probe.status == deploy::InstallationStatus::Installed,
                 "Installation was not verified for {agent}: {}",
-                probe
+                details
+                    .probe
                     .message
                     .as_deref()
                     .unwrap_or("Unknown verification failure")
@@ -139,11 +141,16 @@ fn run_deploy_with(
             );
             // Check before profile initialization or backup creation. The core
             // repeats verification immediately before applying configuration.
-            let probe = deploy::probe_installation(definition);
+            let details = inspect(definition);
             anyhow::ensure!(
-                probe.status == deploy::InstallationStatus::Installed,
+                !details.ambiguous,
+                "Cannot configure {agent}: multiple or unresolved installation instances"
+            );
+            anyhow::ensure!(
+                details.probe.status == deploy::InstallationStatus::Installed,
                 "Cannot configure {agent}: {}",
-                probe
+                details
+                    .probe
                     .message
                     .as_deref()
                     .unwrap_or("Installation was not verified")
@@ -221,12 +228,19 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Deploy { agent, action, yes } => {
             let definition = find_agent(&agent)?;
-            run_deploy_with(&definition, action, yes, deploy::install_agent, || {
-                // Profile initialization and encrypted backup belong only to
-                // explicit configuration, never to software installation.
-                git::backup(&format!("CLI configure {agent}"))?;
-                Ok(config::profile_source_dir()?)
-            })?;
+            run_deploy_with(
+                &definition,
+                action,
+                yes,
+                deploy::inspect_installation,
+                deploy::install_agent,
+                || {
+                    // Profile initialization and encrypted backup belong only to
+                    // explicit configuration, never to software installation.
+                    git::backup(&format!("CLI configure {agent}"))?;
+                    Ok(config::profile_source_dir()?)
+                },
+            )?;
         }
         Commands::Backup { reason } => println!("{}", git::backup(&reason)?),
         Commands::Backups => println!("{}", serde_json::to_string_pretty(&git::list_backups()?)?),
@@ -363,6 +377,21 @@ mod tests {
         agent
     }
 
+    fn fake_details(
+        status: deploy::InstallationStatus,
+        ambiguous: bool,
+    ) -> deploy::InstallationDetails {
+        deploy::InstallationDetails {
+            probe: deploy::InstallationProbe {
+                status,
+                message: None,
+            },
+            instances: Vec::new(),
+            ambiguous,
+            message: None,
+        }
+    }
+
     #[test]
     fn install_and_configure_are_distinct_explicit_actions() {
         for (name, expected) in [
@@ -382,6 +411,7 @@ mod tests {
                     &fake_agent(),
                     action,
                     yes,
+                    |_| panic!("No inspection before confirmation"),
                     |_| panic!("No install before confirmation"),
                     || panic!("No profile preparation before confirmation"),
                 )
@@ -397,6 +427,7 @@ mod tests {
             &fake_agent(),
             DeployAction::Install,
             true,
+            |_| panic!("The installer owns its own preflight"),
             |_| {
                 called.set(true);
                 Ok(())
@@ -413,6 +444,7 @@ mod tests {
             &configurable_agent(),
             DeployAction::Configure,
             true,
+            |_| fake_details(deploy::InstallationStatus::Installed, false),
             |_| panic!("Configure cannot install software"),
             || Err(anyhow::anyhow!("Backup unavailable")),
         )
@@ -426,6 +458,7 @@ mod tests {
             &fake_agent(),
             DeployAction::Configure,
             true,
+            |_| panic!("Unsupported configuration must not inspect"),
             |_| panic!("Configure cannot install software"),
             || panic!("Unsupported configuration cannot prepare a profile or backup"),
         )
@@ -443,12 +476,27 @@ mod tests {
                     &agent,
                     action,
                     true,
+                    |_| fake_details(deploy::InstallationStatus::Unsupported, false),
                     |_| panic!("No installer may run"),
                     || panic!("No backup or profile preparation for blocked actions"),
                 )
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn ambiguous_installation_cannot_prepare_profile_even_when_version_probe_succeeds() {
+        let error = run_deploy_with(
+            &configurable_agent(),
+            DeployAction::Configure,
+            true,
+            |_| fake_details(deploy::InstallationStatus::Installed, true),
+            |_| panic!("No installer may run"),
+            || panic!("Ambiguous instances must not initialize profiles or backups"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("multiple or unresolved"));
     }
 
     #[test]

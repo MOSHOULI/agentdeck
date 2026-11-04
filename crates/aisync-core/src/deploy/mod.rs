@@ -6,6 +6,12 @@
 //! failures never uninstall software that may have existed before this operation.
 use crate::registry::AgentDefinition;
 
+mod inspection;
+mod process_guard;
+pub use inspection::{
+    InstallationDetails, InstallationInstance, InstallationSource, inspect_installation,
+};
+
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
@@ -70,9 +76,7 @@ fn wait_for_shell_with_timeout(mut child: Child, timeout: Duration) -> std::io::
             result => {
                 // Kill the shell's descendants as well as the shell, then reap it.
                 #[cfg(unix)]
-                let _ = Command::new("kill")
-                    .args(["-KILL", "--", &format!("-{}", child.id())])
-                    .status();
+                process_guard::kill_group(child.id());
                 #[cfg(windows)]
                 {
                     use std::os::windows::process::CommandExt;
@@ -194,7 +198,13 @@ fn configure_agent_with(
             agent.name
         )));
     }
-    let probe = probe_installation(agent);
+    let details = inspect_installation(agent);
+    let probe = details.probe;
+    if details.ambiguous {
+        return Err(crate::Error::InjectFailed(
+            "Multiple installation targets were found; choose and resolve the intended installation before configuring".into(),
+        ));
+    }
     if probe.status != InstallationStatus::Installed {
         return Err(crate::Error::InjectFailed(format!(
             "Cannot configure {} without successful installation verification: {}",
@@ -222,7 +232,7 @@ fn configure_agent_with(
 /// Registry installation methods describe available recipes, not the origin of
 /// an existing installation. Until provenance is recorded, removal fails closed.
 pub fn uninstall_block_reason(_agent: &AgentDefinition) -> Option<&'static str> {
-    Some("安装来源未确认，暂不支持自动卸载；请使用原安装方式手动卸载。")
+    Some("自动卸载尚未实现，包括已匹配 npm 全局目录的实例；请使用原安装方式手动卸载。")
 }
 
 pub fn can_uninstall(agent: &AgentDefinition) -> bool {
@@ -257,9 +267,7 @@ pub struct InstallationProbe {
 
 /// Verify installation using a bounded registry command, preserving uncertainty.
 pub fn probe_installation(agent: &AgentDefinition) -> InstallationProbe {
-    probe_installation_with(agent, executable_on_path, |command| {
-        run_shell_with_timeout(command, Duration::from_secs(3))
-    })
+    inspect_installation(agent).probe
 }
 
 fn probe_installation_with(
@@ -686,7 +694,7 @@ mod tests {
             uninstall_agent(&agent)
                 .unwrap_err()
                 .to_string()
-                .contains("安装来源未确认")
+                .contains("自动卸载尚未实现")
         );
         assert!(
             !marker.exists(),

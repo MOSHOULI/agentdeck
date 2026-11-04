@@ -89,7 +89,7 @@ export const AgentSquare: React.FC = () => {
           )}
         </div>
       </div>
-      <p className="agent-workspace-note"><Icon name="info" size={14} />安装状态来自本地检测，PATH 未检测到不代表设备上完全不存在。安装仅安装软件；应用默认配置需单独确认。安装来源未验证时请手动卸载。</p>
+      <p className="agent-workspace-note"><Icon name="info" size={14} />安装状态来自本地检测，PATH 未检测到不代表设备上完全不存在。来源目录匹配不代表安装历史或由 AgentDeck 安装。安装仅安装软件；应用默认配置需单独确认，实例优先级有歧义时暂停。自动卸载功能尚未提供。</p>
     </div>
   );
 };

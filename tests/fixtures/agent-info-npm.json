@@ -1,0 +1,49 @@
+{
+  "id": "contract-agent",
+  "name": "Contract Agent",
+  "installed": true,
+  "installationStatus": "installed",
+  "installationMessage": null,
+  "installSource": "npm",
+  "authVerified": true,
+  "source": "open",
+  "uiType": "cli",
+  "stars": 0,
+  "popular": false,
+  "description": "Synthetic contract fixture",
+  "icon": "test",
+  "category": "test",
+  "canInstall": true,
+  "canVerifyInstall": true,
+  "canUninstall": false,
+  "canConfigure": true,
+  "installHelp": null,
+  "uninstallHelp": "自动卸载尚未实现，包括已匹配 npm 全局目录的实例；请使用原安装方式手动卸载。",
+  "homepage": null,
+  "version": "1.2.3",
+  "installationDetails": {
+    "probe": {
+      "status": "installed",
+      "message": null
+    },
+    "instances": [
+      {
+        "path": "/synthetic/bin/contract-agent",
+        "resolvedPath": "/synthetic/lib/node_modules/contract-agent/bin/cli.js",
+        "entrypointPath": "/synthetic/lib/node_modules/contract-agent/bin/cli.js",
+        "version": "1.2.3",
+        "source": {
+          "kind": "npm",
+          "package": "contract-agent",
+          "packageRoot": "/synthetic/lib/node_modules/contract-agent",
+          "globalRoot": "/synthetic/lib/node_modules",
+          "prefix": "/synthetic",
+          "managerPath": "/synthetic/lib/node_modules/npm/bin/npm-cli.js"
+        },
+        "active": true
+      }
+    ],
+    "ambiguous": false,
+    "message": null
+  }
+}

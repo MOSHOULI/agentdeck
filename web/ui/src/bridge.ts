@@ -22,14 +22,38 @@ function useDemo(write = false): boolean {
 
 // ─── Agent 管理 ────────────────────────────────────
 
+export type InstallationStatus = 'installed' | 'not_detected' | 'error' | 'unsupported';
+
+/** Evidence about the current files, never an installation/ownership history. */
+export type InstallationSource =
+  | { kind: 'unknown'; reason: string }
+  | { kind: 'npm'; package: string; packageRoot: string; globalRoot: string; prefix: string; managerPath: string };
+
+export interface InstallationInstance {
+  path: string;
+  resolvedPath: string | null;
+  entrypointPath: string | null;
+  version: string | null;
+  source: InstallationSource;
+  active: boolean;
+}
+
+export interface InstallationDetails {
+  probe: { status: InstallationStatus; message: string | null };
+  instances: InstallationInstance[];
+  ambiguous: boolean;
+  message: string | null;
+}
+
 export interface AgentInfo {
   id: string;
   name: string;
   installed: boolean;
   // Optional for legacy backends; missing values must never authorize a mutation.
-  installationStatus?: 'installed' | 'not_detected' | 'error' | 'unsupported';
+  installationStatus?: InstallationStatus;
   installationMessage?: string | null;
-  installSource?: 'unknown';
+  installSource?: 'unknown' | 'npm';
+  installationDetails?: InstallationDetails;
   uninstallHelp?: string | null;
   canConfigure?: boolean;
   canInstall?: boolean;
@@ -37,7 +61,7 @@ export interface AgentInfo {
   canUninstall?: boolean;
   installHelp?: string | null;
   homepage?: string | null;
-  version?: string;
+  version?: string | null;
   authVerified: boolean;
   source: 'open' | 'closed';
   uiType: string;
@@ -46,6 +70,22 @@ export interface AgentInfo {
   description: string;
   icon: string;
   category: string;
+}
+
+/** Shared UI/store write gate. Legacy DTOs have no details; present evidence must agree. */
+export function installationEvidenceProblem(agent: AgentInfo): 'invalid' | 'ambiguous' | null {
+  const details: unknown = agent.installationDetails;
+  if (details === undefined) return null;
+  const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (!isRecord(details) || !isRecord(details.probe) || typeof details.probe.status !== 'string'
+    || !['installed', 'not_detected', 'error', 'unsupported'].includes(details.probe.status)
+    || details.probe.status !== agent.installationStatus
+    || agent.installed !== (details.probe.status === 'installed')
+    || typeof details.ambiguous !== 'boolean' || !Array.isArray(details.instances)
+    || details.instances.some((instance) => !isRecord(instance) || typeof instance.path !== 'string'
+      || !instance.path.trim() || typeof instance.active !== 'boolean')) return 'invalid';
+  const activeCount = details.instances.filter((instance) => instance.active).length;
+  return details.ambiguous || (details.instances.length > 0 && activeCount !== 1) ? 'ambiguous' : null;
 }
 
 const MOCK_AGENTS: AgentInfo[] = [
@@ -163,10 +203,10 @@ export async function configureAgent(id: string): Promise<InstallOutcome> {
   return invoke<InstallOutcome>('configure_agent', { id });
 }
 
-/** 卸载指定 agent */
-export async function uninstallAgent(id: string): Promise<void> {
-  if (useDemo(true)) return;
-  return invoke<void>('uninstall_agent', { id });
+/** Automatic uninstall is unavailable, including for currently matched npm files. */
+export async function uninstallAgent(_id: string): Promise<void> {
+  useDemo(true);
+  throw new Error('自动卸载功能尚未提供；来源目录匹配不代表安装历史或管理权限。请使用原安装方式或官方卸载说明。');
 }
 
 /** 验证 agent 认证状态 */

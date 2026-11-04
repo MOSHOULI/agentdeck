@@ -3,7 +3,8 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { AgentCard } from './AgentCard';
 import { runtimeMode, type AgentInfo } from '../bridge';
 import nativeAgentContract from '../../../../tests/fixtures/agent-info-installed.json';
-import { notDetectedAgent as agent, installedAgent } from '../test-fixtures/agents';
+import nativeNpmContract from '../../../../tests/fixtures/agent-info-npm.json';
+import { notDetectedAgent as agent, installedAgent, activeInstance, observedAgent, npmMatchedAgent, ambiguousAgent } from '../test-fixtures/agents';
 
 vi.mock('../bridge', async (importOriginal) => ({
   ...await importOriginal<typeof import('../bridge')>(),
@@ -47,6 +48,241 @@ describe('AgentCard', () => {
     expect(screen.getByRole('button', { name: '安装 OpenCode' })).toBeEnabled();
   });
 
+  it('renders the unchanged npm DTO contract as directory evidence, not installation history or management rights', () => {
+    const { props } = mountAgent({ agent: nativeNpmContract as AgentInfo });
+    expect(screen.getByText('v1.2.3')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '卸载 Contract Agent' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: '查看 Contract Agent 详情' }));
+    const evidence = screen.getByRole('region', { name: 'Contract Agent 安装实例与来源证据' });
+    expect(within(evidence).getByText('npm 全局目录匹配，安装历史未知')).toBeInTheDocument();
+    expect(within(evidence).getByText(/不证明最初安装方式、安装时间或由 AgentDeck 安装/)).toBeInTheDocument();
+    expect(within(evidence).getByText(nativeNpmContract.installationDetails.instances[0].source.packageRoot)).toBeInTheDocument();
+    expect(within(evidence).getByText(nativeNpmContract.installationDetails.instances[0].source.managerPath)).toBeInTheDocument();
+    expect(within(evidence).getByText('实测版本 1.2.3')).toBeInTheDocument();
+    expect(screen.queryByText('安装来源未验证')).not.toBeInTheDocument();
+    expect(props.onUninstall).not.toHaveBeenCalled();
+  });
+
+  it('keeps selected PATH, canonical file and proven entrypoint distinct', () => {
+    mountAgent({ agent: npmMatchedAgent });
+    fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
+    const current = screen.getByRole('listitem', { name: '当前 PATH 候选 1' });
+    const instance = npmMatchedAgent.installationDetails!.instances[0];
+    expect(within(current).getByText('PATH 路径').nextElementSibling).toHaveTextContent(instance.path);
+    expect(within(current).getByText('规范文件路径').nextElementSibling).toHaveTextContent(instance.resolvedPath!);
+    expect(within(current).getByText('已证实入口').nextElementSibling).toHaveTextContent(instance.entrypointPath!);
+    expect(within(current).getByText('版本检测').nextElementSibling).toHaveTextContent('实测版本 2.4.0');
+  });
+
+  it('shows all observed candidates but never assigns a version to an unexecuted candidate', () => {
+    const details = ambiguousAgent.installationDetails!;
+    mountAgent({ agent: { ...ambiguousAgent, installationDetails: {
+      ...details, instances: [details.instances[0], { ...details.instances[1], version: 'forged-other-version' }],
+    } } });
+    fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
+    expect(screen.getByText('检测到 2 个 PATH 候选，其中 1 个为其他候选。')).toBeInTheDocument();
+    const additional = screen.getByRole('listitem', { name: '其他 PATH 候选 2' });
+    expect(within(additional).getByText(details.instances[1].path)).toBeInTheDocument();
+    expect(within(additional).getByText('未检测（其他候选未执行）')).toBeInTheDocument();
+    expect(screen.queryByText(/forged-other-version/)).not.toBeInTheDocument();
+    expect(screen.getByText('实测版本 2.4.0')).toBeInTheDocument();
+  });
+
+  it('blocks ambiguous configuration with a visible, programmatically associated reason', () => {
+    const { props } = mountAgent({ agent: ambiguousAgent });
+    const configure = screen.getByRole('button', { name: '应用默认配置 OpenCode' });
+    expect(configure).toBeDisabled();
+    expect(configure).toHaveAttribute('title', expect.stringContaining('PATH 候选优先级存在歧义'));
+    expect(document.getElementById(configure.getAttribute('aria-describedby')!)).toHaveTextContent('已暂停安装与应用配置');
+    fireEvent.click(configure);
+    expect(props.onConfigure).not.toHaveBeenCalled();
+    expect(window.confirm).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
+    expect(screen.getByText(ambiguousAgent.installationDetails!.message!)).toBeInTheDocument();
+  });
+
+  it('does not elect or measure an instance when duplicate active markers contradict a false ambiguity flag', () => {
+    mountAgent({ agent: { ...observedAgent, installationDetails: {
+      ...observedAgent.installationDetails!,
+      instances: [activeInstance, { ...activeInstance, path: '/synthetic/duplicate/example-agent', version: '9.9.9' }],
+    } } });
+    expect(screen.getByText('版本未知')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '应用默认配置 OpenCode' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
+    expect(screen.getByText(/未确认唯一的当前候选/)).toBeInTheDocument();
+    expect(screen.queryByText(/实测版本/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/9\.9\.9/)).not.toBeInTheDocument();
+  });
+
+  it.each([undefined, 'npm', 'unknown'] as const)('does not turn legacy version/source metadata into instance evidence (%s)', (installSource) => {
+    mountAgent({ agent: { ...installedAgent, installationDetails: undefined, installSource, version: 'legacy-version', canUninstall: true } });
+    expect(screen.getByText('版本未验证')).toBeInTheDocument();
+    expect(screen.queryByText(/legacy-version/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
+    expect(screen.getByText('未提供安装实例证据；路径、来源与实例版本均无法确认。')).toBeInTheDocument();
+    expect(screen.queryByText('npm 全局目录匹配，安装历史未知')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '卸载 OpenCode' })).toBeDisabled();
+  });
+
+  it.each([null, '', '   ', undefined])('reports an unknown measured version without falling back to top-level metadata (%s)', (version) => {
+    mountAgent({ agent: { ...observedAgent, version: 'unsupported-fallback', installationDetails: {
+      ...observedAgent.installationDetails!, instances: [{ ...activeInstance, version } as typeof activeInstance],
+    } } });
+    expect(screen.getByText('版本未知')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
+    expect(screen.getByText('版本未知（未取得有效版本结果）')).toBeInTheDocument();
+    expect(screen.queryByText(/unsupported-fallback/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    undefined, null, 'npm', { kind: 'managed' }, { kind: 'npm' },
+    { kind: 'npm', package: 'example-agent', packageRoot: '/synthetic/pkg', globalRoot: '/synthetic', prefix: '/synthetic', managerPath: 42 },
+    { kind: 'unknown', reason: { text: 'not displayable' } },
+  ])('does not trust malformed or unknown source variants (%j)', (source) => {
+    mountAgent({ agent: { ...npmMatchedAgent, canUninstall: true, installationDetails: {
+      ...npmMatchedAgent.installationDetails!,
+      instances: [{ ...npmMatchedAgent.installationDetails!.instances[0], source } as unknown as typeof activeInstance],
+    } } });
+    fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
+    expect(screen.getByText('来源未知')).toBeInTheDocument();
+    expect(screen.getByText('来源证据缺失或格式不完整，无法确认当前目录与包的关联。')).toBeInTheDocument();
+    expect(screen.queryByText('npm 全局目录匹配，安装历史未知')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '卸载 OpenCode' })).toBeDisabled();
+  });
+
+  it('requires a proven entrypoint before showing a complete npm source object as linkage evidence', () => {
+    mountAgent({ agent: { ...npmMatchedAgent, installationDetails: {
+      ...npmMatchedAgent.installationDetails!, instances: [{ ...npmMatchedAgent.installationDetails!.instances[0], entrypointPath: null }],
+    } } });
+    fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
+    expect(screen.getByText('未证实实际入口，不能由启动文件名推断')).toBeInTheDocument();
+    expect(screen.getByText('来源未知')).toBeInTheDocument();
+    expect(screen.queryByText('npm 全局目录匹配，安装历史未知')).not.toBeInTheDocument();
+  });
+
+  it.each([null, undefined, '', '   '])('requires a canonical discovered file before reporting npm linkage (%s)', (resolvedPath) => {
+    mountAgent({ agent: { ...npmMatchedAgent, installationDetails: {
+      ...npmMatchedAgent.installationDetails!,
+      instances: [{ ...npmMatchedAgent.installationDetails!.instances[0], resolvedPath } as typeof activeInstance],
+    } } });
+    fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
+    expect(screen.getByText('未提供或无法解析')).toBeInTheDocument();
+    expect(screen.getByText('来源未知')).toBeInTheDocument();
+    expect(screen.queryByText('npm 全局目录匹配，安装历史未知')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '卸载 OpenCode' })).toBeDisabled();
+  });
+
+  it.each([undefined, null, {}, { status: 'error' }, { status: 'not_detected' }, { status: 'unsupported' }, { status: 'forged' }, { status: 42 }])('blocks installed configuration with missing, malformed or inconsistent probe (%j)', (probe) => {
+    const { props } = mountAgent({ agent: { ...observedAgent, installationDetails: {
+      ...observedAgent.installationDetails!, probe,
+    } } as unknown as AgentInfo });
+    expect(screen.getByText('安装状态未知')).toBeInTheDocument();
+    expect(screen.getByText('版本未知')).toBeInTheDocument();
+    const configure = screen.getByRole('button', { name: '应用默认配置 OpenCode' });
+    expect(configure).toBeDisabled();
+    expect(configure).toHaveAttribute('title', expect.stringContaining('安装检测证据不完整或状态不一致'));
+    fireEvent.click(configure);
+    expect(props.onConfigure).not.toHaveBeenCalled();
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, null, {}, { status: 'error' }, { status: 'installed' }, { status: 'unsupported' }, { status: 'forged' }])('blocks installation with missing, malformed or inconsistent probe despite install permission (%j)', (probe) => {
+    const { props } = mountAgent({ agent: { ...agent, installationDetails: {
+      ...installedAgent.installationDetails!, probe,
+    } } as unknown as AgentInfo });
+    const install = screen.getByRole('button', { name: '安装 OpenCode' });
+    expect(install).toBeDisabled();
+    expect(install).toHaveTextContent('安装不可用');
+    expect(install).toHaveAttribute('title', expect.stringContaining('安装检测证据不完整或状态不一致'));
+    fireEvent.click(install);
+    expect(props.onInstall).not.toHaveBeenCalled();
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { installed: false, installationStatus: 'installed', probeStatus: 'installed' },
+    { installed: true, installationStatus: 'not_detected', probeStatus: 'not_detected' },
+  ] as const)('rejects a matching status string when the installed boolean contradicts it (%j)', ({ installed, installationStatus, probeStatus }) => {
+    mountAgent({ agent: { ...installedAgent, installed, installationStatus, installationDetails: {
+      ...installedAgent.installationDetails!, probe: { status: probeStatus, message: null },
+    } } });
+    expect(screen.getByText('安装状态未知')).toBeInTheDocument();
+    expect(screen.getByText(/安装检测证据不完整或状态不一致/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '应用默认配置 OpenCode' })).not.toBeInTheDocument();
+  });
+
+  it('does not authorize configuration for nonempty observations with no active candidate', () => {
+    const { props } = mountAgent({ agent: { ...observedAgent, installationDetails: {
+      ...observedAgent.installationDetails!, instances: [{ ...activeInstance, active: false }],
+    } } });
+    const configure = screen.getByRole('button', { name: '应用默认配置 OpenCode' });
+    expect(configure).toBeDisabled();
+    expect(configure).toHaveAttribute('title', expect.stringContaining('当前实例未确认'));
+    fireEvent.click(configure);
+    expect(props.onConfigure).not.toHaveBeenCalled();
+    expect(screen.getByText('版本未知')).toBeInTheDocument();
+  });
+
+  it('preserves valid empty custom-verification lists without inventing a required instance', () => {
+    const { rerender, props } = mountAgent({ agent: installedAgent });
+    expect(screen.getByRole('button', { name: '应用默认配置 OpenCode' })).toBeEnabled();
+    rerender(<AgentCard {...props} agent={{ ...agent, installationDetails: {
+      probe: { status: 'not_detected', message: null }, instances: [], ambiguous: false, message: null,
+    } }} />);
+    expect(screen.getByRole('button', { name: '安装 OpenCode' })).toBeEnabled();
+  });
+
+  it.each([null, {}, { instances: null }, { instances: [null], ambiguous: false }])('fails closed on malformed new evidence without crashing (%j)', (installationDetails) => {
+    mountAgent({ agent: { ...installedAgent, installationDetails } as unknown as AgentInfo });
+    expect(screen.getByRole('button', { name: '应用默认配置 OpenCode' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
+    expect(screen.getByText('未提供安装实例证据；路径、来源与实例版本均无法确认。')).toBeInTheDocument();
+  });
+
+  it('shows unknown-source reasons, long paths and raw evidence as text, not executable links or markup', () => {
+    const path = '/synthetic/' + 'long-path-segment/'.repeat(30) + '<script>example</script>';
+    mountAgent({ agent: { ...observedAgent, installationDetails: {
+      ...observedAgent.installationDetails!,
+      instances: [{ ...activeInstance, path, resolvedPath: null, source: { kind: 'unknown', reason: '<b>synthetic reason</b>' } }],
+    } } });
+    fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
+    const value = screen.getByText(path);
+    expect(value).toHaveClass('agent-path');
+    expect(value.querySelector('script')).toBeNull();
+    expect(screen.getByText('<b>synthetic reason</b>')).toBeInTheDocument();
+    expect(screen.getByText('未提供或无法解析')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: path })).not.toBeInTheDocument();
+  });
+
+  it('never offers uninstall even with complete npm evidence and forged capability', () => {
+    const { props } = mountAgent({ agent: { ...npmMatchedAgent, canUninstall: true } });
+    const uninstall = screen.getByRole('button', { name: '卸载 OpenCode' });
+    expect(uninstall).toBeDisabled();
+    expect(uninstall).toHaveAttribute('title', expect.stringContaining('自动卸载功能尚未提供'));
+    fireEvent.click(uninstall);
+    expect(props.onUninstall).not.toHaveBeenCalled();
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /升级/ })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { mode: 'native' as const, busy: true, dataStale: false },
+    { mode: 'native' as const, busy: false, dataStale: true },
+    { mode: 'demo' as const, busy: false, dataStale: false },
+    { mode: 'unavailable' as const, busy: false, dataStale: false },
+  ])('does not let known source evidence bypass runtime/freshness/busy guards (%j)', ({ mode, busy, dataStale }) => {
+    vi.mocked(runtimeMode).mockReturnValue(mode);
+    const { props } = mountAgent({ agent: npmMatchedAgent, busy, dataStale });
+    const configure = screen.getByRole('button', { name: '应用默认配置 OpenCode' });
+    expect(configure).toBeDisabled();
+    fireEvent.click(configure);
+    expect(props.onConfigure).not.toHaveBeenCalled();
+    expect(window.confirm).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
+    expect(screen.getByText('npm 全局目录匹配，安装历史未知')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '卸载 OpenCode' })).toBeDisabled();
+  });
+
   it('confirms software-only installation without configuring or selecting the row', async () => {
     const { props } = mountAgent();
     fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
@@ -58,9 +294,9 @@ describe('AgentCard', () => {
   });
 
   it.each(['unknown', undefined] as const)('shows observed versions but never uninstalls unverified origins (%s)', (installSource) => {
-    const { props } = mountAgent({ agent: { ...installedAgent, installSource, canUninstall: true, version: 'v1.0.0' } });
+    const { props } = mountAgent({ agent: { ...observedAgent, installSource, canUninstall: true } });
     expect(screen.getByText('已安装')).toBeInTheDocument();
-    expect(screen.getByText('v1.0.0')).toBeInTheDocument();
+    expect(screen.getByText('v2.4.0')).toBeInTheDocument();
     const action = screen.getByRole('button', { name: '卸载 OpenCode' });
     expect(action).toBeDisabled();
     fireEvent.click(action);
