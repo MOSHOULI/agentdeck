@@ -10,6 +10,7 @@ This release hardens and completes the existing Windows desktop workflow without
 - Revocable memory exports, explicit manual selections, opt-in automatic collection (off by default), cancellation and partial-error reporting.
 - Atomic managed-only MCP synchronization, working CLI commands and explicit read-only browser demo.
 - Locked dependencies, isolated-home test runner, Windows-native tests and reproducible NSIS build artifacts.
+- Software installation is separate from optional profile configuration. Probe failures remain errors rather than absence; stale list data blocks further mutations. Unverified installation provenance blocks automatic uninstall in the UI and core.
 
 ## Verify this download
 
@@ -30,6 +31,8 @@ On upgrade, the application uses its improved bundled registries only when both 
 ## Scope and known limitations
 
 - Windows 10/11 x64 is the complete desktop target. Git is required for backups; npm-based agents need Node.js/npm.
+- No installation-origin ledger exists yet, including for new installations. Automatic uninstall is therefore disabled until provenance can be verified. Agent software upgrades are not implemented. A missing executable on PATH does not prove absence elsewhere on the machine.
+- Applying a profile is a separate confirmed action, but configuration diff previews and three-way conflict reconciliation are not implemented. Existing rollback does not protect against every concurrent external edit.
 - Linux core/CLI tests do not establish a functioning Linux desktop or secure non-Windows vault.
 - Automated Windows tests and packaging do not constitute manual native GUI acceptance or testing every third-party installer/network/login.
 - Real-environment integration tests are intentionally ignored; no real account secrets or personal conversations are used by ordinary CI.

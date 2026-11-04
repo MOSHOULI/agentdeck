@@ -5,11 +5,12 @@ import App from './App';
 import { useAgentStore } from './stores/agentStore';
 import { useWorkspaceActivityStore } from './stores/workspaceActivity';
 import * as bridge from './bridge';
+import { installedAgent, notDetectedAgent } from './test-fixtures/agents';
 
 beforeEach(() => {
   window.history.replaceState({}, '', '/?demo=1');
   window.localStorage.clear();
-  act(() => useAgentStore.setState({ agents: [], selectedAgentId: null, loading: false, error: null, notice: null }));
+  act(() => useAgentStore.setState({ agents: [], selectedAgentId: null, loading: false, error: null, notice: null, refreshError: null, dataStale: true }));
 });
 
 afterEach(() => {
@@ -18,7 +19,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   window.history.replaceState({}, '', '/');
   window.localStorage.clear();
-  act(() => useAgentStore.setState({ agents: [], selectedAgentId: null, loading: false, error: null, notice: null }));
+  act(() => useAgentStore.setState({ agents: [], selectedAgentId: null, loading: false, error: null, notice: null, refreshError: null, dataStale: true }));
 });
 
 async function renderReadyApp(strict = false) {
@@ -90,6 +91,35 @@ it('retains an in-flight operation and its busy lock across navigation', async (
   await waitFor(() => expect(useWorkspaceActivityStore.getState().busy.memory).toBe(false));
   expect(memory.querySelector('button[type="submit"]')).toBeEnabled();
   expect(screen.queryByText(/进行中：.*记忆管理/)).not.toBeInTheDocument();
+});
+
+it.each(['install', 'configure'] as const)('retains the in-flight %s lock across workspace navigation', async (operation) => {
+  vi.spyOn(bridge, 'runtimeMode').mockReturnValue('native');
+  vi.spyOn(window, 'confirm').mockReturnValue(true);
+  const target = operation === 'install' ? notDetectedAgent : installedAgent;
+  vi.spyOn(bridge, 'getAgents').mockResolvedValue([target]);
+  let finish!: (outcome: bridge.InstallOutcome) => void;
+  const pending = new Promise<bridge.InstallOutcome>((resolve) => { finish = resolve; });
+  const mutation = vi.spyOn(bridge, operation === 'install' ? 'installAgent' : 'configureAgent').mockReturnValue(pending);
+  await renderReadyApp(true);
+  const actionName = operation === 'install' ? '安装 OpenCode' : '应用默认配置 OpenCode';
+  const action = screen.getByRole('button', { name: actionName });
+  fireEvent.click(action);
+  fireEvent.click(action);
+  expect(action).toBeDisabled();
+  expect(mutation).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('tab', { name: /^记忆管理/ }));
+  expect(screen.getByText(/进行中：.*Agent 管理/)).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: /^Agent 管理/ }));
+  expect(screen.getByRole('button', { name: actionName })).toBe(action);
+  expect(action).toBeDisabled();
+  fireEvent.click(action);
+  expect(mutation).toHaveBeenCalledTimes(1);
+  expect(window.confirm).toHaveBeenCalledTimes(1);
+  await act(async () => { finish({ warnings: [] }); await pending; });
+  await waitFor(() => expect(useAgentStore.getState().loading).toBe(false));
+  expect(action).toBeEnabled();
+  expect(within(screen.getByRole('tabpanel', { name: /^Agent 管理/ })).getByRole('status')).toHaveTextContent(operation === 'install' ? '软件安装操作已完成' : '默认 profile 配置操作已完成');
 });
 
 it('keeps agent activity visible while a different workspace is open', async () => {

@@ -31,7 +31,7 @@
 .agent-workspace .agent-status-installed { background: var(--success-bg); color: var(--success); }
 .agent-workspace .agent-status-unknown { background: var(--warning-bg); color: var(--warning); }
 .agent-workspace .agent-version { color: var(--muted); font-size: 10px; padding-left: 7px; }
-.agent-workspace .agent-row-actions { display: flex; gap: 7px; align-items: center; }
+.agent-workspace .agent-row-actions { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .agent-workspace .agent-row-actions .button { min-height: 32px; padding: 5px 9px; font-size: 11px; white-space: nowrap; }
 .agent-workspace .agent-operation { min-width: 65px; }
 .agent-workspace .agent-detail-button svg { transition: transform 150ms ease; }

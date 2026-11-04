@@ -11,7 +11,7 @@ const filters = [
 ] as const;
 
 export const AgentSquare: React.FC = () => {
-  const { agents, loading, error, notice, selectedAgentId, loadAgents, installAgent, uninstallAgent, selectAgent, clearError } = useAgentStore();
+  const { agents, loading, error, notice, refreshError, dataStale, selectedAgentId, loadAgents, installAgent, configureAgent, uninstallAgent, selectAgent, clearError } = useAgentStore();
   const [filter, setFilter] = useState<'all' | 'installed' | 'popular'>('all');
   const [query, setQuery] = useState('');
 
@@ -22,7 +22,7 @@ export const AgentSquare: React.FC = () => {
     return [...agents]
       .sort((a, b) => Number(Boolean(b.popular)) - Number(Boolean(a.popular)) || (b.stars ?? 0) - (a.stars ?? 0) || a.name.localeCompare(b.name))
       .filter((agent) => {
-        if (filter === 'installed' && !agent.installed) return false;
+        if (filter === 'installed' && (!agent.installed || agent.installationStatus !== 'installed')) return false;
         if (filter === 'popular' && !agent.popular) return false;
         return !search || [agent.name, agent.id, agent.description, agent.uiType, agent.category]
           .some((value) => value.toLocaleLowerCase().includes(search));
@@ -46,6 +46,8 @@ export const AgentSquare: React.FC = () => {
       </div>
 
       {notice && <div role="status" className="notice agent-notice"><Icon name="info" size={16} /><span>{notice}</span></div>}
+      {refreshError && <div role="alert" className="notice notice-warning agent-notice"><Icon name="alert" size={16} /><div className="agent-error-copy"><strong>状态刷新失败</strong><span>{refreshError}</span></div></div>}
+      {dataStale && agents.length > 0 && <p className="notice notice-warning agent-notice">显示上次检测结果，当前状态待刷新。成功刷新前无法安装或应用配置。</p>}
       {error && (
         <div role="alert" className="notice notice-error agent-notice">
           <Icon name="alert" size={16} />
@@ -69,15 +71,15 @@ export const AgentSquare: React.FC = () => {
         </div>
 
         <div className="agent-list-summary">
-          <span>{loading ? <span role="status">正在读取 Agent 状态…</span> : error && agents.length === 0 ? '列表暂不可用' : `显示 ${filteredAgents.length} / ${agents.length} 款 Agent`}</span>
+          <span>{loading ? <span role="status">正在读取 Agent 状态…</span> : refreshError && agents.length === 0 ? '列表暂不可用' : `显示 ${filteredAgents.length} / ${agents.length} 款 Agent`}</span>
           <span>{selectedAgent ? `当前选择：${selectedAgent.name}` : '尚未选择 Agent'}</span>
         </div>
 
         <div className="agent-list" aria-label="Agent 列表" aria-busy={loading}>
-          {filteredAgents.map((agent) => <AgentCard key={agent.id} agent={agent} busy={loading} selected={selectedAgentId === agent.id} onInstall={installAgent} onUninstall={uninstallAgent} onSelect={selectAgent} />)}
+          {filteredAgents.map((agent) => <AgentCard key={agent.id} agent={agent} busy={loading} dataStale={dataStale} selected={selectedAgentId === agent.id} onInstall={installAgent} onConfigure={configureAgent} onUninstall={uninstallAgent} onSelect={selectAgent} />)}
           {loading && agents.length === 0 && <div className="empty-state agent-empty"><Icon name="agents" size={28} /><h2>正在加载 Agent</h2><p>读取注册表与本地安装状态。</p></div>}
-          {!loading && error && agents.length === 0 && <div className="empty-state agent-empty"><Icon name="alert" size={28} /><h2>暂时无法读取 Agent 列表</h2><p>检查桌面后端连接后重试。</p><button type="button" className="button" onClick={() => { void loadAgents(); }}><Icon name="refresh" size={15} />重新加载</button></div>}
-          {!loading && (!error || agents.length > 0) && filteredAgents.length === 0 && (
+          {!loading && refreshError && agents.length === 0 && <div className="empty-state agent-empty"><Icon name="alert" size={28} /><h2>暂时无法读取 Agent 列表</h2><p>检查桌面后端连接后重试。</p><button type="button" className="button" onClick={() => { void loadAgents(); }}><Icon name="refresh" size={15} />重新加载</button></div>}
+          {!loading && (!refreshError || agents.length > 0) && filteredAgents.length === 0 && (
             <div className="empty-state agent-empty">
               <Icon name={query ? 'search' : 'agents'} size={28} />
               <h2>{query ? '没有匹配的 Agent' : filter === 'installed' ? '还没有检测到已安装的 Agent' : filter === 'popular' ? '暂无热度推荐' : '暂无可显示的 Agent'}</h2>
@@ -87,7 +89,7 @@ export const AgentSquare: React.FC = () => {
           )}
         </div>
       </div>
-      <p className="agent-workspace-note"><Icon name="info" size={14} />安装状态来自本地检测；无法检测时显示未知。安装与卸载均需确认。</p>
+      <p className="agent-workspace-note"><Icon name="info" size={14} />安装状态来自本地检测，PATH 未检测到不代表设备上完全不存在。安装仅安装软件；应用默认配置需单独确认。安装来源未验证时请手动卸载。</p>
     </div>
   );
 };

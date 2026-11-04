@@ -1,7 +1,8 @@
-//! Bounded execution of trusted registry install/uninstall/verification commands.
+//! Bounded execution of trusted registry installation and verification commands.
 //!
 //! Callers are responsible for obtaining user confirmation before installation or
-//! removal. Authentication checks detect local setup evidence only. Configuration
+//! configuration. Removal is blocked until installation provenance is recorded.
+//! Authentication checks detect local setup evidence only. Configuration
 //! failures never uninstall software that may have existed before this operation.
 use crate::registry::AgentDefinition;
 
@@ -94,27 +95,45 @@ fn wait_for_shell_with_timeout(mut child: Child, timeout: Duration) -> std::io::
     }
 }
 
-/// 安装 Agent：执行 install.command → verify_cmd 验证
-pub fn install_agent(_agent: &AgentDefinition) -> crate::Result<()> {
-    let cmd = _agent
+/// Install only after a reliable missing-executable observation, then verify.
+/// This path is not an implicit repair, upgrade or reinstall action.
+pub fn install_agent(agent: &AgentDefinition) -> crate::Result<()> {
+    install_agent_with(agent, probe_installation, run_shell)
+}
+
+fn install_agent_with(
+    agent: &AgentDefinition,
+    mut probe: impl FnMut(&AgentDefinition) -> InstallationProbe,
+    run: impl FnOnce(&str) -> std::io::Result<()>,
+) -> crate::Result<()> {
+    let command = agent
         .install
         .command
         .as_deref()
-        .ok_or_else(|| crate::Error::InstallFailed(format!("{} 缺少安装命令", _agent.name)))?;
-    if _agent
-        .install
-        .verify_cmd
-        .as_deref()
-        .is_none_or(|cmd| cmd.trim().is_empty())
-    {
-        return Err(crate::Error::InstallFailed("安装缺少可用的验证命令".into()));
-    }
-    run_shell(cmd)
-        .map_err(|e| crate::Error::InstallFailed(format!("安装 {} 失败: {}", _agent.name, e)))?;
-    if !verify_installation(_agent)? {
+        .filter(|cmd| !cmd.trim().is_empty())
+        .ok_or_else(|| crate::Error::InstallFailed(format!("{} 缺少安装命令", agent.name)))?;
+    let before = probe(agent);
+    if before.status != InstallationStatus::NotDetected {
         return Err(crate::Error::InstallFailed(format!(
-            "安装 {} 后验证失败",
-            _agent.name
+            "Installation is blocked for {}: {}",
+            agent.name,
+            before
+                .message
+                .as_deref()
+                .unwrap_or("Already installed; reinstall or upgrade must be explicit")
+        )));
+    }
+    run(command)
+        .map_err(|e| crate::Error::InstallFailed(format!("安装 {} 失败: {}", agent.name, e)))?;
+    let after = probe(agent);
+    if after.status != InstallationStatus::Installed {
+        return Err(crate::Error::InstallFailed(format!(
+            "安装 {} 后验证失败: {}",
+            agent.name,
+            after
+                .message
+                .as_deref()
+                .unwrap_or("Installation was not verified")
         )));
     }
     Ok(())
@@ -132,7 +151,61 @@ pub fn install_agent_with_inject(
     source_dir: &std::path::Path,
 ) -> crate::Result<InstallOutcome> {
     install_agent(agent)?;
-    let report = crate::config::inject_for_agent(agent, source_dir)?;
+    configure_agent(agent, source_dir)
+}
+
+/// Whether a profile adapter exists for this registry definition. Capability is
+/// independent of installation status; both are checked before configuration.
+pub fn can_configure(agent: &AgentDefinition) -> bool {
+    crate::config::supports_personalization(agent)
+        || (matches!(agent.id.as_str(), "codex" | "opencode")
+            && agent
+                .config_inject
+                .model_config
+                .as_ref()
+                .is_some_and(|model| {
+                    !model.file.contains("://")
+                        && (model.file.starts_with("~/") || model.file.starts_with("~\\"))
+                        && matches!(
+                            model.format.as_str(),
+                            "json_merge" | "jsonc_merge" | "toml_section" | "yaml_section"
+                        )
+                }))
+}
+
+/// Apply profile configuration only; this never installs software. Callers obtain
+/// write confirmation and any application-level backup before invoking this API.
+/// The configuration adapter also retains its existing per-file backup/rollback.
+pub fn configure_agent(
+    agent: &AgentDefinition,
+    source_dir: &std::path::Path,
+) -> crate::Result<InstallOutcome> {
+    configure_agent_with(agent, source_dir, crate::config::inject_for_agent)
+}
+
+fn configure_agent_with(
+    agent: &AgentDefinition,
+    source_dir: &std::path::Path,
+    apply: impl FnOnce(&AgentDefinition, &std::path::Path) -> crate::Result<crate::config::InjectReport>,
+) -> crate::Result<InstallOutcome> {
+    if !can_configure(agent) {
+        return Err(crate::Error::InjectFailed(format!(
+            "{} has no supported profile configuration adapter",
+            agent.name
+        )));
+    }
+    let probe = probe_installation(agent);
+    if probe.status != InstallationStatus::Installed {
+        return Err(crate::Error::InjectFailed(format!(
+            "Cannot configure {} without successful installation verification: {}",
+            agent.name,
+            probe
+                .message
+                .as_deref()
+                .unwrap_or("Installation was not verified")
+        )));
+    }
+    let report = apply(agent, source_dir)?;
     let warnings = [
         ("Personalization", report.personalization),
         ("Model configuration", report.model_config),
@@ -146,24 +219,193 @@ pub fn install_agent_with_inject(
     Ok(InstallOutcome { warnings })
 }
 
-/// 卸载 Agent：执行 uninstall_cmd
-pub fn uninstall_agent(_agent: &AgentDefinition) -> crate::Result<()> {
-    let cmd = _agent
-        .install
-        .uninstall_cmd
-        .as_deref()
-        .ok_or_else(|| crate::Error::InstallFailed(format!("{} 缺少卸载命令", _agent.name)))?;
-    run_shell(cmd)
-        .map_err(|e| crate::Error::InstallFailed(format!("卸载 {} 失败: {}", _agent.name, e)))?;
-    Ok(())
+/// Registry installation methods describe available recipes, not the origin of
+/// an existing installation. Until provenance is recorded, removal fails closed.
+pub fn uninstall_block_reason(_agent: &AgentDefinition) -> Option<&'static str> {
+    Some("安装来源未确认，暂不支持自动卸载；请使用原安装方式手动卸载。")
 }
 
-/// 验证 Agent 是否安装成功：执行 verify_cmd，3 秒超时
-pub fn verify_installation(_agent: &AgentDefinition) -> crate::Result<bool> {
-    let Some(verify_cmd) = _agent.install.verify_cmd.clone() else {
-        return Ok(false);
+pub fn can_uninstall(agent: &AgentDefinition) -> bool {
+    uninstall_block_reason(agent).is_none()
+}
+
+/// Never execute an uninstall recipe without recorded installation provenance.
+pub fn uninstall_agent(agent: &AgentDefinition) -> crate::Result<()> {
+    Err(crate::Error::InstallFailed(
+        uninstall_block_reason(agent)
+            .unwrap_or("Automatic uninstall is not implemented")
+            .into(),
+    ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstallationStatus {
+    Installed,
+    /// A known executable was not found in this process's command search path.
+    /// This is not proof that the software is absent from the machine.
+    NotDetected,
+    Error,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct InstallationProbe {
+    pub status: InstallationStatus,
+    pub message: Option<String>,
+}
+
+/// Verify installation using a bounded registry command, preserving uncertainty.
+pub fn probe_installation(agent: &AgentDefinition) -> InstallationProbe {
+    probe_installation_with(agent, executable_on_path, |command| {
+        run_shell_with_timeout(command, Duration::from_secs(3))
+    })
+}
+
+fn probe_installation_with(
+    agent: &AgentDefinition,
+    resolve: impl FnOnce(&str) -> std::io::Result<bool>,
+    run: impl FnOnce(&str) -> std::io::Result<()>,
+) -> InstallationProbe {
+    let Some(command) = agent
+        .install
+        .verify_cmd
+        .as_deref()
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
+    else {
+        return InstallationProbe {
+            status: InstallationStatus::Unsupported,
+            message: Some("No installation verification command is available".into()),
+        };
     };
-    Ok(run_shell_with_timeout(&verify_cmd, Duration::from_secs(3)).is_ok())
+    // Deliberately recognize only these exact bundled recipes. Do not infer an
+    // executable by splitting arbitrary shell syntax or interpreting exit codes.
+    let executable = match command {
+        "opencode --version" => Some("opencode"),
+        "claude --version" => Some("claude"),
+        "codex --version" => Some("codex"),
+        "hermes --version" => Some("hermes"),
+        "gemini --version" => Some("gemini"),
+        "pi --version" => Some("pi"),
+        _ => None,
+    };
+    if let Some(executable) = executable {
+        match resolve(executable) {
+            Ok(false) => {
+                return InstallationProbe {
+                    status: InstallationStatus::NotDetected,
+                    message: Some(format!(
+                        "{executable} was not found on this process's command search path; it may be installed elsewhere"
+                    )),
+                };
+            }
+            Err(error) => {
+                return InstallationProbe {
+                    status: InstallationStatus::Error,
+                    message: Some(format!(
+                        "Cannot inspect the executable search path: {error}"
+                    )),
+                };
+            }
+            Ok(true) => {}
+        }
+    }
+    match run(command) {
+        Ok(()) => InstallationProbe {
+            status: InstallationStatus::Installed,
+            message: None,
+        },
+        Err(error) => InstallationProbe {
+            status: InstallationStatus::Error,
+            message: Some(format!("Installation verification failed: {error}")),
+        },
+    }
+}
+
+fn executable_on_path(executable: &str) -> std::io::Result<bool> {
+    let path =
+        std::env::var_os("PATH").ok_or_else(|| std::io::Error::other("PATH is not available"))?;
+    let directories = std::env::split_paths(&path);
+    #[cfg(not(windows))]
+    {
+        executable_in_paths(executable, directories, &[String::new()])
+    }
+    #[cfg(windows)]
+    {
+        // cmd.exe also searches the working directory and uses PATHEXT. If its
+        // search rules cannot be determined, report an error instead of absence.
+        let extensions = std::env::var("PATHEXT")
+            .map_err(|_| std::io::Error::other("PATHEXT is not available"))?;
+        let mut suffixes = vec![String::new()];
+        for extension in extensions.split(';') {
+            if !extension.starts_with('.')
+                || extension.len() < 2
+                || !extension[1..].bytes().all(|b| b.is_ascii_alphanumeric())
+            {
+                return Err(std::io::Error::other("PATHEXT cannot be resolved reliably"));
+            }
+            suffixes.push(extension.to_string());
+        }
+        executable_in_paths(
+            executable,
+            std::iter::once(std::env::current_dir()?).chain(directories),
+            &suffixes,
+        )
+    }
+}
+
+fn executable_in_paths(
+    executable: &str,
+    directories: impl IntoIterator<Item = std::path::PathBuf>,
+    suffixes: &[String],
+) -> std::io::Result<bool> {
+    let mut failure = None;
+    for directory in directories {
+        for suffix in suffixes {
+            let path = directory.join(format!("{executable}{suffix}"));
+            // A dangling link, permission failure or non-executable candidate is
+            // an inspection error, not reliable evidence of an absent program.
+            match std::fs::symlink_metadata(&path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    failure = Some(error);
+                    continue;
+                }
+                Ok(_) => {}
+            }
+            match std::fs::metadata(&path) {
+                Ok(metadata) if metadata.is_file() => {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        if metadata.permissions().mode() & 0o111 == 0 {
+                            failure = Some(std::io::Error::new(
+                                std::io::ErrorKind::PermissionDenied,
+                                "Candidate exists but is not executable",
+                            ));
+                            continue;
+                        }
+                    }
+                    return Ok(true);
+                }
+                Ok(_) => {
+                    failure = Some(std::io::Error::other("Executable candidate is not a file"))
+                }
+                Err(error) => failure = Some(error),
+            }
+        }
+    }
+    match failure {
+        Some(error) => Err(error),
+        None => Ok(false),
+    }
+}
+
+/// Compatibility wrapper. New callers should use the structured probe to avoid
+/// presenting errors or unsupported verification as a missing installation.
+pub fn verify_installation(agent: &AgentDefinition) -> crate::Result<bool> {
+    Ok(probe_installation(agent).status == InstallationStatus::Installed)
 }
 
 /// Check local authentication evidence without reading or exposing credentials.
@@ -234,11 +476,314 @@ mod tests {
     }
 
     #[test]
-    fn install_verify_uninstall_roundtrip_with_echo() {
+    fn install_and_verify_with_echo() {
         let agent = fake_agent();
-        install_agent(&agent).expect("echo 安装命令应成功");
+        let mut probes = [
+            InstallationStatus::NotDetected,
+            InstallationStatus::Installed,
+        ]
+        .into_iter();
+        install_agent_with(
+            &agent,
+            |_| observation(probes.next().expect("preflight and verification only")),
+            run_shell,
+        )
+        .expect("echo 安装命令应成功");
         assert!(verify_installation(&agent).unwrap());
-        uninstall_agent(&agent).expect("echo 卸载命令应成功");
+        assert!(!can_uninstall(&agent));
+        assert!(uninstall_agent(&agent).is_err());
+    }
+
+    fn observation(status: InstallationStatus) -> InstallationProbe {
+        InstallationProbe {
+            status,
+            message: None,
+        }
+    }
+
+    #[test]
+    fn installation_status_wire_values_are_explicit() {
+        for (status, value) in [
+            (InstallationStatus::Installed, "installed"),
+            (InstallationStatus::NotDetected, "not_detected"),
+            (InstallationStatus::Error, "error"),
+            (InstallationStatus::Unsupported, "unsupported"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(observation(status)).unwrap()["status"],
+                value
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_probe_never_runs_a_command_or_resolves_path() {
+        for command in [None, Some(""), Some("  ")] {
+            let mut agent = fake_agent();
+            agent.install.verify_cmd = command.map(str::to_owned);
+            let probe = probe_installation_with(
+                &agent,
+                |_| panic!("No executable to resolve"),
+                |_| panic!("No verification to run"),
+            );
+            assert_eq!(probe.status, InstallationStatus::Unsupported);
+            assert!(probe.message.is_some());
+        }
+    }
+
+    #[test]
+    fn only_known_simple_missing_executables_are_not_detected() {
+        let mut agent = fake_agent();
+        agent.install.verify_cmd = Some("codex --version".into());
+        let probe = probe_installation_with(
+            &agent,
+            |name| {
+                assert_eq!(name, "codex");
+                Ok(false)
+            },
+            |_| panic!("A reliably missing executable must not be run"),
+        );
+        assert_eq!(probe.status, InstallationStatus::NotDetected);
+        assert!(probe.message.unwrap().contains("installed elsewhere"));
+        for command in [
+            "codex --version || exit 127",
+            "unknown-agent --version",
+            "'codex' --version",
+        ] {
+            agent.install.verify_cmd = Some(command.into());
+            let probe = probe_installation_with(
+                &agent,
+                |_| panic!("Do not parse shell programs"),
+                |_| Err(std::io::Error::other("Command exited 127")),
+            );
+            assert_eq!(probe.status, InstallationStatus::Error);
+        }
+    }
+
+    #[test]
+    fn probe_errors_are_not_reported_as_absence() {
+        let mut agent = fake_agent();
+        agent.install.verify_cmd = Some("codex --version".into());
+        assert_eq!(
+            probe_installation_with(&agent, |_| Ok(true), |_| Ok(())).status,
+            InstallationStatus::Installed
+        );
+        for kind in [
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::TimedOut,
+            std::io::ErrorKind::NotFound,
+            std::io::ErrorKind::Other,
+        ] {
+            let execution = probe_installation_with(
+                &agent,
+                |_| Ok(true),
+                |_| Err(std::io::Error::new(kind, "probe failure")),
+            );
+            assert_eq!(execution.status, InstallationStatus::Error);
+            let resolution = probe_installation_with(
+                &agent,
+                |_| Err(std::io::Error::new(kind, "search failure")),
+                |_| panic!("Do not run after failed resolution"),
+            );
+            assert_eq!(resolution.status, InstallationStatus::Error);
+        }
+        agent.install.verify_cmd = Some("exit 7".into());
+        assert_eq!(probe_installation(&agent).status, InstallationStatus::Error);
+    }
+
+    #[test]
+    fn path_lookup_distinguishes_absence_from_unusable_candidates() {
+        let directory =
+            std::env::temp_dir().join(format!("agentdeck-path-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let suffixes = [String::new()];
+        assert!(!executable_in_paths("codex", [directory.clone()], &suffixes).unwrap());
+        let candidate = directory.join("codex");
+        std::fs::create_dir(&candidate).unwrap();
+        assert!(executable_in_paths("codex", [directory.clone()], &suffixes).is_err());
+        std::fs::remove_dir(&candidate).unwrap();
+        std::fs::write(&candidate, "test executable; never run").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert_eq!(
+                executable_in_paths("codex", [directory.clone()], &suffixes)
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::PermissionDenied
+            );
+            std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        assert!(executable_in_paths("codex", [directory.clone()], &suffixes).unwrap());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn install_rejects_existing_unknown_and_unsupported_before_running() {
+        for status in [
+            InstallationStatus::Installed,
+            InstallationStatus::Error,
+            InstallationStatus::Unsupported,
+        ] {
+            assert!(
+                install_agent_with(
+                    &fake_agent(),
+                    |_| observation(status),
+                    |_| panic!("Installer must remain blocked"),
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn public_install_entry_point_blocks_existing_and_unverified_software() {
+        let directory =
+            std::env::temp_dir().join(format!("agentdeck-install-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let marker = directory.join("installed.txt");
+        let mut agent = fake_agent();
+        agent.install.command = Some(format!("echo installed > \"{}\"", marker.display()));
+        for command in [Some("echo verified"), Some("exit 7"), None] {
+            agent.install.verify_cmd = command.map(str::to_owned);
+            assert!(install_agent(&agent).is_err());
+            assert!(!marker.exists(), "Blocked install executed its command");
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn install_requires_successful_post_install_verification() {
+        for status in [
+            InstallationStatus::NotDetected,
+            InstallationStatus::Error,
+            InstallationStatus::Unsupported,
+        ] {
+            let mut probes = [InstallationStatus::NotDetected, status].into_iter();
+            assert!(
+                install_agent_with(
+                    &fake_agent(),
+                    |_| observation(probes.next().unwrap()),
+                    |_| Ok(()),
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn uninstall_unknown_provenance_never_executes_registry_command() {
+        let directory =
+            std::env::temp_dir().join(format!("agentdeck-uninstall-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let marker = directory.join("removed.txt");
+        let mut agent = fake_agent();
+        agent.install.method = InstallMethod::Npm;
+        agent.install.uninstall_cmd = Some(format!("echo removed > \"{}\"", marker.display()));
+        assert!(!can_uninstall(&agent));
+        assert!(
+            uninstall_agent(&agent)
+                .unwrap_err()
+                .to_string()
+                .contains("安装来源未确认")
+        );
+        assert!(
+            !marker.exists(),
+            "Registry method is not installation provenance"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn configurable_agent() -> AgentDefinition {
+        let mut agent = fake_agent();
+        agent.config_inject.personalization = Some(crate::registry::PersonalizationInject {
+            template: "synthetic".into(),
+            target: "~/.synthetic-agent/AGENTS.md".into(),
+        });
+        agent
+    }
+
+    #[test]
+    fn configuration_capability_matches_supported_adapters() {
+        assert!(!can_configure(&fake_agent()));
+        assert!(can_configure(&configurable_agent()));
+        let mut agent = fake_agent();
+        agent.config_inject.model_config = Some(crate::registry::ModelConfigInject {
+            file: "~/.synthetic-agent/config.json".into(),
+            format: "json_merge".into(),
+        });
+        assert!(!can_configure(&agent));
+        for id in ["codex", "opencode"] {
+            agent.id = id.into();
+            for format in ["json_merge", "jsonc_merge", "toml_section", "yaml_section"] {
+                for file in [
+                    "~/.synthetic-agent/config.json",
+                    "~\\.synthetic-agent\\config.json",
+                ] {
+                    agent.config_inject.model_config = Some(crate::registry::ModelConfigInject {
+                        file: file.into(),
+                        format: format.into(),
+                    });
+                    assert!(can_configure(&agent));
+                }
+            }
+            for (file, format) in [
+                ("unsupported://configuration", "json_merge"),
+                ("relative/config.json", "json_merge"),
+                ("/absolute/config.json", "json_merge"),
+                ("~/.synthetic-agent/config.json", "unknown_format"),
+            ] {
+                agent.config_inject.model_config = Some(crate::registry::ModelConfigInject {
+                    file: file.into(),
+                    format: format.into(),
+                });
+                assert!(!can_configure(&agent));
+            }
+        }
+        agent.config_inject.model_config = None;
+        agent.config_inject.personalization = Some(crate::registry::PersonalizationInject {
+            template: "synthetic".into(),
+            target: "unsupported://instructions".into(),
+        });
+        assert!(!can_configure(&agent));
+    }
+
+    #[test]
+    fn configuration_without_adapter_does_not_even_probe() {
+        let directory =
+            std::env::temp_dir().join(format!("agentdeck-configure-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let marker = directory.join("probed.txt");
+        let mut agent = fake_agent();
+        agent.install.verify_cmd = Some(format!("echo probed > \"{}\"", marker.display()));
+        let error = configure_agent(&agent, &directory).unwrap_err();
+        assert!(error.to_string().contains("no supported profile"));
+        assert!(!marker.exists(), "Unsupported configuration ran a probe");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn configuration_never_installs_and_requires_verified_installation() {
+        let mut agent = configurable_agent();
+        agent.install.command = Some("exit 97".into());
+        let result = configure_agent_with(&agent, std::path::Path::new("."), |agent, _| {
+            Ok(crate::config::InjectReport {
+                agent_id: agent.id.clone(),
+                personalization: Some(crate::config::InjectStatus::Ok),
+                model_config: None,
+            })
+        });
+        assert!(result.unwrap().warnings.is_empty());
+        for command in [None, Some("exit 7")] {
+            agent.install.verify_cmd = command.map(str::to_owned);
+            assert!(
+                configure_agent_with(&agent, std::path::Path::new("."), |_, _| {
+                    panic!("Unverified installation must not apply configuration")
+                })
+                .is_err()
+            );
+        }
     }
 
     #[test]
@@ -371,13 +916,18 @@ mod tests {
     }
 
     #[test]
-    fn successful_install_returns_skipped_configuration_warnings() {
-        let mut agent = fake_agent();
-        agent.config_inject.personalization = Some(crate::registry::PersonalizationInject {
-            template: "fake".into(),
-            target: "unsupported://instructions".into(),
-        });
-        let outcome = install_agent_with_inject(&agent, std::path::Path::new(".")).unwrap();
+    fn configuration_returns_skipped_configuration_warnings() {
+        let agent = configurable_agent();
+        let outcome = configure_agent_with(&agent, std::path::Path::new("."), |agent, _| {
+            Ok(crate::config::InjectReport {
+                agent_id: agent.id.clone(),
+                personalization: Some(crate::config::InjectStatus::Skipped(
+                    "Missing template".into(),
+                )),
+                model_config: None,
+            })
+        })
+        .unwrap();
         assert_eq!(outcome.warnings.len(), 1);
         assert!(outcome.warnings[0].starts_with("Personalization:"));
     }
@@ -410,28 +960,18 @@ mod tests {
         assert!(hermes.config_inject.model_config.is_none());
     }
 
-    fn npm_has_opencode() -> bool {
-        run_shell("npm ls -g --depth=0 opencode-ai").is_ok()
-    }
-
-    /// 真实环境验证：npm 全局安装 opencode-ai → 验证 → 卸载（需要手动运行）
+    /// Read-only opt-in check. No installer or automatic cleanup is run because
+    /// installation provenance is not yet recorded by AgentDeck.
     #[test]
-    #[ignore = "真实环境验证：执行 npm install/uninstall -g opencode-ai"]
-    fn real_install_roundtrip() {
+    #[ignore = "Requires a pre-existing opencode installation on PATH; read-only"]
+    fn real_existing_opencode_verification() {
         let doc =
             crate::registry::parse_registry(include_str!("../../../../agents/registry-v3.json"))
                 .unwrap();
         let opencode = doc.agents.get("opencode").expect("注册表应有 opencode");
-
-        assert!(
-            !npm_has_opencode(),
-            "前置条件：npm 全局不应已有 opencode-ai"
+        assert_eq!(
+            probe_installation(opencode).status,
+            InstallationStatus::Installed
         );
-        install_agent(opencode).expect("真实安装应成功");
-        assert!(verify_installation(opencode).unwrap());
-        assert!(npm_has_opencode());
-
-        uninstall_agent(opencode).expect("真实卸载应成功");
-        assert!(!npm_has_opencode(), "卸载后 npm 全局不应再有 opencode-ai");
     }
 }

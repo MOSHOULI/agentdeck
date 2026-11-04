@@ -3,34 +3,26 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { AgentSquare } from './AgentSquare';
 import { useAgentStore } from '../stores/agentStore';
 import type { AgentInfo } from '../bridge';
+import { notDetectedAgent as base, installedAgent, agentCatalog as agents } from '../test-fixtures/agents';
 
 vi.mock('../bridge', () => ({
   runtimeMode: vi.fn(() => 'native'),
-  getAgents: vi.fn(), installAgent: vi.fn(), uninstallAgent: vi.fn(),
+  getAgents: vi.fn(), installAgent: vi.fn(), configureAgent: vi.fn(), uninstallAgent: vi.fn(),
   verifyAgentAuth: vi.fn(), collectMemory: vi.fn(), searchMemory: vi.fn(),
   injectMemory: vi.fn(), toggleAutoInject: vi.fn(),
   listApiKeys: vi.fn(), listBackups: vi.fn(), getMcpServers: vi.fn(), checkUpdates: vi.fn(),
 }));
 import * as bridge from '../bridge';
 
-const base: AgentInfo = {
-  id: 'opencode', name: 'OpenCode', installed: false,
-  canInstall: true, canUninstall: true, canVerifyInstall: true,
-  authVerified: false, source: 'open', uiType: 'all', stars: 194000,
-  popular: true, description: '开源 AI 编程代理', icon: 'opencode', category: 'ai-coding',
-};
-const agents: AgentInfo[] = [
-  base,
-  { ...base, id: 'cli-tool', name: 'CLI Tool', installed: true, version: '1.0.0', uiType: 'cli', stars: 100, popular: false, description: '终端工具' },
-  { ...base, id: 'manual', name: 'Manual Agent', uiType: 'vscode-extension', canInstall: false, canVerifyInstall: false, stars: 200, popular: false, description: '手动管理扩展' },
-];
-
 describe('AgentSquare', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(bridge.installAgent).mockReset().mockResolvedValue({ warnings: [] });
+    vi.mocked(bridge.configureAgent).mockReset().mockResolvedValue({ warnings: [] });
     vi.mocked(bridge.getAgents).mockReset().mockResolvedValue(agents);
     vi.mocked(bridge.runtimeMode).mockReturnValue('native');
-    useAgentStore.setState({ agents: [], loading: false, error: null, notice: null, selectedAgentId: null, memories: {} });
+    useAgentStore.setState({ agents: [], loading: false, error: null, notice: null, refreshError: null, dataStale: true, selectedAgentId: null, memories: {} });
   });
 
   it('renders the heading, three filters, search and observed rows only', async () => {
@@ -120,15 +112,98 @@ describe('AgentSquare', () => {
     expect(bridge.getAgents).toHaveBeenCalledTimes(2);
   });
 
-  it('retains observed data after refresh failure and dismisses the error', async () => {
+  it('keeps old data visible but locked after repeated failed refreshes, then recovers', async () => {
     render(<AgentSquare />);
     await screen.findByRole('article', { name: 'OpenCode' });
-    vi.mocked(bridge.getAgents).mockRejectedValueOnce(new Error('offline'));
-    fireEvent.click(screen.getByRole('button', { name: '刷新列表' }));
+    vi.mocked(bridge.getAgents).mockRejectedValueOnce(new Error('offline')).mockRejectedValueOnce(new Error('still offline'));
+    const install = screen.getByRole('button', { name: '安装 OpenCode' });
+    const configure = screen.getByRole('button', { name: '应用默认配置 CLI Tool' });
+    const refresh = screen.getByRole('button', { name: '刷新列表' });
+    fireEvent.click(refresh);
     await screen.findByRole('alert');
     expect(screen.getAllByRole('article')).toHaveLength(3);
-    fireEvent.click(screen.getByRole('button', { name: '关闭错误提示' }));
+    expect(install).toBeDisabled();
+    expect(configure).toBeDisabled();
+    expect(screen.getByText(/显示上次检测结果，当前状态待刷新/)).toBeInTheDocument();
+    fireEvent.click(refresh);
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('still offline'));
+    expect(install).toBeDisabled();
+    expect(configure).toBeDisabled();
+    fireEvent.click(install);
+    fireEvent.click(configure);
+    expect(bridge.installAgent).not.toHaveBeenCalled();
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+    fireEvent.click(refresh);
+    await waitFor(() => expect(install).toBeEnabled());
+    expect(configure).toBeEnabled();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/显示上次检测结果，当前状态待刷新/)).not.toBeInTheDocument();
+  });
+
+  it('reports installation success and refresh failure separately without offering a blind retry', async () => {
+    render(<AgentSquare />);
+    await screen.findByRole('article', { name: 'OpenCode' });
+    vi.mocked(bridge.getAgents).mockRejectedValueOnce(new Error('refresh offline'));
+    fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('软件安装操作已完成，未应用配置'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('状态刷新失败');
+    expect(screen.queryByText(/安装失败/)).not.toBeInTheDocument();
+    expect(screen.queryByText('无法完成操作')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '安装 OpenCode' })).toBeDisabled();
+    expect(bridge.installAgent).toHaveBeenCalledTimes(1);
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+    expect(bridge.getAgents).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the global install lock when filtering unmounts and remounts its card', async () => {
+    let finish!: (outcome: bridge.InstallOutcome) => void;
+    vi.mocked(bridge.installAgent).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    render(<AgentSquare />);
+    await screen.findByRole('article', { name: 'OpenCode' });
+    fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    fireEvent.click(screen.getByRole('button', { name: '已安装' }));
+    expect(screen.queryByRole('article', { name: 'OpenCode' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '全部' }));
+    const install = screen.getByRole('button', { name: '安装 OpenCode' });
+    expect(install).toBeDisabled();
+    fireEvent.click(install);
+    expect(bridge.installAgent).toHaveBeenCalledTimes(1);
+    expect(window.confirm).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ warnings: [] }));
+    await waitFor(() => expect(install).toBeEnabled());
+  });
+
+  it('allows configuration only after a separate confirmation, including after installation', async () => {
+    render(<AgentSquare />);
+    await screen.findByRole('article', { name: 'OpenCode' });
+    vi.mocked(bridge.getAgents).mockResolvedValue([installedAgent]);
+    fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    const configure = await screen.findByRole('button', { name: '应用默认配置 OpenCode' });
+    await waitFor(() => expect(configure).toBeEnabled());
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+    vi.mocked(window.confirm).mockReturnValue(false);
+    fireEvent.click(configure);
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+    vi.mocked(window.confirm).mockReturnValue(true);
+    fireEvent.click(configure);
+    await waitFor(() => expect(bridge.configureAgent).toHaveBeenCalledWith('opencode'));
+    await waitFor(() => expect(configure).toBeEnabled());
+    expect(bridge.installAgent).toHaveBeenCalledTimes(1);
+    expect(bridge.uninstallAgent).not.toHaveBeenCalled();
+  });
+
+  it('dismissing an operation error never makes stale state actionable', async () => {
+    render(<AgentSquare />);
+    await screen.findByRole('article', { name: 'OpenCode' });
+    vi.mocked(bridge.installAgent).mockRejectedValueOnce(new Error('installer failed'));
+    vi.mocked(bridge.getAgents).mockRejectedValueOnce(new Error('refresh failed'));
+    fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    await screen.findByRole('button', { name: '关闭错误提示' });
+    await waitFor(() => expect(useAgentStore.getState().loading).toBe(false));
+    expect(screen.getAllByRole('alert')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: '关闭错误提示' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('状态刷新失败');
+    expect(screen.getByRole('button', { name: '安装 OpenCode' })).toBeDisabled();
   });
 
   it('shows initial loading separately and prevents repeated refresh requests', async () => {
@@ -147,10 +222,10 @@ describe('AgentSquare', () => {
     expect(refresh).toBeEnabled();
   });
 
-  it('preserves a real partial-configuration notice', async () => {
+  it('preserves a real partial-configuration notice from the separate configuration operation', async () => {
     render(<AgentSquare />);
     await screen.findByRole('article', { name: 'OpenCode' });
-    act(() => useAgentStore.setState({ notice: '软件已安装；部分配置未应用：缺少适配器' }));
+    act(() => useAgentStore.setState({ notice: '默认 profile 配置操作已完成。部分配置未应用：缺少适配器' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('部分配置未应用'));
     expect(screen.queryByText('全部配置成功')).not.toBeInTheDocument();
   });

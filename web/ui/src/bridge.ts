@@ -26,6 +26,12 @@ export interface AgentInfo {
   id: string;
   name: string;
   installed: boolean;
+  // Optional for legacy backends; missing values must never authorize a mutation.
+  installationStatus?: 'installed' | 'not_detected' | 'error' | 'unsupported';
+  installationMessage?: string | null;
+  installSource?: 'unknown';
+  uninstallHelp?: string | null;
+  canConfigure?: boolean;
   canInstall?: boolean;
   canVerifyInstall?: boolean;
   canUninstall?: boolean;
@@ -47,6 +53,14 @@ const MOCK_AGENTS: AgentInfo[] = [
     id: 'opencode',
     name: 'OpenCode',
     installed: true,
+    installationStatus: 'installed',
+    installationMessage: null,
+    installSource: 'unknown',
+    canInstall: true,
+    canVerifyInstall: true,
+    canUninstall: false,
+    canConfigure: true,
+    uninstallHelp: '示例数据：安装来源未验证，请使用原安装方式卸载。',
     version: '1.18.15',
     authVerified: true,
     source: 'open',
@@ -61,6 +75,14 @@ const MOCK_AGENTS: AgentInfo[] = [
     id: 'claude-code',
     name: 'Claude Code',
     installed: false,
+    installationStatus: 'not_detected',
+    installationMessage: '示例数据：PATH 中未检测到命令。',
+    installSource: 'unknown',
+    canInstall: true,
+    canVerifyInstall: true,
+    canUninstall: false,
+    canConfigure: true,
+    uninstallHelp: '示例数据：安装来源未验证，请使用原安装方式卸载。',
     authVerified: false,
     source: 'closed',
     uiType: 'all',
@@ -74,6 +96,14 @@ const MOCK_AGENTS: AgentInfo[] = [
     id: 'codex',
     name: 'OpenAI Codex',
     installed: true,
+    installationStatus: 'installed',
+    installationMessage: null,
+    installSource: 'unknown',
+    canInstall: true,
+    canVerifyInstall: true,
+    canUninstall: false,
+    canConfigure: true,
+    uninstallHelp: '示例数据：安装来源未验证，请使用原安装方式卸载。',
     version: '1.0.0',
     authVerified: true,
     source: 'open',
@@ -121,10 +151,16 @@ export async function getAgents(): Promise<AgentInfo[]> {
 
 export interface InstallOutcome { warnings: string[]; }
 
-/** 安装指定 agent，保留配置跳过警告 */
+/** 仅安装指定 agent 软件，不应用 profile 或修改模型配置 */
 export async function installAgent(id: string): Promise<InstallOutcome> {
   useDemo(true);
   return invoke<InstallOutcome>('install_agent', { id });
+}
+
+/** 单独应用默认 profile 支持的配置（调用方必须先明确确认） */
+export async function configureAgent(id: string): Promise<InstallOutcome> {
+  useDemo(true);
+  return invoke<InstallOutcome>('configure_agent', { id });
 }
 
 /** 卸载指定 agent */

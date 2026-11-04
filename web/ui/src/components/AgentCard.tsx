@@ -6,9 +6,11 @@ interface AgentCardProps {
   agent: AgentInfo;
   onInstall: (id: string) => void | Promise<void>;
   onUninstall: (id: string) => void | Promise<void>;
+  onConfigure: (id: string) => void | Promise<void>;
   onSelect: (id: string) => void;
   selected: boolean;
   busy?: boolean;
+  dataStale?: boolean;
 }
 
 function getUiTypeLabel(uiType: string): string {
@@ -42,13 +44,14 @@ function officialHomepage(value?: string | null): string | null {
 export const AgentCard: React.FC<AgentCardProps> = ({
   agent,
   onInstall,
-  onUninstall,
+  onConfigure,
   onSelect,
   selected,
   busy = false,
+  dataStale = true,
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const [pending, setPending] = useState(false);
+  const [pending, setPending] = useState<'install' | 'configure' | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
   const operationLock = useRef(false);
   const detailButton = useRef<HTMLButtonElement>(null);
@@ -56,32 +59,44 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   const mode = runtimeMode();
   const readOnly = mode !== 'native';
   const homepage = officialHomepage(agent.homepage);
-  const manual = agent.installed ? agent.canUninstall !== true : agent.canInstall !== true;
-  const installUnknown = !agent.installed && agent.canVerifyInstall !== true;
-  const status = agent.installed ? '已安装' : installUnknown ? '安装状态未知' : '未安装';
+  const installed = agent.installed && agent.installationStatus === 'installed';
+  const notDetected = !agent.installed && agent.installationStatus === 'not_detected';
+  const installUnknown = !installed && !notDetected;
+  const canInstall = notDetected && agent.canInstall === true;
+  const canConfigure = installed && agent.canConfigure === true;
+  // Current sources are all unverified, even if a legacy backend advertises
+  // canUninstall. Never treat PATH detection as proof of ownership.
+  const manual = agent.installed || !canInstall;
+  const status = installed ? '已安装' : notDetected ? 'PATH 未检测到'
+    : agent.installationStatus === 'error' ? '检测出错' : '安装状态未知';
   const manualHelp = agent.installed
-    ? '此 Agent 不支持自动卸载，请使用官方卸载方式。'
-    : agent.installHelp || '此 Agent 暂不支持自动安装，请参阅官方安装说明。';
-  const disabledReason = readOnly
-    ? mode === 'demo' ? '只读演示：请在桌面应用中管理安装。' : '未连接桌面后端，请通过桌面应用管理安装。'
-    : busy || pending ? '请等待当前操作完成。' : manual ? manualHelp : undefined;
+    ? agent.uninstallHelp || '安装来源未验证，无法自动卸载。请使用原安装方式或官方卸载说明。'
+    : installUnknown
+      ? [agent.installationMessage || '无法确认本地安装状态，自动安装已暂停。请刷新列表或查看官方说明。', agent.installHelp].filter(Boolean).join(' ')
+      : agent.installHelp || '此 Agent 暂不支持自动安装，请参阅官方安装说明。';
+  const blockedReason = readOnly
+    ? mode === 'demo' ? '只读演示：请在桌面应用中管理安装与配置。' : '未连接桌面后端，请通过桌面应用管理安装与配置。'
+    : busy || pending ? '请等待当前操作完成。'
+      : dataStale ? '当前状态待刷新，请成功刷新列表后再操作。' : undefined;
+  const disabledReason = blockedReason || (manual ? manualHelp : undefined);
 
-  const runOperation = async () => {
-    if (operationLock.current || busy || readOnly || manual) return;
+  const runOperation = async (operation: 'install' | 'configure') => {
+    if (operationLock.current || busy || readOnly || dataStale
+      || (operation === 'install' ? !canInstall : !canConfigure)) return;
     operationLock.current = true;
-    const question = agent.installed
-      ? `确定卸载 ${agent.name} 吗？`
-      : `确定安装 ${agent.name} 吗？安装后会应用默认 profile，更新个性化指令与支持的模型配置（写前备份）。`;
+    const question = operation === 'configure'
+      ? `确定为 ${agent.name} 应用默认 profile 吗？将更新个性化指令与支持的模型配置，写入前会备份相关文件。`
+      : `确定安装 ${agent.name} 吗？此操作仅安装软件，不应用默认 profile 或修改模型配置。`;
     try {
       if (!window.confirm(question)) return;
-      setPending(true);
+      setPending(operation);
       setOperationError(null);
-      await (agent.installed ? onUninstall(agent.id) : onInstall(agent.id));
+      await (operation === 'configure' ? onConfigure(agent.id) : onInstall(agent.id));
     } catch (error) {
       setOperationError(`操作未完成：${error instanceof Error ? error.message : String(error)}。请刷新列表确认当前状态。`);
     } finally {
       operationLock.current = false;
-      setPending(false);
+      setPending(null);
     }
   };
 
@@ -126,11 +141,11 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         </button>
 
         <div className="agent-state">
-          <span className={`status-badge agent-status${agent.installed ? ' agent-status-installed' : installUnknown ? ' agent-status-unknown' : ''}`}>
-            <Icon name={agent.installed ? 'check' : installUnknown ? 'info' : 'download'} size={13} />
+          <span className={`status-badge agent-status${installed ? ' agent-status-installed' : installUnknown ? ' agent-status-unknown' : ''}`}>
+            <Icon name={installed ? 'check' : installUnknown ? 'info' : 'download'} size={13} />
             {status}
           </span>
-          {agent.installed && <span className="agent-version">{agent.version ? `v${agent.version.replace(/^v/i, '')}` : '版本未知'}</span>}
+          {installed && <span className="agent-version">{agent.version ? `v${agent.version.replace(/^v/i, '')}` : '版本未知'}</span>}
         </div>
 
         <div className="agent-row-actions">
@@ -148,14 +163,22 @@ export const AgentCard: React.FC<AgentCardProps> = ({
           <button
             type="button"
             className={`button agent-operation ${agent.installed ? 'button-danger' : 'button-primary'}`}
-            disabled={busy || pending || readOnly || manual}
+            disabled={Boolean(blockedReason) || manual}
             title={disabledReason}
             aria-label={`${agent.installed ? '卸载' : '安装'} ${agent.name}`}
-            onClick={() => { void runOperation(); }}
+            onClick={agent.installed ? undefined : () => { void runOperation('install'); }}
           >
             <Icon name={agent.installed ? 'trash' : 'download'} size={14} />
-            {pending ? '处理中…' : manual ? agent.installed ? '手动卸载' : '手动安装' : agent.installed ? '卸载' : '安装'}
+            {pending === 'install' ? '安装中…' : agent.installed ? '手动卸载' : installUnknown ? '安装不可用' : manual ? '手动安装' : '安装'}
           </button>
+          {canConfigure && <button
+            type="button"
+            className="button agent-operation"
+            disabled={Boolean(blockedReason)}
+            title={blockedReason || '单独应用默认 profile 的个性化指令与支持的模型配置（写前备份）'}
+            aria-label={`应用默认配置 ${agent.name}`}
+            onClick={() => { void runOperation('configure'); }}
+          >{pending === 'configure' ? '应用中…' : '应用默认配置'}</button>}
         </div>
       </div>
 
@@ -181,8 +204,10 @@ export const AgentCard: React.FC<AgentCardProps> = ({
           <p className="agent-full-description">{agent.description || '暂无描述'}</p>
           <dl className="agent-facts">
             <div><dt>类型</dt><dd>{getUiTypeLabel(agent.uiType)} · {agent.category === 'ai-coding' ? 'AI 编程' : agent.category === 'personal-agent' ? '个人代理' : agent.category || '未提供'}</dd></div>
-            <div><dt>安装状态</dt><dd>{status}{agent.installed && ` · ${agent.version ? `版本 ${agent.version}` : '版本未知'}`}</dd></div>
-            <div><dt>自动管理</dt><dd>安装{capabilityLabel(agent.canInstall)} · 卸载{capabilityLabel(agent.canUninstall)}</dd></div>
+            <div><dt>安装状态</dt><dd>{status}{installed && ` · ${agent.version ? `版本 ${agent.version}` : '版本未知'}`}</dd></div>
+            <div><dt>自动管理</dt><dd>安装{capabilityLabel(agent.canInstall)} · 配置{capabilityLabel(agent.canConfigure)} · 自动卸载不可用（来源未验证）</dd></div>
+            {agent.installationMessage && <div><dt>检测说明</dt><dd>{agent.installationMessage}</dd></div>}
+            <div><dt>安装来源</dt><dd>未验证，自动卸载已停用</dd></div>
             <div><dt>本地认证线索</dt><dd>{agent.authVerified ? '检测到本地认证配置' : '未验证'}</dd></div>
             <div><dt>注册表热度</dt><dd>{agent.stars > 0 ? `${agent.stars.toLocaleString()} stars` : '未提供'}<span className="agent-fact-note">注册表记录，非实时数据</span></dd></div>
             <div><dt>Agent ID</dt><dd>{agent.id}</dd></div>

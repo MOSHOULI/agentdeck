@@ -29,8 +29,9 @@ npm exec --prefix web/ui -- tauri build --bundles nsis --ci -- --locked
 
 桌面界面分为 Agent 管理、记忆管理、MCP 服务、密钥与备份、注册表更新五个工作区。侧栏可折叠，支持浅色、深色或跟随系统；导航不会中断正在执行的操作，顶部与侧栏会保留操作状态。Agent 搜索只筛选当前真实列表，详情中的未知状态不会被替换成成功。
 
-- **Agent 管理**：安装/卸载前确认；不具备自动安装或验证能力的 Agent 显示手动说明或未知状态，不伪报成功。安装命令有超时；配置失败不卸载已有软件。认证状态仅检查本地配置证据，不代表远端凭据仍有效。
-- **个性化与模型配置**：默认模板首次使用时初始化，保留用户已有模板。个性化使用受管理的 Markdown 区块，保留区块外原文；格式不兼容的目标不强行覆盖。配置跳过原因会显示为安装警告。
+- **Agent 管理**：安装前确认，默认只安装软件，不初始化 profile、密钥库或 Git 备份，也不自动应用配置。检测区分已验证、PATH 中未发现、检测失败及无法检测；PATH 未发现不代表整台机器都未安装。已有安装、检测失败或无法检测时，不会隐式重装或升级。操作完成与列表刷新失败分别显示，状态过期时暂停写操作。
+- **安装来源与卸载**：当前没有可核验的安装来源记录，不能把注册表中的 npm 等安装方式当成本机安装归属。因此所有来源未确认的自动卸载均被前后端拒绝，包括本版本新安装的 Agent；请使用原安装方式手动卸载。Agent 软件升级尚未提供，不属于注册表更新。
+- **个性化与模型配置**：通过独立的“应用配置”操作确认后才应用默认 profile，不执行安装器。模板首次配置时初始化，保留用户已有模板。个性化使用受管理的 Markdown 区块，保留区块外原文；格式不兼容的目标不强行覆盖。跳过原因单独显示。当前尚无配置差异预览或本机改动三方对账，应用前请检查模板和现有配置。
 - **记忆**：采集 Codex、Claude Code、OpenCode 的本地会话；搜索、手动选择和自动注入标记分别管理。撤销自动标记会立即刷新导出文件；显式手动选择会保留。导出位置为 `~/.agentdeck/memory/<agent>.md`，**外部 Agent 不保证自动读取此文件**，需将其作为上下文或配置引用。定时采集默认关闭，需明确开启后才每小时读取本地会话；可随时关闭。手动采集保持独立。采集有取消/时间预算和部分失败反馈。
 - **密钥与备份**：vault 使用 AES-256-GCM，主密钥由 Windows DPAPI 保护。列表只显示脱敏值；复制密钥才取明文。Git 快照中的配置备份加密，随机 nonce，旧快照仍可解密。恢复保留主密钥及未管理文件。
 - **MCP**：只修改注册表管理的服务器，保留用户自建服务器；批量变更验证完成后一次写入。HTTP 服务器需要自行启动，AgentDeck 不托管 RAGFlow。
@@ -56,13 +57,15 @@ cargo run --locked -p aisync-cli -- health
 cargo run --locked -p aisync-cli -- agents
 cargo run --locked -p aisync-cli -- deploy --agent codex --action verify
 cargo run --locked -p aisync-cli -- deploy --agent codex --action install --yes
+# 可选的独立配置操作，需要 Git 备份与受保护密钥库支持
+cargo run --locked -p aisync-cli -- deploy --agent codex --action configure --yes
 cargo run --locked -p aisync-cli -- sync --tools codex,claude-code --yes
 cargo run --locked -p aisync-cli -- backup
 cargo run --locked -p aisync-cli -- backups
 cargo run --locked -p aisync-cli -- restore <timestamp> --full --yes
 ```
 
-安装、卸载、同步、恢复需要 `--yes`；不会假装完成。受保护密钥/备份相关命令仅 Windows 可用。
+安装、配置、同步、恢复需要 `--yes`；安装不会隐式写配置。来源未确认的卸载即使传入 `--yes` 也会拒绝执行。受保护密钥/备份相关命令仅 Windows 可用，纯软件安装不依赖该备份流程。
 
 ## 测试与发布
 

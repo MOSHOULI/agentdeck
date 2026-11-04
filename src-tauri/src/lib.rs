@@ -14,6 +14,7 @@ pub fn run() {
             commands::health_check,
             commands::deploy::get_agents,
             commands::deploy::install_agent,
+            commands::deploy::configure_agent,
             commands::deploy::uninstall_agent,
             commands::deploy::verify_agent_auth,
             commands::memory::collect_memory,

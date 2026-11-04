@@ -11,9 +11,10 @@ struct Cli {
     command: Commands,
 }
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum DeployAction {
     Install,
+    Configure,
     Uninstall,
     Verify,
 }
@@ -30,13 +31,13 @@ enum Commands {
         #[arg(long)]
         yes: bool,
     },
-    /// Install, uninstall or verify one registered agent.
+    /// Install software, configure a profile, or verify one registered agent.
     Deploy {
         #[arg(short, long)]
         agent: String,
         #[arg(short = 'x', long, value_enum)]
         action: DeployAction,
-        /// Confirm execution of the registry installation/uninstallation command.
+        /// Confirm the selected software or configuration change.
         #[arg(long)]
         yes: bool,
     },
@@ -96,6 +97,74 @@ fn find_agent(id: &str) -> anyhow::Result<registry::AgentDefinition> {
         .ok_or_else(|| anyhow::anyhow!("Agent 未找到: {id}"))
 }
 
+/// Keep profile preparation separate so pure software installation never needs
+/// a writable profile, configuration backup, or platform-protected vault.
+fn run_deploy_with(
+    definition: &registry::AgentDefinition,
+    action: DeployAction,
+    yes: bool,
+    install: impl FnOnce(&registry::AgentDefinition) -> aisync_core::Result<()>,
+    prepare_profile: impl FnOnce() -> anyhow::Result<PathBuf>,
+) -> anyhow::Result<()> {
+    let agent = &definition.id;
+    if action != DeployAction::Verify {
+        require_confirmation(yes)?;
+    }
+    match action {
+        DeployAction::Verify => {
+            let probe = deploy::probe_installation(definition);
+            println!(
+                "{}: installation={}, local_auth_evidence={}",
+                agent,
+                serde_json::to_string(&probe)?,
+                deploy::check_auth(definition)?
+            );
+            anyhow::ensure!(
+                probe.status == deploy::InstallationStatus::Installed,
+                "Installation was not verified for {agent}: {}",
+                probe
+                    .message
+                    .as_deref()
+                    .unwrap_or("Unknown verification failure")
+            );
+        }
+        DeployAction::Install => {
+            install(definition)?;
+            println!("{agent}: installed; profile configuration was not changed");
+        }
+        DeployAction::Configure => {
+            anyhow::ensure!(
+                deploy::can_configure(definition),
+                "{agent} has no supported profile configuration adapter"
+            );
+            // Check before profile initialization or backup creation. The core
+            // repeats verification immediately before applying configuration.
+            let probe = deploy::probe_installation(definition);
+            anyhow::ensure!(
+                probe.status == deploy::InstallationStatus::Installed,
+                "Cannot configure {agent}: {}",
+                probe
+                    .message
+                    .as_deref()
+                    .unwrap_or("Installation was not verified")
+            );
+            let source = prepare_profile()?;
+            let outcome = deploy::configure_agent(definition, &source)?;
+            println!("{agent}: profile configuration applied");
+            for warning in outcome.warnings {
+                eprintln!("Warning: {warning}");
+            }
+        }
+        DeployAction::Uninstall => {
+            // The core must reject unknown provenance before any external
+            // command or backup creation, even with --yes.
+            deploy::uninstall_agent(definition)?;
+            println!("{agent}: uninstalled");
+        }
+    }
+    Ok(())
+}
+
 fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Agents => {
@@ -152,41 +221,12 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Deploy { agent, action, yes } => {
             let definition = find_agent(&agent)?;
-            match action {
-                DeployAction::Verify => {
-                    let installed = deploy::verify_installation(&definition)?;
-                    println!(
-                        "{}: installed={installed}, local_auth_evidence={}",
-                        agent,
-                        deploy::check_auth(&definition)?
-                    );
-                    anyhow::ensure!(installed, "Agent 未安装或验证失败: {agent}");
-                }
-                DeployAction::Install => {
-                    require_confirmation(yes)?;
-                    anyhow::ensure!(
-                        definition.install.command.is_some(),
-                        "此 Agent 仅支持手动安装"
-                    );
-                    let source = config::profile_source_dir()?;
-                    git::backup(&format!("CLI install {agent}"))?;
-                    let outcome = deploy::install_agent_with_inject(&definition, &source)?;
-                    println!("{agent}: installed");
-                    for warning in outcome.warnings {
-                        eprintln!("Warning: {warning}");
-                    }
-                }
-                DeployAction::Uninstall => {
-                    require_confirmation(yes)?;
-                    anyhow::ensure!(
-                        definition.install.uninstall_cmd.is_some(),
-                        "此 Agent 仅支持手动卸载"
-                    );
-                    git::backup(&format!("CLI uninstall {agent}"))?;
-                    deploy::uninstall_agent(&definition)?;
-                    println!("{agent}: uninstalled");
-                }
-            }
+            run_deploy_with(&definition, action, yes, deploy::install_agent, || {
+                // Profile initialization and encrypted backup belong only to
+                // explicit configuration, never to software installation.
+                git::backup(&format!("CLI configure {agent}"))?;
+                Ok(config::profile_source_dir()?)
+            })?;
         }
         Commands::Backup { reason } => println!("{}", git::backup(&reason)?),
         Commands::Backups => println!("{}", serde_json::to_string_pretty(&git::list_backups()?)?),
@@ -304,6 +344,113 @@ mod tests {
         );
         assert!(Cli::try_parse_from(["aisync", "sync", "--yes"]).is_err());
     }
+    fn fake_agent() -> registry::AgentDefinition {
+        serde_json::from_value(serde_json::json!({
+            "id": "fake", "name": "Fake", "source": "open", "ui_type": "cli",
+            "category": "test", "popular": false, "description": "Test fixture", "icon": "t",
+            "install": { "method": "manual", "command": "exit 97", "verify_cmd": "echo verified" },
+            "auth_type": "none", "config_inject": {}
+        }))
+        .unwrap()
+    }
+
+    fn configurable_agent() -> registry::AgentDefinition {
+        let mut agent = fake_agent();
+        agent.config_inject.personalization = Some(registry::PersonalizationInject {
+            template: "synthetic".into(),
+            target: "~/.synthetic-agent/AGENTS.md".into(),
+        });
+        agent
+    }
+
+    #[test]
+    fn install_and_configure_are_distinct_explicit_actions() {
+        for (name, expected) in [
+            ("install", DeployAction::Install),
+            ("configure", DeployAction::Configure),
+        ] {
+            let cli =
+                Cli::try_parse_from(["aisync", "deploy", "--agent", "fake", "--action", name])
+                    .unwrap();
+            let Commands::Deploy { action, yes, .. } = cli.command else {
+                panic!("wrong command")
+            };
+            assert_eq!(action, expected);
+            assert!(!yes);
+            assert!(
+                run_deploy_with(
+                    &fake_agent(),
+                    action,
+                    yes,
+                    |_| panic!("No install before confirmation"),
+                    || panic!("No profile preparation before confirmation"),
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn install_does_not_prepare_profile_or_require_backup() {
+        let called = std::cell::Cell::new(false);
+        run_deploy_with(
+            &fake_agent(),
+            DeployAction::Install,
+            true,
+            |_| {
+                called.set(true);
+                Ok(())
+            },
+            || panic!("Install must not initialize profiles or access backup/vault"),
+        )
+        .unwrap();
+        assert!(called.get());
+    }
+
+    #[test]
+    fn configure_does_not_run_installer_and_preserves_preparation_failure() {
+        let error = run_deploy_with(
+            &configurable_agent(),
+            DeployAction::Configure,
+            true,
+            |_| panic!("Configure cannot install software"),
+            || Err(anyhow::anyhow!("Backup unavailable")),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("Backup unavailable"));
+    }
+
+    #[test]
+    fn configure_without_adapter_does_not_prepare_profile() {
+        let error = run_deploy_with(
+            &fake_agent(),
+            DeployAction::Configure,
+            true,
+            |_| panic!("Configure cannot install software"),
+            || panic!("Unsupported configuration cannot prepare a profile or backup"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("no supported profile"));
+    }
+
+    #[test]
+    fn configure_unverified_agent_and_uninstall_do_not_prepare_profile() {
+        let mut agent = configurable_agent();
+        agent.install.verify_cmd = None;
+        for action in [DeployAction::Configure, DeployAction::Uninstall] {
+            assert!(
+                run_deploy_with(
+                    &agent,
+                    action,
+                    true,
+                    |_| panic!("No installer may run"),
+                    || panic!("No backup or profile preparation for blocked actions"),
+                )
+                .is_err()
+            );
+        }
+    }
+
     #[test]
     fn sync_accepts_comma_separated_targets() {
         let cli = Cli::try_parse_from(["aisync", "sync", "--tools", "codex,claude-code", "--yes"])
