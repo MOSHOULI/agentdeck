@@ -1,7 +1,7 @@
 //! AgentDeck command-line interface. Mutating operations require an explicit --yes.
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use aisync_core::{config, deploy, git, registry, sync};
+use aisync_core::{config, deploy, dsh, git, registry, sync};
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
@@ -23,6 +23,11 @@ enum DeployAction {
 enum Commands {
     /// List supported agents and installation capabilities (does not run installers).
     Agents,
+    /// Inspect an explicitly selected DSH profile without executing or changing it.
+    Dsh {
+        #[command(subcommand)]
+        action: DshAction,
+    },
     /// Sync personalization and opted-in memory to explicitly selected agents.
     Sync {
         #[arg(short, long, value_delimiter = ',', required = true, num_args = 1..)]
@@ -66,6 +71,22 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+enum DshAction {
+    /// Emit passive inventory as JSON. Exit 0 means a report was produced, not healthy or installed.
+    #[command(
+        long_about = "Emit passive DSH inventory as JSON using only explicit paths and allowed package manifests. Never executes DSH, Node, npm, or plugin code, and never creates a profile. Missing or blocked evidence and unknown versions remain observations in the JSON report. Exit 0 means the report was produced, not that DSH is installed, healthy, or active; invalid arguments exit 2 before inspection, and output failures exit 1."
+    )]
+    Inspect {
+        /// Absolute local profile directory, without '..'; no HOME-based default.
+        #[arg(long, value_name = "ABSOLUTE_PATH", value_parser = parse_dsh_profile_dir)]
+        profile_dir: PathBuf,
+        /// Optional absolute local runtime package.json path, without '..'.
+        #[arg(long, value_name = "ABSOLUTE_PACKAGE_JSON", value_parser = parse_dsh_runtime_manifest)]
+        runtime_manifest: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
 enum ReleaseAction {
     Init,
     Manifest {
@@ -95,6 +116,41 @@ fn find_agent(id: &str) -> anyhow::Result<registry::AgentDefinition> {
         .agents
         .remove(id)
         .ok_or_else(|| anyhow::anyhow!("Agent 未找到: {id}"))
+}
+
+// These checks are lexical: validate every argument before the inspection
+// callback can observe any filesystem entry, including the profile directory.
+fn parse_dsh_profile_dir(value: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(value);
+    dsh::validate_profile_path(&path)
+        .map_err(|issue| format!("invalid explicit local profile directory: {issue:?}"))?;
+    Ok(path)
+}
+
+fn parse_dsh_runtime_manifest(value: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(value);
+    dsh::validate_runtime_manifest_path(&path)
+        .map_err(|issue| format!("invalid explicit local runtime package.json: {issue:?}"))?;
+    Ok(path)
+}
+
+/// This path never uses the generic deployment, verification, registry, backup,
+/// or profile-initialization flows. Observed inventory states are data, not
+/// installation or health checks; successfully serializing any report is OK.
+fn run_dsh_inspect_with(
+    profile_dir: &Path,
+    runtime_manifest: Option<&Path>,
+    inspect: impl FnOnce(&Path, Option<&Path>) -> dsh::DshInventoryReport,
+) -> anyhow::Result<String> {
+    dsh::validate_profile_path(profile_dir)
+        .map_err(|issue| anyhow::anyhow!("invalid explicit local profile directory: {issue:?}"))?;
+    if let Some(path) = runtime_manifest {
+        dsh::validate_runtime_manifest_path(path).map_err(|issue| {
+            anyhow::anyhow!("invalid explicit local runtime package.json: {issue:?}")
+        })?;
+    }
+    let report = inspect(profile_dir, runtime_manifest);
+    Ok(serde_json::to_string_pretty(&report)?)
 }
 
 /// Keep profile preparation separate so pure software installation never needs
@@ -195,6 +251,21 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     }
                 );
             }
+        }
+        Commands::Dsh {
+            action:
+                DshAction::Inspect {
+                    profile_dir,
+                    runtime_manifest,
+                },
+        } => {
+            let report = run_dsh_inspect_with(
+                &profile_dir,
+                runtime_manifest.as_deref(),
+                dsh::inspect_profile,
+            )?;
+            use std::io::Write;
+            writeln!(std::io::stdout().lock(), "{report}")?;
         }
         Commands::Sync { tools, yes } => {
             require_confirmation(yes)?;
@@ -345,6 +416,334 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn run_dsh_args_with(
+        args: &[&str],
+        inspect: impl FnOnce(&Path, Option<&Path>) -> dsh::DshInventoryReport,
+    ) -> anyhow::Result<String> {
+        let Commands::Dsh {
+            action:
+                DshAction::Inspect {
+                    profile_dir,
+                    runtime_manifest,
+                },
+        } = Cli::try_parse_from(args)?.command
+        else {
+            panic!("expected the DSH command")
+        };
+        run_dsh_inspect_with(&profile_dir, runtime_manifest.as_deref(), inspect)
+    }
+
+    struct DshFixture(PathBuf);
+
+    impl DshFixture {
+        fn new() -> Self {
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "agentdeck-dsh-cli-{}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for DshFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn invalid_dsh_arguments_fail_before_any_inspection() {
+        // Merely construct paths here: malformed commands must not even check
+        // whether this profile exists before rejecting all arguments.
+        let profile = std::env::temp_dir().join("dsh-cli-unobserved-profile");
+        let profile = profile.to_str().unwrap();
+        let parent = std::env::temp_dir().join("../dsh-cli-unobserved-profile");
+        let parent = parent.to_str().unwrap();
+        let non_manifest = std::env::temp_dir().join("cordis.yml");
+        let non_manifest = non_manifest.to_str().unwrap();
+        let oversized_manifest = std::env::temp_dir()
+            .join("x".repeat(dsh::LIMITS.max_path_bytes))
+            .join("package.json");
+        let oversized_manifest = oversized_manifest.to_str().unwrap();
+        let mut too_deep_profile = std::env::temp_dir();
+        for _ in 0..dsh::LIMITS.max_path_components {
+            too_deep_profile.push("segment");
+        }
+        let too_deep_profile = too_deep_profile.to_str().unwrap();
+        for args in [
+            vec!["aisync", "dsh"],
+            vec!["aisync", "dsh", "inspect"],
+            vec!["aisync", "dsh", "inspect", "--profile-dir"],
+            vec!["aisync", "dsh", "inspect", "--profile-dir", ""],
+            vec!["aisync", "dsh", "inspect", "--profile-dir", "relative"],
+            vec!["aisync", "dsh", "inspect", "--profile-dir", "~/dsh"],
+            vec!["aisync", "dsh", "inspect", "--profile-dir", parent],
+            vec![
+                "aisync",
+                "dsh",
+                "inspect",
+                "--profile-dir",
+                too_deep_profile,
+            ],
+            vec![
+                "aisync",
+                "dsh",
+                "inspect",
+                "--profile-dir",
+                profile,
+                "--runtime-manifest",
+            ],
+            vec![
+                "aisync",
+                "dsh",
+                "inspect",
+                "--runtime-manifest",
+                non_manifest,
+            ],
+            vec![
+                "aisync",
+                "dsh",
+                "inspect",
+                "--profile-dir",
+                profile,
+                "--runtime-manifest",
+                "package.json",
+            ],
+            vec![
+                "aisync",
+                "dsh",
+                "inspect",
+                "--profile-dir",
+                profile,
+                "--runtime-manifest",
+                non_manifest,
+            ],
+            vec![
+                "aisync",
+                "dsh",
+                "inspect",
+                "--profile-dir",
+                profile,
+                "--runtime-manifest",
+                oversized_manifest,
+            ],
+            vec![
+                "aisync",
+                "dsh",
+                "inspect",
+                "--profile-dir",
+                profile,
+                "--profile-dir",
+                profile,
+            ],
+            vec![
+                "aisync",
+                "dsh",
+                "inspect",
+                "--profile-dir",
+                profile,
+                "--unknown",
+            ],
+            vec![
+                "aisync",
+                "dsh",
+                "inspect",
+                "--profile-dir",
+                profile,
+                "--yes",
+            ],
+            vec!["aisync", "dsh", "install", "--profile-dir", profile],
+            vec!["aisync", "dsh", "verify", "--profile-dir", profile],
+            vec!["aisync", "dsh", "configure", "--profile-dir", profile],
+        ] {
+            let error = run_dsh_args_with(&args, |_, _| {
+                panic!("invalid arguments must not observe the filesystem")
+            })
+            .unwrap_err();
+            let parse_error = error.downcast_ref::<clap::Error>().unwrap();
+            assert_eq!(parse_error.exit_code(), 2, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn dsh_dispatch_revalidates_all_paths_before_inspection() {
+        let profile = std::env::temp_dir().join("dsh-cli-unobserved-profile");
+        let invalid_manifest = std::env::temp_dir().join("credentials.json");
+        let parent_manifest = std::env::temp_dir().join("runtime/../package.json");
+        for (profile, runtime) in [
+            (Path::new("relative"), None),
+            (profile.as_path(), Some(Path::new("package.json"))),
+            (profile.as_path(), Some(invalid_manifest.as_path())),
+            (profile.as_path(), Some(parent_manifest.as_path())),
+        ] {
+            assert!(
+                run_dsh_inspect_with(profile, runtime, |_, _| {
+                    panic!("all paths must be valid before inspecting any of them")
+                })
+                .is_err()
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dsh_rejects_unc_and_device_paths_before_inspection() {
+        for path in [
+            r"\\server\share\profile",
+            r"\\?\C:\profile",
+            r"\\.\C:\profile",
+            r"C:\NUL\profile",
+            r"C:\profile:stream",
+            r"C:\profile.",
+            r"C:\profile ",
+        ] {
+            let error = run_dsh_args_with(
+                &["aisync", "dsh", "inspect", "--profile-dir", path],
+                |_, _| panic!("network and device paths must not be inspected"),
+            )
+            .unwrap_err();
+            assert_eq!(error.downcast_ref::<clap::Error>().unwrap().exit_code(), 2);
+        }
+    }
+
+    #[test]
+    fn dsh_help_explains_read_only_and_report_exit_semantics() {
+        let error = run_dsh_args_with(&["aisync", "dsh", "inspect", "--help"], |_, _| {
+            panic!("help must not inspect anything")
+        })
+        .unwrap_err();
+        let error = error.downcast_ref::<clap::Error>().unwrap();
+        assert_eq!(error.exit_code(), 0);
+        let help = error.to_string();
+        for phrase in [
+            "Never executes DSH, Node, npm, or plugin code",
+            "never creates a profile",
+            "Exit 0 means the report was produced",
+            "invalid arguments exit 2 before inspection",
+            "output failures exit 1",
+            "--profile-dir",
+            "--runtime-manifest",
+        ] {
+            assert!(help.contains(phrase), "missing help text: {phrase}");
+        }
+    }
+
+    #[test]
+    fn dsh_missing_profile_produces_json_without_creating_it_or_discovering_runtime() {
+        let fixture = DshFixture::new();
+        let profile = fixture.0.join("missing-profile");
+        let called = std::cell::Cell::new(false);
+        let output = run_dsh_args_with(
+            &[
+                "aisync",
+                "dsh",
+                "inspect",
+                "--profile-dir",
+                profile.to_str().unwrap(),
+            ],
+            |selected_profile, runtime| {
+                called.set(true);
+                assert_eq!(selected_profile, profile);
+                assert!(runtime.is_none(), "no ambient runtime discovery");
+                dsh::inspect_profile(selected_profile, runtime)
+            },
+        )
+        .unwrap();
+        assert!(called.get());
+        let report: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(report["profile_manifest"]["status"], "missing");
+        assert!(report["runtime_manifest"].is_null());
+        assert!(!profile.exists());
+        assert_eq!(std::fs::read_dir(&fixture.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn dsh_explicit_inspection_serializes_the_entire_report_without_writes() {
+        let fixture = DshFixture::new();
+        let profile = fixture.0.join("profile");
+        let runtime = fixture.0.join("runtime");
+        std::fs::create_dir(&profile).unwrap();
+        std::fs::create_dir(&runtime).unwrap();
+        let runtime_manifest = runtime.join("package.json");
+        let files = [
+            (
+                profile.join("package.json"),
+                r#"{"dependencies":{"example-plugin":"^1.0.0"},"scripts":{"start":"exit 97"}}"#,
+            ),
+            (
+                runtime_manifest.clone(),
+                r#"{"name":"@deepseek-ai/dsh-app-boot","version":"999.0.0","engines":{"node":">=99"},"scripts":{"postinstall":"exit 97"}}"#,
+            ),
+            (profile.join("cordis.yml"), "DO_NOT_INCLUDE_CONFIG"),
+            (profile.join(".env"), "DO_NOT_INCLUDE_ENV"),
+            (
+                profile.join("credentials.json"),
+                "DO_NOT_INCLUDE_CREDENTIALS",
+            ),
+        ];
+        for (path, content) in &files {
+            std::fs::write(path, content).unwrap();
+        }
+        let expected =
+            serde_json::to_value(dsh::inspect_profile(&profile, Some(&runtime_manifest))).unwrap();
+        let calls = std::cell::Cell::new(0);
+        let output = run_dsh_args_with(
+            &[
+                "aisync",
+                "dsh",
+                "inspect",
+                "--profile-dir",
+                profile.to_str().unwrap(),
+                "--runtime-manifest",
+                runtime_manifest.to_str().unwrap(),
+            ],
+            |selected_profile, selected_runtime| {
+                calls.set(calls.get() + 1);
+                assert_eq!(selected_profile, profile);
+                assert_eq!(selected_runtime, Some(runtime_manifest.as_path()));
+                dsh::inspect_profile(selected_profile, selected_runtime)
+            },
+        )
+        .unwrap();
+        assert_eq!(calls.get(), 1);
+        let report: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(
+            report, expected,
+            "the CLI must not reinterpret observed states"
+        );
+        assert_eq!(
+            report["runtime_manifest"]["metadata"]["reported_version"],
+            "999.0.0"
+        );
+        assert_eq!(report["mode"], "passive_manifest_only");
+        assert_eq!(
+            report["version_recognition"],
+            "unrecognized_manifest_version"
+        );
+        for field in ["runtime_status", "authentication", "actual_enabled"] {
+            assert_eq!(report[field], "unknown");
+        }
+        let mutations = report["mutation_capabilities"].as_object().unwrap();
+        assert!(!mutations.is_empty());
+        assert!(mutations.values().all(|value| value == false));
+        for (path, content) in files {
+            assert_eq!(std::fs::read_to_string(path).unwrap(), content);
+        }
+        assert_eq!(std::fs::read_dir(&fixture.0).unwrap().count(), 2);
+        assert_eq!(std::fs::read_dir(&profile).unwrap().count(), 4);
+        assert_eq!(std::fs::read_dir(&runtime).unwrap().count(), 1);
+        assert!(!output.contains("DO_NOT_INCLUDE"));
+        assert!(!output.contains("exit 97"));
+    }
+
     #[test]
     fn mutations_require_explicit_confirmation() {
         assert!(require_confirmation(false).is_err());

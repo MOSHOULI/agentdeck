@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # DSH inventory is reviewed as a stacked PR against the installation-evidence branch.
+    branches: [main, feat/installation-evidence]
   workflow_dispatch:
     inputs:
       publish_release:

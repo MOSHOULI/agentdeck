@@ -1,5 +1,9 @@
 # AgentDeck（AI 中枢）
 
+简体中文 | [English](README.en.md)
+
+本文描述当前源码分支。PR #2 的安装来源增量和后续 DSH 盘点不因版本号同为 1.1.0 就自动包含在已发布安装包中；下载时请核对该安装包的 `BUILD_COMMIT.txt` 与对应提交。
+
 在一个桌面界面中管理本机 AI Agent：发现与安装、配置、可选择的对话记忆导出、加密密钥、MCP 和配置备份。
 
 **当前支持的完整桌面平台是 Windows 10/11 x64。** React + Tauri 2 + Rust 架构；Linux 可运行非密钥相关的核心/CLI，尚不提供 Linux/macOS 的受保护密钥库或完整安装包。
@@ -40,7 +44,7 @@ npm exec --prefix web/ui -- tauri build --bundles nsis --ci -- --locked
 
 浏览器直接打开前端时不会模拟操作成功。仅 `?demo=1` 显式启用**只读演示**，有清晰标识，禁止安装、写配置和读取密钥。
 
-实例与来源证据的字段、判定条件及后续管理边界见 [安装证据说明](docs/INSTALLATION-EVIDENCE.md)。
+实例与来源证据的字段、判定条件及后续管理边界见 [安装证据说明](docs/INSTALLATION-EVIDENCE.zh-CN.md)。
 
 ## 数据与恢复边界
 
@@ -58,6 +62,8 @@ npm exec --prefix web/ui -- tauri build --bundles nsis --ci -- --locked
 ```powershell
 cargo run --locked -p aisync-cli -- health
 cargo run --locked -p aisync-cli -- agents
+# DSH 静态盘点：仅显式选定的已有目录，不启动 DSH 或创建 profile
+cargo run --locked -p aisync-cli -- dsh inspect --profile-dir "C:\DSH\profiles\web"
 cargo run --locked -p aisync-cli -- deploy --agent codex --action verify
 cargo run --locked -p aisync-cli -- deploy --agent codex --action install --yes
 # 可选的独立配置操作，需要 Git 备份与受保护密钥库支持
@@ -69,6 +75,8 @@ cargo run --locked -p aisync-cli -- restore <timestamp> --full --yes
 ```
 
 安装、配置、同步、恢复需要 `--yes`；安装不会隐式写配置。`deploy --action verify` 输出实例与来源观察；配置操作在准备 profile 或备份前重新检查实例，存在歧义时拒绝。自动卸载即使传入 `--yes` 也尚未开放。受保护密钥/备份相关命令仅 Windows 可用，纯软件安装不依赖该备份流程。
+
+`dsh inspect` 是独立的被动文件盘点，仅返回 JSON，不进入上述部署流程。它只读取明确选择的 profile 的 `package.json`，可通过 `--runtime-manifest` 另外选择一个 runtime 包的 `package.json`。不扫描 HOME，不调用 DSH/npm/pnpm，不读取凭据、`cordis.yml` 或插件代码。包依赖和 bundle selection 仅是保存的声明，版本仅是 manifest 报告值，不代表软件已安装、插件正在运行或已经认证。退出码 0 只表示成功产生报告；缺失、不支持或未知状态需检查 JSON。所有版本的管理写操作均未开放。详见 [DSH 被动盘点边界](docs/DSH-PASSIVE-INVENTORY.zh-CN.md)。
 
 ## 测试与发布
 
@@ -94,4 +102,4 @@ CI 验证前端、Linux 核心/CLI、Windows 全工作区（含 DPAPI），构�
 
 升级时，仅当本地两份注册表与官方 v1.0.0 已签名资产的 SHA256 完全一致，且版本标记为 v1.0.0 或不存在，才改用新版内置注册表；原文件和版本标记保持不动。修改过、来源未知或版本更新的本地注册表继续保留并使用。在线更新版本必须同时高于当前实际使用版本与内置版本，不能用旧的 v1.0.0 更新覆盖新版内置修正。
 
-发布者注册表签名使用已有受保护私钥。本仓库不包含该私钥；构建安装包无需它。**没有私钥时不能发布新的可信注册表更新**，不要用新生成的密钥冒充已有信任链；详细验证范围见 [发布说明](docs/RELEASE-1.1.0.md)。
+发布者注册表签名使用已有受保护私钥。本仓库不包含该私钥；构建安装包无需它。**没有私钥时不能发布新的可信注册表更新**，不要用新生成的密钥冒充已有信任链；详细验证范围见 [发布说明](docs/RELEASE-1.1.0.zh-CN.md)。

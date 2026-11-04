@@ -1,5 +1,12 @@
 # AgentDeck 1.1.0
 
+English | [简体中文](RELEASE-1.1.0.zh-CN.md)
+
+These notes describe the current source branch. Unmerged follow-up changes are
+not necessarily present in an already published 1.1.0 installer. Its
+`BUILD_COMMIT.txt` and the matching successful CI run determine the actual build;
+the version string alone does not establish that a feature shipped.
+
 This release hardens and completes the existing Windows desktop workflow without replacing the React/Tauri/Rust architecture.
 
 ## Changes

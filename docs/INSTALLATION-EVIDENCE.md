@@ -1,5 +1,7 @@
 # Installation evidence and management boundaries
 
+English | [简体中文](INSTALLATION-EVIDENCE.zh-CN.md)
+
 This increment adds read-only observations. It does not create an installation
 receipt, prove who originally installed a program, or grant permission to remove
 or upgrade a package. Registry installation recipes remain separate from facts
