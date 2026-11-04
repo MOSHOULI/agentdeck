@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish the verified Windows installer (main only)
+        required: false
+        default: false
+        type: boolean
 
 env:
   BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -123,7 +129,7 @@ jobs:
 
   release:
     name: Publish verified Windows installer
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release == true
     needs: [frontend, portable-core, dependency-audit, windows]
     runs-on: ubuntu-latest
     timeout-minutes: 10
