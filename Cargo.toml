@@ -4,4 +4,11 @@ members = [
     "crates/aisync-core",
     "crates/aisync-cli",
     "src-tauri",
+    "crates/glib-regression",
 ]
+exclude = ["vendor/glib"]
+
+# Exact upstream two-line RUSTSEC-2024-0429 backport; keep the original version.
+# Provenance and static verification: vendor/glib-backport.json and docs/GLIB-BACKPORT.md.
+[patch.crates-io]
+glib = { path = "vendor/glib" }

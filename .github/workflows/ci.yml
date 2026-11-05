@@ -47,7 +47,7 @@ jobs:
       - run: npm run build
 
   portable-core:
-    name: Linux core and CLI
+    name: Linux core, CLI and GLib regression
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -56,6 +56,7 @@ jobs:
           ref: ${{ env.BUILD_SHA }}
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.99.1
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
@@ -63,6 +64,21 @@ jobs:
       - run: python scripts/run-isolated.py cargo test --locked -p aisync-core -p aisync-cli
       - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- health
       - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- agents
+      - name: Install official runner GLib development dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libglib2.0-dev pkg-config
+          dpkg-query -W libglib2.0-dev pkg-config
+          pkg-config --modversion glib-2.0 gobject-2.0 gio-2.0
+          rustc --version --verbose
+      - run: cargo clippy --locked -p glib-regression --all-targets -- -D warnings
+      - name: GLib string iterator regressions (debug, opt-level 2, release)
+        shell: bash
+        run: |
+          set -euo pipefail
+          CARGO_PROFILE_TEST_OPT_LEVEL=0 python scripts/run-isolated.py cargo test --locked -p glib-regression --lib
+          CARGO_PROFILE_TEST_OPT_LEVEL=2 python scripts/run-isolated.py cargo test --locked -p glib-regression --lib
+          CARGO_PROFILE_RELEASE_OPT_LEVEL=3 python scripts/run-isolated.py cargo test --locked -p glib-regression --lib --release
 
   dependency-audit:
     name: Rust dependency audit
@@ -75,12 +91,35 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-audit --version 0.22.2 --locked
-      - run: cargo audit --json > cargo-audit.json
+      - name: Verify exact GLib source backport and locked Linux graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --proto '=https' --tlsv1.2 --max-time 60 \
+            https://static.crates.io/crates/glib/glib-0.18.5.crate \
+            --output "$RUNNER_TEMP/glib-0.18.5.crate"
+          GLIB_BACKPORT_ARCHIVE="$RUNNER_TEMP/glib-0.18.5.crate" python -B scripts/test_verify_glib_backport.py
+          cargo metadata --locked --format-version 1 --filter-platform x86_64-unknown-linux-gnu > glib-metadata.json
+          python scripts/verify-glib-backport.py \
+            --archive "$RUNNER_TEMP/glib-0.18.5.crate" --metadata glib-metadata.json \
+            --audit-lock-output glib-registry-origin.lock > glib-backport-verification.json
+      # cargo-audit skips path dependencies. Retain the original advisory in a
+      # conservative registry-origin view instead of hiding it after vendoring.
+      - run: cargo audit --file glib-registry-origin.lock --json > cargo-audit.json
+      - name: Record source, graph and advisory evidence together
+        run: |
+          python scripts/verify-glib-backport.py \
+            --archive "$RUNNER_TEMP/glib-0.18.5.crate" --metadata glib-metadata.json \
+            --audit-json cargo-audit.json > glib-backport-verification.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: dependency-audit-${{ env.BUILD_SHA }}
-          path: cargo-audit.json
+          path: |
+            cargo-audit.json
+            glib-metadata.json
+            glib-backport-verification.json
+            glib-registry-origin.lock
           if-no-files-found: warn
 
   windows:
