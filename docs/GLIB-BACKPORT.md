@@ -6,7 +6,9 @@
 
 This is a narrowly scoped source backport for [RUSTSEC-2024-0429](https://rustsec.org/advisories/RUSTSEC-2024-0429.html) in AgentDeck's Linux GTK 3 dependency graph. It is reconstructed on commit `52ffa227e01fcf697ef3ee5d0ad888df1010e6c8`; it is not a recovery of a missing earlier Git commit. It does not upgrade GLib to 0.20, migrate the desktop stack, change AgentDeck's version, or establish that all dependencies are secure.
 
-**Native validation is not yet established.** As of this reconstruction on 2026-11-04, the GLib regression tests have not run against a real native GLib installation in the dot cloud environment. That Debian 13 environment lacks the required development metadata. Its `apt-get update` attempt failed with permission denied reading `/etc/apt/apt.conf.d/80-applied-apt-retries` and a missing `/var/lib/apt/lists/partial`, including with formally requested execution approval. This prerequisite failure has not been bypassed. No successful Linux desktop build, GTK/WebKit runtime check, or remote CI run is claimed here. CI configuration and written tests are not test results.
+**Focused native validation passed on 2026-11-05.** [CI run 42015765543](https://github.com/MOSHOULI/agentdeck/actions/runs/42015765543) tested commit `e29e85192a820aae3edcbb06351ab89e2742784c` with Rust 1.99.1 and system GLib 2.80.0. All 18 real GLib tests passed at test optimization levels 0 and 2 and release optimization level 3 (54 test executions, none ignored). GLib Clippy, 41 verifier tests, official archive verification, the real application dependency graph, and the fresh conservative audit passed. The audit deliberately retains RUSTSEC-2024-0429 and four maintenance warnings. Unchanged upstream source emitted 34 legacy compiler warnings; this is not a warning-free build or an all-dependencies-secure claim.
+
+The earlier Debian 13 cloud preparation environment lacked GLib development metadata and its package-manager access failed. That restriction was not bypassed. Native tests ran through the project's normal GitHub-hosted Linux job using official system packages. A full Linux desktop build, GTK/WebKit GUI validation, and Linux distribution support remain unverified. These focused tests do not substitute for those separate checks.
 
 The [earlier dependency review](DEPENDENCY-SECURITY.md) is historical context. Its GLib warning motivated this backport; the evidence and limitations below govern this change.
 
@@ -72,7 +74,7 @@ cargo clippy --locked -p glib-regression --all-targets -- -D warnings
 cargo fmt --all --check
 ```
 
-The planned Linux CI validation installs `libglib2.0-dev` and `pkg-config` on its GitHub-hosted runner, then runs the regression crate's Clippy check and these three test profiles. This is a separate permitted validation host, not a retry of the blocked cloud installation. The workflow must still be reviewed, run, and checked for the exact final commit before its result can be reported as passed.
+The Linux CI validation installs `libglib2.0-dev` and `pkg-config` on its GitHub-hosted runner, then runs the regression crate's Clippy check and these three test profiles. This is a separate permitted validation host, not a retry of the blocked cloud installation. For every later commit, check that commit’s CI result; the evidence above is tied to the recorded source commit.
 
 The optimized profiles matter because this defect involves the assumptions an optimizer may make about a shared reference. Passing tests would provide regression evidence, not a proof that undefined behavior is impossible. Source provenance and the exact upstream fix remain essential evidence. Do not fabricate `pkg-config` metadata or use a prerequisite access failure as permission to change installation routes.
 
@@ -98,7 +100,7 @@ The JSON check requires the GLib `RUSTSEC-2024-0429` finding instead of treating
 ## Remaining validation and removal criteria
 
 1. Record successful provenance and full application-graph checks for the final commit.
-2. Run the real Linux regression suite at test optimization levels 0 and 2 and release optimization level 3, and preserve the logs. Until then, the native result remains **not run**.
+2. Re-run the real Linux regression suite at test optimization levels 0 and 2 and release optimization level 3 for later changes, preserving the logs. The recorded commit passed all three profiles.
 3. Preserve the conservative audit JSON and its exit status; confirm the GLib finding remains visible.
 4. Treat a full Linux desktop build and runtime acceptance as separate work requiring the GTK/WebKit prerequisites and appropriate authorization. This focused GLib suite does not substitute for them or for Windows-native validation.
 5. When a supported GTK/Tauri dependency migration removes the affected GLib line, verify the application graph and tests again, then remove the vendor patch, provenance checks, and audit-only identity restoration together. Do not remove them merely because an audit warning disappears.
