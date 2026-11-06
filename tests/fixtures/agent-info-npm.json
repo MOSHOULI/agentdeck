@@ -13,7 +13,7 @@
   "description": "Synthetic contract fixture",
   "icon": "test",
   "category": "test",
-  "canInstall": true,
+  "canInstall": false,
   "canVerifyInstall": true,
   "canUninstall": false,
   "canConfigure": true,

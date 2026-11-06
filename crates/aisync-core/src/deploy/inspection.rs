@@ -14,6 +14,9 @@ const OUTPUT_LIMIT: usize = 8192;
 const FILE_LIMIT: usize = 128 * 1024;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
+mod installation;
+pub(super) use installation::{can_install, install_agent};
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallationDetails {
@@ -435,25 +438,7 @@ fn inspect_npm(
     search: &SearchPath,
     runner: &mut impl Runner,
 ) -> Result<NpmLayout, String> {
-    let manager =
-        npm_command(search).map_err(|_| "A supported npm manager could not be resolved")?;
-    let mut command = manager.command;
-    if let Some(prefix_command) = manager.redirect_prefix {
-        // The distributed npm.cmd invokes npm-prefix.js, not `npm prefix`.
-        // Respect that exact program before selecting the final npm CLI.
-        let redirect_prefix = query_path(runner, &prefix_command, &[])
-            .map_err(|_| "npm launcher prefix redirection could not be resolved")?;
-        let redirected = redirect_prefix.join("node_modules/npm/bin/npm-cli.js");
-        match std::fs::symlink_metadata(&redirected) {
-            Ok(_) => {
-                command.args[0] = canonical_file(&redirected)
-                    .map_err(|_| "npm prefix redirection cannot be resolved")?
-                    .into_os_string()
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(_) => return Err("npm prefix redirection could not be inspected".into()),
-        }
-    }
+    let command = resolved_npm_command(search, runner)?;
     let prefix = query_path(runner, &command, &["prefix", "--global"])
         .map_err(|_| "npm global prefix could not be verified")?;
     let root = query_path(runner, &command, &["root", "--global"])
@@ -484,6 +469,32 @@ fn inspect_npm(
         bin,
         relative_bin,
     })
+}
+
+fn resolved_npm_command(
+    search: &SearchPath,
+    runner: &mut impl Runner,
+) -> Result<ProbeCommand, String> {
+    let manager =
+        npm_command(search).map_err(|_| "A supported npm manager could not be resolved")?;
+    let mut command = manager.command;
+    if let Some(prefix_command) = manager.redirect_prefix {
+        // The distributed npm.cmd invokes npm-prefix.js, not `npm prefix`.
+        // Respect that exact program before selecting the final npm CLI.
+        let redirect_prefix = query_path(runner, &prefix_command, &[])
+            .map_err(|_| "npm launcher prefix redirection could not be resolved")?;
+        let redirected = redirect_prefix.join("node_modules/npm/bin/npm-cli.js");
+        match std::fs::symlink_metadata(&redirected) {
+            Ok(_) => {
+                command.args[0] = canonical_file(&redirected)
+                    .map_err(|_| "npm prefix redirection cannot be resolved")?
+                    .into_os_string()
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => return Err("npm prefix redirection could not be inspected".into()),
+        }
+    }
+    Ok(command)
 }
 
 fn inspect_package(
@@ -732,6 +743,14 @@ fn npm_command(search: &SearchPath) -> io::Result<NpmCommand> {
 }
 
 fn query_path(runner: &mut impl Runner, base: &ProbeCommand, args: &[&str]) -> io::Result<PathBuf> {
+    canonical_file_or_dir(&query_raw_path(runner, base, args)?)
+}
+
+fn query_raw_path(
+    runner: &mut impl Runner,
+    base: &ProbeCommand,
+    args: &[&str],
+) -> io::Result<PathBuf> {
     let mut command = base.clone();
     command.args.extend(args.iter().map(OsString::from));
     let output = runner.run(&command)?;
@@ -745,13 +764,17 @@ fn query_path(runner: &mut impl Runner, base: &ProbeCommand, args: &[&str]) -> i
         return Err(io::Error::other("npm did not report one path"));
     }
     let path = PathBuf::from(value);
-    if !path.is_absolute() {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|part| matches!(part, Component::ParentDir))
+    {
         return Err(io::Error::other("npm path is not absolute"));
     }
-    canonical_file_or_dir(&path)
+    Ok(path)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ProbeCommand {
     npm_metadata: bool,
     program: PathBuf,

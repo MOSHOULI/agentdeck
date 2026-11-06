@@ -48,6 +48,15 @@ describe('AgentCard', () => {
     expect(screen.getByRole('button', { name: '安装 OpenCode' })).toBeEnabled();
   });
 
+  it('does not display legacy popularity flags or unverified star counts as catalog evidence', () => {
+    mountAgent({ agent: { ...agent, popular: true, stars: 999999 } });
+    expect(screen.queryByText('热度推荐')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
+    expect(screen.queryByText('注册表热度')).not.toBeInTheDocument();
+    expect(screen.queryByText(/stars/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '安装 OpenCode' })).toBeEnabled();
+  });
+
   it('renders the unchanged npm DTO contract as directory evidence, not installation history or management rights', () => {
     const { props } = mountAgent({ agent: nativeNpmContract as AgentInfo });
     expect(screen.getByText('v1.2.3')).toBeInTheDocument();
@@ -483,7 +492,6 @@ describe('AgentCard', () => {
     fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
     expect(screen.getByText(authVerified ? '检测到本地认证配置' : '未验证')).toBeInTheDocument();
     expect(screen.getByText(/不代表远端凭据仍有效/)).toBeInTheDocument();
-    expect(screen.getByText('注册表记录，非实时数据')).toBeInTheDocument();
     expect(screen.queryByText('认证成功')).not.toBeInTheDocument();
   });
 

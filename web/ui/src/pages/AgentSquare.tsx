@@ -6,13 +6,12 @@ import './AgentWorkspace.css';
 
 const filters = [
   { id: 'all', label: '全部' },
-  { id: 'popular', label: '热度推荐' },
   { id: 'installed', label: '已安装' },
 ] as const;
 
 export const AgentSquare: React.FC = () => {
   const { agents, loading, error, notice, refreshError, dataStale, selectedAgentId, loadAgents, installAgent, configureAgent, uninstallAgent, selectAgent, clearError } = useAgentStore();
-  const [filter, setFilter] = useState<'all' | 'installed' | 'popular'>('all');
+  const [filter, setFilter] = useState<'all' | 'installed'>('all');
   const [query, setQuery] = useState('');
 
   useEffect(() => { void loadAgents(); }, [loadAgents]);
@@ -20,10 +19,10 @@ export const AgentSquare: React.FC = () => {
   const filteredAgents = useMemo(() => {
     const search = query.trim().toLocaleLowerCase();
     return [...agents]
-      .sort((a, b) => Number(Boolean(b.popular)) - Number(Boolean(a.popular)) || (b.stars ?? 0) - (a.stars ?? 0) || a.name.localeCompare(b.name))
+      // Legacy popularity/star fields are not verified recommendations or ranking signals.
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
       .filter((agent) => {
         if (filter === 'installed' && (!agent.installed || agent.installationStatus !== 'installed')) return false;
-        if (filter === 'popular' && !agent.popular) return false;
         return !search || [agent.name, agent.id, agent.description, agent.uiType, agent.category]
           .some((value) => value.toLocaleLowerCase().includes(search));
       });
@@ -72,6 +71,7 @@ export const AgentSquare: React.FC = () => {
 
         <div className="agent-list-summary">
           <span>{loading ? <span role="status">正在读取 Agent 状态…</span> : refreshError && agents.length === 0 ? '列表暂不可用' : `显示 ${filteredAgents.length} / ${agents.length} 款 Agent`}</span>
+          <span>按名称排序</span>
           <span>{selectedAgent ? `当前选择：${selectedAgent.name}` : '尚未选择 Agent'}</span>
         </div>
 
@@ -82,7 +82,7 @@ export const AgentSquare: React.FC = () => {
           {!loading && (!refreshError || agents.length > 0) && filteredAgents.length === 0 && (
             <div className="empty-state agent-empty">
               <Icon name={query ? 'search' : 'agents'} size={28} />
-              <h2>{query ? '没有匹配的 Agent' : filter === 'installed' ? '还没有检测到已安装的 Agent' : filter === 'popular' ? '暂无热度推荐' : '暂无可显示的 Agent'}</h2>
+              <h2>{query ? '没有匹配的 Agent' : filter === 'installed' ? '还没有检测到已安装的 Agent' : '暂无可显示的 Agent'}</h2>
               <p>{query ? '试试其他名称、ID 或描述关键词。' : filter === 'installed' ? '无法自动检测的 Agent 不会计入已安装列表。' : '刷新列表，或更换筛选条件。'}</p>
               {(query || filter !== 'all') && <button type="button" className="button" onClick={resetFilters}>查看全部 Agent</button>}
             </div>

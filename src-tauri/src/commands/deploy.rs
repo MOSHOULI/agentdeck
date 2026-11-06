@@ -71,7 +71,7 @@ fn to_agent_info(agent: AgentDefinition, details: InstallationDetails) -> AgentI
     let auth_verified = installed && aisync_core::deploy::check_auth(&agent).unwrap_or(false);
     let nonempty = |value: &Option<String>| value.as_ref().is_some_and(|v| !v.trim().is_empty());
     let can_verify_install = nonempty(&agent.install.verify_cmd);
-    let can_install = nonempty(&agent.install.command) && can_verify_install;
+    let can_install = aisync_core::deploy::can_install(&agent);
     // A registry method is not evidence of this machine's installation source.
     let can_uninstall = aisync_core::deploy::can_uninstall(&agent);
     let uninstall_help = aisync_core::deploy::uninstall_block_reason(&agent).map(str::to_owned);
@@ -175,17 +175,7 @@ pub async fn configure_agent(id: String) -> Result<aisync_core::deploy::InstallO
         return Err("此 Agent 暂无可用的配置适配器，未更改配置。".to_string());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let details = aisync_core::deploy::inspect_installation(&agent);
-        if details.ambiguous {
-            return Err(aisync_core::Error::InstallFailed(
-                "检测到多个或无法确定的安装实例，请先确认实际使用的实例；未应用配置。".to_string(),
-            ));
-        }
-        if !matches!(details.probe.status, InstallationStatus::Installed) {
-            return Err(aisync_core::Error::InstallFailed(
-                "尚未验证软件已安装，无法应用配置；请先刷新安装状态。".to_string(),
-            ));
-        }
+        aisync_core::deploy::ensure_configuration_eligible(&agent)?;
         let source = aisync_core::config::profile_source_dir()?;
         aisync_core::git::backup(&format!("configure {}", agent.name))?;
         aisync_core::deploy::configure_agent(&agent, &source)

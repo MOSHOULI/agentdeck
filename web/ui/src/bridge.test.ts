@@ -21,7 +21,11 @@ describe('runtime boundary', () => {
   it('allows only sample reads in explicit demo mode', async () => {
     window.history.replaceState({}, '', '/?demo=1');
     expect(bridge.runtimeMode()).toBe('demo');
-    expect(await bridge.getAgents()).not.toHaveLength(0);
+    const agents = await bridge.getAgents();
+    expect(agents).not.toHaveLength(0);
+    expect(agents.every((agent) => agent.popular === false && agent.stars === 0)).toBe(true);
+    expect(agents.every((agent) => agent.description.startsWith('合成示例：'))).toBe(true);
+    expect(agents.every((agent) => !agent.version || agent.version === '0.0.0-demo')).toBe(true);
     await expect(bridge.installAgent('codex')).rejects.toThrow('只读演示');
     await expect(bridge.configureAgent('codex')).rejects.toThrow('只读演示');
     await expect(bridge.saveApiKey('codex', 'test', 'not-a-secret')).rejects.toThrow('只读演示');

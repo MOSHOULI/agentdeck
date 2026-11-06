@@ -456,7 +456,7 @@ fn registry_source_locked(paths: &DataPaths, builtin: &str) -> crate::Result<Reg
     }
 }
 
-/// 按热度排序的 agent 定义列表（已安装优先 → popular → stars 降序）
+/// 已安装优先，其次注册表标记与星数，最后按 ID 稳定排序。
 pub fn sorted_agents<'a>(
     registry: &'a RegistryDoc,
     installed_ids: &[String],
@@ -469,6 +469,7 @@ pub fn sorted_agents<'a>(
             .cmp(&a_installed)
             .then_with(|| b.popular.cmp(&a.popular))
             .then_with(|| b.stars.unwrap_or(0).cmp(&a.stars.unwrap_or(0)))
+            .then_with(|| id_a.cmp(id_b))
     });
     agents
 }
@@ -685,6 +686,29 @@ mod tests {
         let mut sorted = stars.clone();
         sorted.sort_by(|a, b| b.cmp(a));
         assert_eq!(stars, sorted, "stars 应降序");
+    }
+
+    #[test]
+    fn sorted_agents_without_rankings_have_stable_id_order() {
+        let mut doc = parse_registry(REGISTRY_JSON).unwrap();
+        for agent in doc.agents.values_mut() {
+            agent.popular = false;
+            agent.stars = None;
+        }
+        let installed = vec!["pi".to_string()];
+        let ids: Vec<_> = sorted_agents(&doc, &installed)
+            .into_iter()
+            .map(|(id, _)| id.as_str())
+            .collect();
+        assert_eq!(ids.first().copied(), Some("pi"));
+        let mut expected: Vec<_> = doc
+            .agents
+            .keys()
+            .map(String::as_str)
+            .filter(|id| *id != "pi")
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(ids[1..], expected);
     }
 
     #[test]

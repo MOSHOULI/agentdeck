@@ -2,6 +2,8 @@
 
 Reviewed **2026-11-03** against the workspace `Cargo.lock`, using **cargo-audit 0.22.2** and RustSec database commit `263a4d951a0867d4bddc29dddd6d59427c78f9a7` (1,402 advisories; database timestamp `2026-11-02T12:45:44+01:00`). The post-remediation lockfile contains 520 dependencies across all supported target platforms.
 
+**Historical review:** the counts and dependency observations below describe the 2026-11-03 registry lockfile. A separate branch prepared an exact upstream GLib backport on 2026-11-04 and reconstructed it after a cloud workspace reset. Focused GLib native validation has since passed on commit `e29e85192a820aae3edcbb06351ab89e2742784c` in [CI run 42015765543](https://github.com/MOSHOULI/agentdeck/actions/runs/42015765543); full Linux desktop validation remains pending. See the [current backport and registry-origin audit procedure](GLIB-BACKPORT.md) / [中文说明](GLIB-BACKPORT.zh-CN.md). Cargo-audit excludes path dependencies, so a missing warning from the build lockfile is not remediation evidence.
+
 ## Result and remediation
 
 The initial audit found **1 vulnerability and 6 informational warnings**. The final audit exits successfully with **0 reported vulnerabilities and 5 informational warnings**. Informational does **not** mean harmless: one remaining warning describes memory unsoundness in the Linux desktop dependency graph. This is not an all-platform clean-security claim.
@@ -37,22 +39,24 @@ All five remaining packages are present in the all-platform lockfile but absent 
 
 | Advisory | Package | Dependency path / risk | Remediation direction |
 | --- | --- | --- | --- |
-| [RUSTSEC-2024-0429](https://rustsec.org/advisories/RUSTSEC-2024-0429.html) | `glib 0.18.5` | `agentdeck` → Tauri / Wry / GTK 3 → `glib`. **Unsoundness** in `VariantStrIter` iterator implementations can cause undefined behavior/null-pointer crashes. | Fixed upstream at `glib >=0.20.0`. Current GTK 3/Tauri dependencies require the older GLib family; merely adding a second newer GLib package does not fix this path. Requires a compatible upstream desktop stack migration or an explicitly reviewed backport. **Unresolved for Linux.** |
+| [RUSTSEC-2024-0429](https://rustsec.org/advisories/RUSTSEC-2024-0429.html) | `glib 0.18.5` | `agentdeck` → Tauri / Wry / GTK 3 → `glib`. **Unsoundness** in `VariantStrIter` iterator implementations can cause undefined behavior/null-pointer crashes. | Fixed upstream at `glib >=0.20.0`. Current GTK 3/Tauri dependencies require the older GLib family; merely adding a second newer GLib package does not fix this path. Requires a compatible upstream desktop stack migration or an explicitly reviewed backport. **Historical finding:** the later exact backport passed focused native validation; full Linux desktop validation remains pending. |
 | [RUSTSEC-2024-0370](https://rustsec.org/advisories/RUSTSEC-2024-0370.html) | `proc-macro-error 1.0.4` | Linux GTK macro build dependencies: `glib-macros` / `gtk3-macros` → `proc-macro-error`. **Unmaintained**. | Upstream GTK macro migration to maintained diagnostic tooling. No patched release is listed. |
 | [RUSTSEC-2026-0371](https://rustsec.org/advisories/RUSTSEC-2026-0371.html) | `zbus_names 4.3.5` | `agentdeck` → `tauri-plugin-opener 2.7.2` → `zbus 5.19.0` / `zbus_macros` → `zbus_names`. **Unmaintained standalone crate**. | Upstream opener migration to `zbus >=6`, where name types are integrated. |
 | [RUSTSEC-2026-0370](https://rustsec.org/advisories/RUSTSEC-2026-0370.html) | `zvariant 5.15.1` | Same Linux opener/D-Bus graph. **Unmaintained standalone crate**. | Upstream opener migration to `zbus >=6`, where the wire module is integrated (or `zgvariant` for GVariant users). |
 | [RUSTSEC-2026-0372](https://rustsec.org/advisories/RUSTSEC-2026-0372.html) | `zvariant_derive 5.15.1` | Same Linux opener/D-Bus graph, through `zvariant` / macros. **Unmaintained standalone crate**. | Upstream `zbus >=6` migration. |
 
-No advisory ignore list or vendored security patch was added. The Windows graph exclusion was checked with `cargo tree --locked --target x86_64-pc-windows-msvc -i PACKAGE` for **each** of the five packages; every command reported “nothing to print.” Also inspect `--target all` when reviewing Linux or another release target. This demonstrates dependency selection, not proof that a built binary has no vulnerabilities.
+At the time of that historical review, no advisory ignore list or vendored security patch had been added. The later GLib backport does not add an advisory ignore. The Windows graph exclusion was checked with `cargo tree --locked --target x86_64-pc-windows-msvc -i PACKAGE` for **each** of the five packages; every command reported “nothing to print.” Also inspect `--target all` when reviewing Linux or another release target. This demonstrates dependency selection, not proof that a built binary has no vulnerabilities.
 
 ## Reproducible CI commands
+
+These are the original registry-lockfile commands. On the path-patched branch, use the linked registry-origin audit procedure instead: it retains the GLib advisory and every other locked package, while source and graph checks separately validate the patch.
 
 ```sh
 cargo install cargo-audit --version 0.22.2 --locked
 cargo audit --json > cargo-audit.json
 ```
 
-Keep the audit command's exit code: it fails on known vulnerabilities. Publish the JSON report even on failure, and review informational warnings rather than suppressing them. A stricter Linux release gate can use `cargo audit --deny unsound`; it **currently fails** because of the unresolved GLib warning above. `--deny warnings` also fails on the remaining maintenance warnings. Do not describe the default successful exit as “no advisories.”
+Keep the audit command's exit code: it fails on known vulnerabilities. Publish the JSON report even on failure, and review informational warnings rather than suppressing them. Against the reviewed registry lockfile, `cargo audit --deny unsound` failed because of the GLib warning above. A bare path-patched build-lockfile audit can omit this package even with `--deny unsound`; use the separate registry-origin audit view to retain the finding. `--deny warnings` also fails on the remaining maintenance warnings. Do not describe the default successful exit as “no advisories.”
 
 The tool additionally supports advisory applicability filters:
 

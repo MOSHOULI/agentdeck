@@ -11,7 +11,6 @@ This release hardens and completes the existing Windows desktop workflow without
 - Atomic managed-only MCP synchronization, working CLI commands and explicit read-only browser demo.
 - Locked dependencies, isolated-home test runner, Windows-native tests and reproducible NSIS build artifacts.
 - Software installation is separate from optional profile configuration. Probe failures remain errors rather than absence; stale list data blocks further mutations. Unverified installation provenance blocks automatic uninstall in the UI and core.
-- Read-only instance inspection distinguishes PATH candidates, canonical files, verified package entrypoints and measured active-instance versions. Conservative npm global-directory association checks are observations, not installation history or permission to manage a package. Ambiguous instances block configuration before profile or backup preparation.
 
 ## Verify this download
 
@@ -32,7 +31,7 @@ On upgrade, the application uses its improved bundled registries only when both 
 ## Scope and known limitations
 
 - Windows 10/11 x64 is the complete desktop target. Git is required for backups; npm-based agents need Node.js/npm.
-- No installation-history ledger exists yet, including for new installations. npm directory association is not an installation receipt. Automatic uninstall remains disabled even for matched npm instances; Agent software upgrades are not implemented. A missing executable on PATH does not prove absence elsewhere on the machine. Unsupported wrappers remain unknown and may not be safely version-probed.
+- No installation-origin ledger exists yet, including for new installations. Automatic uninstall is therefore disabled until provenance can be verified. Agent software upgrades are not implemented. A missing executable on PATH does not prove absence elsewhere on the machine.
 - Applying a profile is a separate confirmed action, but configuration diff previews and three-way conflict reconciliation are not implemented. Existing rollback does not protect against every concurrent external edit.
 - Linux core/CLI tests do not establish a functioning Linux desktop or secure non-Windows vault.
 - Automated Windows tests and packaging do not constitute manual native GUI acceptance or testing every third-party installer/network/login.

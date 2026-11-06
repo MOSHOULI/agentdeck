@@ -1,0 +1,115 @@
+{
+  "verification_date": "2026-11-06",
+  "evidence_kind": "upstream_document_review_and_static_catalog_expectations",
+  "runtime_verification": false,
+  "schema_version": 3,
+  "core_agent_ids": [
+    "claude-code",
+    "cline",
+    "codex",
+    "gemini-cli",
+    "hermes",
+    "openclaw",
+    "opencode",
+    "pi",
+    "zcode"
+  ],
+  "npm": {
+    "claude-code": {
+      "node_dependency": "node >= 22",
+      "command": "npm install -g @anthropic-ai/claude-code",
+      "uninstall_cmd": "npm uninstall -g @anthropic-ai/claude-code",
+      "verify_cmd": "claude --version"
+    },
+    "gemini-cli": {
+      "node_dependency": "node >= 20",
+      "command": "npm install -g @google/gemini-cli",
+      "uninstall_cmd": "npm uninstall -g @google/gemini-cli",
+      "verify_cmd": "gemini --version"
+    },
+    "pi": {
+      "node_dependency": "node >= 22.19.0",
+      "command": "npm install -g --ignore-scripts @earendil-works/pi-coding-agent",
+      "uninstall_cmd": "npm uninstall -g @earendil-works/pi-coding-agent",
+      "verify_cmd": "pi --version"
+    }
+  },
+  "authentication": {
+    "claude-code": {
+      "required_fragments": [
+        "claude auth login"
+      ],
+      "forbidden_fragments": [
+        "claude login"
+      ]
+    },
+    "gemini-cli": {
+      "required_fragments": [
+        "gemini",
+        "Sign in with Google"
+      ],
+      "forbidden_fragments": [
+        "gemini login"
+      ]
+    }
+  },
+  "source_only": {
+    "crush": {
+      "github": "charmbracelet/crush",
+      "method": "manual",
+      "status": "v0.2_pending"
+    },
+    "oh-my-pi": {
+      "github": "can1357/oh-my-pi",
+      "method": "manual",
+      "status": "v0.3_pending"
+    },
+    "roocode": {
+      "github": "RooCodeInc/Roo-Code",
+      "method": "vscode_extension",
+      "status": "archived"
+    }
+  },
+  "sources": [
+    "https://geminicli.com/docs/get-started/installation/",
+    "https://geminicli.com/docs/get-started/authentication/",
+    "https://code.claude.com/docs/en/setup#install-with-npm",
+    "https://code.claude.com/docs/en/cli-reference",
+    "https://github.com/earendil-works/pi",
+    "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/package.json",
+    "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/configuration.md",
+    "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/config.ts",
+    "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md",
+    "https://github.com/RooCodeInc/Roo-Code",
+    "https://github.com/charmbracelet/crush",
+    "https://github.com/can1357/oh-my-pi",
+    "https://opencode.ai/docs/",
+    "https://opencode.ai/v2/docs",
+    "https://opencode.ai/v2/docs/migrate-v1/",
+    "https://opencode.ai/v2/docs/mcp-servers/",
+    "https://opencode.ai/v2/docs/instructions/"
+  ],
+  "popularity_evidence": {
+    "verified": false,
+    "stars": null,
+    "popular": false,
+    "description_numeric_allowlist": {
+      "roocode": [
+        "2026-05-15"
+      ],
+      "opencode": [
+        "V1",
+        "V2"
+      ]
+    }
+  },
+  "opencode_version_boundary": {
+    "install_command": "npm install -g opencode-ai",
+    "uninstall_command": "npm uninstall -g opencode-ai",
+    "verify_command": "opencode --version",
+    "personalization_target": "~/.config/opencode/AGENTS.md",
+    "personalization_template": "opencode",
+    "model_config": null,
+    "mcp": null
+  }
+}

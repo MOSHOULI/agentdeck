@@ -60,15 +60,24 @@ fn load_mcp_registry() -> crate::Result<Vec<McpServerDef>> {
 }
 
 fn load_agent_targets() -> crate::Result<Vec<(String, crate::registry::McpInject)>> {
-    let doc = crate::registry::load_registry_runtime()?;
+    Ok(agent_targets(crate::registry::load_registry_runtime()?))
+}
+
+fn agent_targets(doc: crate::registry::RegistryDoc) -> Vec<(String, crate::registry::McpInject)> {
     let mut out = Vec::new();
     for (id, agent) in doc.agents {
+        // Old runtime registries can retain the V1 descriptor. Our flat `mcp`
+        // adapter does not handle V2's `mcp.servers`, so exclude OpenCode from
+        // both reads and writes until a schema-aware adapter is implemented.
+        if id == "opencode" {
+            continue;
+        }
         if let Some(target) = agent.config_inject.mcp {
             out.push((id, target));
         }
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(out)
+    out
 }
 
 fn find_server(name: &str) -> crate::Result<McpServerDef> {
@@ -353,7 +362,14 @@ fn yaml_remove_server(value: &mut serde_json::Value, section: &str, name: &str) 
 // ─── 公共 API ─────────────────────────────────────
 
 fn agent_target(agent_id: &str) -> crate::Result<crate::registry::McpInject> {
-    load_agent_targets()?
+    agent_target_from(crate::registry::load_registry_runtime()?, agent_id)
+}
+
+fn agent_target_from(
+    doc: crate::registry::RegistryDoc,
+    agent_id: &str,
+) -> crate::Result<crate::registry::McpInject> {
+    agent_targets(doc)
         .into_iter()
         .find(|(id, _)| id == agent_id)
         .map(|(_, t)| t)
@@ -453,7 +469,7 @@ fn apply_server(
         "json_merge" | "jsonc_merge" => {
             let key = target.key.as_deref().unwrap_or("mcpServers");
             let is_jsonc = format == "jsonc_merge";
-            let local_array_command = is_jsonc; // opencode 的 local/remote 数组格式
+            let local_array_command = is_jsonc; // Legacy local/remote array format.
             let mut value = json_value(text, is_jsonc)?;
             if enabled {
                 json_set_server(&mut value, key, server_name, def, local_array_command)?;
@@ -607,15 +623,77 @@ mod tests {
     }
 
     #[test]
-    fn agent_targets_cover_five_verified_adapters() {
+    fn agent_targets_cover_four_verified_adapters() {
         let targets = load_agent_targets().unwrap();
         let ids: Vec<&str> = targets.iter().map(|(id, _)| id.as_str()).collect();
-        for expected in ["claude-code", "cline", "codex", "gemini-cli", "opencode"] {
+        for expected in ["claude-code", "cline", "codex", "gemini-cli"] {
             assert!(ids.contains(&expected), "缺少 {}", expected);
         }
+        assert!(!ids.contains(&"opencode"));
         let codex = targets.iter().find(|(id, _)| id == "codex").unwrap();
         assert_eq!(codex.1.format, "toml_section");
         assert_eq!(codex.1.section.as_deref(), Some("mcp_servers"));
+    }
+
+    #[test]
+    fn retained_runtime_opencode_descriptor_cannot_restore_mcp_capability() {
+        let root = temp_dir("retired-opencode-runtime");
+        let paths = crate::registry::DataPaths::from_data_dir(root.join("agentdeck"));
+        let config = root.join("opencode.jsonc");
+        let original = b"// Preserve V2 nested servers and formatting.\n{\"mcp\": {\"servers\": {\"ragflow\": {\"type\": \"remote\", \"url\": \"http://localhost:9382/mcp\"}}}}\n";
+        std::fs::write(&config, original).unwrap();
+        let mut doc =
+            crate::registry::parse_registry(include_str!("../../../../agents/registry-v3.json"))
+                .unwrap();
+        doc.description = "Retained runtime with old OpenCode adapter".into();
+        let old_target = crate::registry::McpInject {
+            file: config.to_string_lossy().into_owned(),
+            format: "jsonc_merge".into(),
+            key: Some("mcp".into()),
+            section: None,
+        };
+        doc.agents.get_mut("opencode").unwrap().config_inject.mcp = Some(old_target);
+        std::fs::create_dir_all(&paths.registry_dir).unwrap();
+        std::fs::write(
+            paths.registry_dir.join("registry-v3.json"),
+            serde_json::to_vec(&doc).unwrap(),
+        )
+        .unwrap();
+
+        let retained = crate::registry::load_registry_at(&paths).unwrap();
+        assert!(retained.agents["opencode"].config_inject.mcp.is_some());
+        // The same eligibility boundary feeds listing, reading, toggling and sync.
+        assert!(
+            !agent_targets(retained)
+                .iter()
+                .any(|(id, _)| id == "opencode")
+        );
+        let error = agent_target_from(
+            crate::registry::load_registry_at(&paths).unwrap(),
+            "opencode",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("agent 不支持 MCP: opencode"));
+        assert_eq!(std::fs::read(&config).unwrap(), original);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn opencode_public_mcp_operations_are_unsupported() {
+        for result in [
+            current_servers("opencode").map(|_| ()),
+            toggle("opencode", "ragflow", true),
+            toggle("opencode", "ragflow", false),
+            sync("opencode", &["ragflow".into()]).map(|_| ()),
+            sync("opencode", &[]).map(|_| ()),
+        ] {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("agent 不支持 MCP: opencode")
+            );
+        }
     }
 
     #[test]
@@ -728,9 +806,9 @@ mod tests {
         assert!(find_server("ragflow").is_ok());
     }
 
-    /// 真实环境验证：codex/opencode 的 MCP 开关往返（手动运行，测试后还原）
+    /// 真实环境验证：Codex MCP 开关往返，OpenCode MCP 保持不支持。
     #[test]
-    #[ignore = "真实环境验证：修改 ~/.codex/config.toml 与 ~/.config/opencode/opencode.jsonc（测试后还原）"]
+    #[ignore = "真实环境验证：修改 ~/.codex/config.toml（测试后还原）"]
     fn real_mcp_toggle_roundtrip() {
         let codex_path = expand_path("~/.codex/config.toml");
         let codex_orig = std::fs::read_to_string(&codex_path).unwrap();
@@ -752,32 +830,11 @@ mod tests {
         );
         println!("codex MCP 开关往返通过");
 
-        let opencode_path = expand_path("~/.config/opencode/opencode.jsonc");
-        let opencode_orig = std::fs::read_to_string(&opencode_path).unwrap();
-        toggle("opencode", "ragflow", true).unwrap();
-        assert!(
-            current_servers("opencode")
-                .unwrap()
-                .contains(&"ragflow".to_string()),
-            "opencode 应包含 ragflow"
-        );
-        toggle("opencode", "ragflow", false).unwrap();
-        assert!(
-            !current_servers("opencode")
-                .unwrap()
-                .contains(&"ragflow".to_string()),
-            "opencode 应移除 ragflow"
-        );
-        println!("opencode MCP 开关往返通过");
-
-        // 还原：opencode 原本就有 ragflow，重新打开
-        toggle("opencode", "ragflow", true).unwrap();
-        let opencode_final = std::fs::read_to_string(&opencode_path).unwrap();
-        println!(
-            "opencode 原内容与最终是否一致: {}",
-            opencode_orig == opencode_final
-        );
-        let _ = codex_orig;
+        assert!(current_servers("opencode").is_err());
+        assert!(toggle("opencode", "ragflow", true).is_err());
+        assert!(toggle("opencode", "ragflow", false).is_err());
+        assert!(sync("opencode", &[]).is_err());
+        write_text(&codex_path, &codex_orig).unwrap();
     }
 
     /// 真实环境验证：已安装的开源 agent（gemini-cli）MCP 注入→还原（手动运行）

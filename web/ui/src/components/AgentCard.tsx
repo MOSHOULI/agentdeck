@@ -209,7 +209,6 @@ export const AgentCard: React.FC<AgentCardProps> = ({
               <span>{getUiTypeLabel(agent.uiType)}</span>
               <span aria-hidden="true">·</span>
               <span>{agent.source === 'open' ? '开源' : '闭源'}</span>
-              {agent.popular && <><span aria-hidden="true">·</span><span>热度推荐</span></>}
             </span>
           </span>
         </button>
@@ -287,7 +286,6 @@ export const AgentCard: React.FC<AgentCardProps> = ({
             {agent.installationMessage && <div><dt>检测说明</dt><dd>{agent.installationMessage}</dd></div>}
             <div><dt>来源证据</dt><dd>{evidence.active?.source.kind === 'npm' ? '当前 npm 目录关联已匹配，详见实例证据' : '安装来源未验证'}</dd></div>
             <div><dt>本地认证线索</dt><dd>{agent.authVerified ? '检测到本地认证配置' : '未验证'}</dd></div>
-            <div><dt>注册表热度</dt><dd>{agent.stars > 0 ? `${agent.stars.toLocaleString()} stars` : '未提供'}<span className="agent-fact-note">注册表记录，非实时数据</span></dd></div>
             <div><dt>Agent ID</dt><dd>{agent.id}</dd></div>
           </dl>
           <section className="agent-installation-evidence" aria-label={`${agent.name} 安装实例与来源证据`}>

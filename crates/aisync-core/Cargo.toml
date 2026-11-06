@@ -1,6 +1,6 @@
 [package]
 name = "aisync-core"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2024"
 description = "AgentDeck 核心引擎——Agent 部署、记忆管理、密钥加密、配置同步"
 
