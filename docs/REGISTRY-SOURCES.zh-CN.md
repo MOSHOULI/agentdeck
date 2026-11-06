@@ -2,7 +2,7 @@
 
 [English](REGISTRY-SOURCES.md) | 简体中文
 
-最近一次定向复核：**2026-11-06**。本次覆盖 Gemini CLI 和 Claude Code 的 Node 要求与登录说明、Pi 的运行时和配置布局，Roo Code、Crush、Oh-My-Pi 的来源条目，以及 OpenCode V1/V2 的安装与配置边界。Hermes 的结论仍标注为 **2026-11-02** 核验，不代表本次重新核验。以下不是对全部目录字段或 Agent 的认证。
+最近一次定向复核：**2026-11-06**。本次覆盖 Gemini CLI 和 Claude Code 的 Node 要求与登录说明、Pi 的运行时和配置布局，Roo Code、Crush、Oh-My-Pi 的来源条目，OpenCode V1/V2 的安装与配置边界，以及 Qwen Code 手动目录和被动发现的边界。Hermes 的结论仍标注为 **2026-11-02** 核验，不代表本次重新核验。以下不是对全部目录字段或 Agent 的认证。
 
 ## 区分上游能力、适配器与实际观察
 
@@ -11,11 +11,37 @@
 - **本次实际观察**仅包括解析随应用提供的注册表和静态断言。没有运行 Agent、安装器、登录流程、供应商请求或 MCP 服务；没有读取或修改真实用户配置、凭据。
 - `future_registry` 仅保存参考来源，包含已归档项目，不是安装清单或交付承诺。迁入 `agents` 之前必须重新核验来源、实现适配器并通过隔离测试。
 
+**仅限后续开发版本的新增项：** Qwen Code 正在下一开发版本中接入，不包含在已冻结的 v1.2.0 发布版中；本文不证明新的安装包已经发布。原有九个条目与八个参考条目保留。
+
 `registry-v3.json` 的日期表示本次编辑，不代表重新验证所有安装途径或现有认证文件提示。文件存在不能证明登录可用或远端令牌有效。
 
 **本目录不认证热度排名。** 所有核心与参考条目均设为 `stars: null`、`popular: false`。null 表示没有提供当前已核验星标数，不表示零星标；false 表示撤销旧推荐标志，不是对产品的负面评价。描述已移除未核验的下载量、上下文/模型版本数字、市场排名和主观最高级表述，保留已核验的 Roo Code 归档日期和明确的 OpenCode V1/V2 版本边界。产品描述仅用于识别，不是比较推荐或全部功能认证。
 
 结构保持兼容：`stars` 可为空，排序将缺失数量按零处理，仍保留已安装优先。同等无排名条目按核心 ID 稳定排序，这不是已认证的热度顺序。独立 UI 标签、演示数据和此前缓存的注册表不构成当前核验依据，也不会因本次 bundled 目录修改而自动更新。
+
+## Qwen Code：手动安装与仅被动 PATH 发现
+
+- [官方仓库 QwenLM/qwen-code](https://github.com/QwenLM/qwen-code)及 [Apache-2.0 许可证](https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/LICENSE)。
+- 本次复核的 GitHub 发布版：[v0.26.9](https://github.com/QwenLM/qwen-code/releases/tag/v0.26.9)，对应提交 `600aff0592bcfc21668ca4aba95a5b20c6491b86`。
+- [固定提交的根包清单](https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/package.json)及[发布包清单生成逻辑](https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/scripts/prepare-package.js#L360-L434)。
+- [固定提交的官方快速入门](https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/users/quickstart.md)。
+- [固定提交的可执行入口包装器](https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/scripts/cli-entry.js)。
+- [固定提交的平台与 shell 文档](https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/developers/tools/shell.md)。
+- [固定提交的认证文档](https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/users/configuration/auth.md)。
+
+这是特定时点的上游源码复核，不是本机已安装版本。复核的发布版为 **v0.26.9**；本次无法独立读取 npm 注册服务，因此没有验证 npm dist-tag、tarball 完整性或 npm 发布状态。源码生成的发布清单将 `@qwen-code/qwen-code` 映射到命令 `qwen`，发布包的 bin 为 `cli-entry.js`；仓库中的 `scripts/cli-entry.js` 或工作区入口路径不能代替发布包 bin 路径。
+
+官方 npm 替代途径为 `npm install -g @qwen-code/qwen-code@latest`，要求 **Node.js >=22.0.0**。目录中的 `node >= 22` 仅记录这条 npm 途径的前提，不表示独立安装必须另装 Node 运行时。上游目前推荐独立的 shell/PowerShell 安装器。npm 命令与独立安装器都仅是**用户自行执行的说明**：AgentDeck 保持 `install.method: manual`、`install.command: null`、`uninstall_cmd: null`，不会把 Qwen 加入现有五个固定 npm 安装适配器。`@latest` 会变化，不是固定版本。本次未运行安装器或依赖生命周期脚本。
+
+上游支持原生 Windows，不仅是 WSL。shell 文档描述了 `cmd.exe /c`，以及 Windows build `<=19041` 时的 PTY 回退；这不是一份覆盖全部平台的最低操作系统要求表。本次未核实 macOS/Linux 的精确最低版本。这些上游平台说明不证明 AgentDeck 的 Windows GUI 或真实 Agent 往返流程已通过。
+
+包装器会处理 `QWEN_CODE_RELAUNCH_ARGS`、允许 `CLI_VERSION` 覆盖输出、读取主目录 `.env` 以选择 `QWEN_HOME`，并在**处理版本查询之前**考虑受管安装的元数据。仅清除参数和版本覆盖变量，仍不能避免主目录查找，也不能证明报告的版本属于 PATH 上的 npm 安装。因此，AgentDeck 对该条目不运行 `qwen --version`、不查询 npm、不检查 Qwen manifest，也不读取 Qwen 配置或凭据。保留的 `verify_cmd: qwen --version` 仅是后端固定识别标记，**不是会执行的验证配方**。
+
+当前只提供被动 PATH 候选观察。完整查找中找到的候选仍为 `Unsupported`，版本与安装来源未知；未找到为所检查 PATH 上的 `NotDetected`，不表示整台机器未安装。查找不完整或候选不可用时返回 `Error`，不会声称未安装。不同目标的多个候选继续标记为有歧义。自动安装、升级、卸载均不可用，不能根据源码快照、文件名或目录配方推断包关联或真实运行结果。
+
+手动安装后，官方用户流程是启动 `qwen`，再使用会话内 `/auth`；独立的 `qwen auth` 已移除。复核文档中的 Qwen Account OAuth 需要 **Plus/Pro 订阅**。API Provider 选项包括 QwenCloud、Alibaba ModelStudio、第三方与自定义服务商；本次不承诺免费额度或服务商可用性。`auth_type: account_login` 仅描述账号入口，`completion_check: null` 保持登录未验证，不猜测凭据路径。AgentDeck 不执行认证或检查认证文件。
+
+Qwen 的模型、MCP、个性化目标全部为 `null`；skills 与 memory 为 `false`，记忆采集器为 `null`。配置与管理能力检查继续返回 false。上游提供这些功能不等于 AgentDeck 启用写入适配器。此条目属于**下一开发版本**，不在已冻结的 **v1.2.0** 发布版中；静态 fixture 与合成的被动发现测试均不证明真实安装、认证或已发布支持。
 
 ## OpenCode：V1 安装途径与有限配置支持
 
@@ -90,7 +116,7 @@ Pi 的安装配方现与上游 npm 替代路径一致：`npm install -g --ignore
 
 ## 隔离目录回归测试
 
-`crates/aisync-core/tests/catalog_metadata.rs` 解析真实的随应用注册表和 `tests/fixtures/catalog-verification-2026-11-06.json` 中注明日期的预期值，检查 Node/认证修正、Pi/Hermes 写入禁用、OpenCode 明确的 V1 途径及 MCP/模型写入禁用与指令目标保留、归档/仅供参考状态、经复核的固定安装配方、现有九个核心 ID，以及全部核心/参考条目撤销未核验热度数据。定向排序测试保留已安装优先，不臆造排名。测试不执行目录中的命令、不读取用户主目录，也不联系供应商。
+`crates/aisync-core/tests/catalog_metadata.rs` 解析真实的随应用注册表和 `tests/fixtures/catalog-verification-2026-11-06.json` 中注明日期的预期值，检查 Node/认证修正、Pi/Hermes 写入禁用、OpenCode 明确的 V1 途径及 MCP/模型写入禁用与指令目标保留、归档/仅供参考状态、经复核的固定安装配方、十个核心 ID（原有九个加 Qwen Code）、未改变的八个参考 ID、Qwen Code 的手动/仅被动观察边界及禁用的管理与配置能力，以及全部核心/参考条目撤销未核验热度数据。定向排序测试保留已安装优先，不臆造排名。测试不执行目录中的命令、不读取用户主目录，也不联系供应商。
 
 通过仓库隔离主目录包装器运行：
 
