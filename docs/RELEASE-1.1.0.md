@@ -1,5 +1,13 @@
 # AgentDeck 1.1.0
 
+English | [简体中文](RELEASE-1.1.0.zh-CN.md)
+
+These are historical 1.1.0 release notes, not a description of the current development
+branch. Later installation-source inspection, restricted npm install plans and DSH
+inventory are documented in [Installation evidence](INSTALLATION-EVIDENCE.md) and
+[DSH passive inventory](DSH-PASSIVE-INVENTORY.md); they are not additions to this
+release's scope. A version string alone does not identify a build's source.
+
 This release hardens and completes the existing Windows desktop workflow without replacing the React/Tauri/Rust architecture.
 
 ## Changes

@@ -6,6 +6,7 @@ import { useAgentStore } from './stores/agentStore';
 import { useWorkspaceActivityStore } from './stores/workspaceActivity';
 import * as bridge from './bridge';
 import { installedAgent, notDetectedAgent } from './test-fixtures/agents';
+import { dshDemoReport } from './dshContract';
 
 beforeEach(() => {
   window.history.replaceState({}, '', '/?demo=1');
@@ -31,7 +32,7 @@ async function renderReadyApp(strict = false) {
 it('visibly labels read-only demo data in every workspace', async () => {
   await renderReadyApp();
   expect(screen.getByText(/只读演示模式 · 所有数据均为示例/)).toBeVisible();
-  for (const name of ['记忆管理', 'MCP 服务', '密钥与备份', '注册表更新', 'Agent 管理']) {
+  for (const name of ['记忆管理', 'MCP 服务', '密钥与备份', 'DSH 声明盘点', '注册表更新', 'Agent 管理']) {
     fireEvent.click(screen.getByRole('tab', { name: new RegExp(`^${name}`) }));
     expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
     expect(screen.getByText(/只读演示模式 · 所有数据均为示例/)).toBeVisible();
@@ -54,9 +55,9 @@ it('omits the demo banner for a native runtime', async () => {
   expect(screen.queryByText(/未连接桌面后端 · 请在/)).not.toBeInTheDocument();
 });
 
-it('keeps all five workspace trees mounted and retains local search state', async () => {
+it('keeps all six workspace trees mounted and retains local search state', async () => {
   const view = await renderReadyApp(true);
-  expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(5);
+  expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(6);
   const agents = screen.getByRole('tabpanel', { name: /^Agent 管理/ });
   const search = within(agents).getByRole('searchbox', { name: '搜索 Agent' });
   fireEvent.change(search, { target: { value: 'OpenCode' } });
@@ -130,6 +131,31 @@ it('keeps agent activity visible while a different workspace is open', async () 
   expect(screen.getByRole('tab', { name: 'Agent 管理，操作进行中' })).toHaveAttribute('aria-selected', 'false');
   act(() => useAgentStore.setState({ loading: false }));
   expect(screen.queryByText(/进行中：.*Agent 管理/)).not.toBeInTheDocument();
+});
+
+it('retains a DSH inspection and its input across navigation without scanning again', async () => {
+  let finish!: (value: bridge.DshInspectionResult) => void;
+  const pending = new Promise<bridge.DshInspectionResult>((resolve) => { finish = resolve; });
+  const inspect = vi.spyOn(bridge, 'inspectDshProfile').mockReturnValue(pending);
+  await renderReadyApp(true);
+  expect(inspect).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('tab', { name: /^DSH 声明盘点/ }));
+  const dsh = screen.getByRole('tabpanel', { name: /^DSH 声明盘点/ });
+  const input = within(dsh).getByLabelText('Profile 目录（绝对路径）');
+  fireEvent.change(input, { target: { value: '/synthetic/explicit-selection' } });
+  fireEvent.submit(within(dsh).getByRole('form', { name: 'DSH 盘点路径' }));
+  expect(inspect).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('tab', { name: /^Agent 管理/ }));
+  expect(screen.getByText(/进行中：.*DSH 声明盘点/)).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: /^DSH 声明盘点/ }));
+  expect(within(dsh).getByLabelText('Profile 目录（绝对路径）')).toBe(input);
+  expect(input).toHaveValue('/synthetic/explicit-selection');
+  expect(within(dsh).getByRole('button', { name: '盘点中…' })).toBeDisabled();
+  fireEvent.submit(within(dsh).getByRole('form', { name: 'DSH 盘点路径' }));
+  expect(inspect).toHaveBeenCalledTimes(1);
+  await act(async () => { finish({ report: dshDemoReport(false), synthetic: true }); await pending; });
+  expect(within(dsh).getByText('合成示例结果，不代表本机状态。')).toBeVisible();
+  expect(useWorkspaceActivityStore.getState().busy.dsh).toBe(false);
 });
 
 it('supports roving keyboard navigation with arrows, Home and End', async () => {

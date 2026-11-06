@@ -1,0 +1,8 @@
+{
+  "name": "@deepseek-ai/dsh",
+  "version": "0.2.2-alpha.3",
+  "type": "module",
+  "bin": {"dsh": "lib/bin.js"},
+  "engines": {"node": ">=24.9.0"},
+  "description": "SYNTHETIC_SECRET"
+}

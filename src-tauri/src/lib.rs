@@ -12,6 +12,7 @@ pub fn run() {
         .manage(commands::memory::CollectionState::default())
         .invoke_handler(tauri::generate_handler![
             commands::health_check,
+            commands::dsh::inspect_dsh_profile,
             commands::deploy::get_agents,
             commands::deploy::install_agent,
             commands::deploy::configure_agent,

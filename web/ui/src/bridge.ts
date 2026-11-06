@@ -5,6 +5,26 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { dshDemoReport, dshLimits, validateDshReport } from './dshContract';
+import type { DshInspectionResult } from './dshContract';
+export type { DshInventoryReport, DshInspectionResult } from './dshContract';
+
+/** Independent of deployment: no registry read, discovery, or lifecycle command. */
+export async function inspectDshProfile(profileDir: string, runtimeManifest: string | null): Promise<DshInspectionResult> {
+  const demo = useDemo();
+  const validInput = (value: unknown): value is string => typeof value === 'string'
+    && value.trim().length > 0 && new TextEncoder().encode(value).length <= dshLimits.max_path_bytes
+    && !/[\x00-\x1f\x7f]/.test(value);
+  if (!validInput(profileDir) || !(runtimeManifest === null || validInput(runtimeManifest))) {
+    throw new Error('请提供有效且长度受限的明确路径。');
+  }
+  if (demo) return { report: dshDemoReport(runtimeManifest !== null), synthetic: true };
+  const report = validateDshReport(await invoke<unknown>('inspect_dsh_profile', { profileDir, runtimeManifest }));
+  if ((report.runtime_manifest === null) !== (runtimeManifest === null)) {
+    throw new Error('DSH 盘点响应与所选文件不一致，请重新盘点。');
+  }
+  return { report, synthetic: false };
+}
 
 export function runtimeMode(): 'native' | 'demo' | 'unavailable' {
   if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) return 'native';

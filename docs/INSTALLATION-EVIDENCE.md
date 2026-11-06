@@ -9,7 +9,7 @@ a package. Registry recipes remain separate from facts observed on this machine.
 
 These changes are unreleased and are not in the published v1.1.1 installer. A shared
 version string does not identify the code included in a build. Compare the release's
-`BUILD_COMMIT.txt` with the source revision; see the [README](../README.md).
+`BUILD_COMMIT.txt` with the source revision; see the [README](../README.en.md).
 
 ## What is reported
 

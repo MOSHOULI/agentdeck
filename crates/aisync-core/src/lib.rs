@@ -4,6 +4,7 @@ pub mod config;
 /// 提供 Agent 部署、记忆管理、密钥加密、配置同步等基础能力。
 /// 本库不依赖 Tauri，纯 Rust 实现，可供 CLI 和桌面端共用。
 pub mod deploy;
+pub mod dsh;
 pub mod git;
 pub mod mcp;
 pub mod memory;

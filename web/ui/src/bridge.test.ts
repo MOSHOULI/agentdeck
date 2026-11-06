@@ -4,11 +4,76 @@ import nativeAgentContract from '../../../tests/fixtures/agent-info-installed.js
 import nativeNpmContract from '../../../tests/fixtures/agent-info-npm.json';
 import { npmMatchedAgent, ambiguousAgent, installedAgent } from './test-fixtures/agents';
 import { invoke } from '@tauri-apps/api/core';
+import { dshDemoReport } from './dshContract';
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 afterEach(() => {
   window.history.replaceState({}, '', '/');
   delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
   vi.clearAllMocks();
+});
+
+describe('DSH passive inspection boundary', () => {
+  it('rejects browser inspection without issuing IPC', async () => {
+    await expect(bridge.inspectDshProfile('/explicit/profile', null)).rejects.toThrow('未连接桌面后端');
+    expect(invoke).not.toHaveBeenCalled();
+  });
+  it('returns visibly synthetic declarations in demo without IPC or path reflection', async () => {
+    window.history.replaceState({}, '', '/?demo=1');
+    const result = await bridge.inspectDshProfile('/private/DO_NOT_ECHO', null);
+    expect(result.synthetic).toBe(true);
+    expect(result.report.runtime_manifest).toBeNull();
+    expect(JSON.stringify(result)).not.toContain('DO_NOT_ECHO');
+    expect(invoke).not.toHaveBeenCalled();
+  });
+  it('uses only the explicit read-only command and preserves unknown/false evidence', async () => {
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    const report = dshDemoReport(true);
+    vi.mocked(invoke).mockResolvedValue(report);
+    expect(await bridge.inspectDshProfile('/selected/profile', '/selected/runtime/package.json')).toEqual({ report, synthetic: false });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('inspect_dsh_profile', { profileDir: '/selected/profile', runtimeManifest: '/selected/runtime/package.json' });
+  });
+  it.each(['', '\u0000bad', 'x'.repeat(4097)])('rejects invalid or unbounded input before IPC', async (input) => {
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    await expect(bridge.inspectDshProfile(input, null)).rejects.toThrow('有效且长度受限');
+    await expect(bridge.inspectDshProfile('/selected/profile', input)).rejects.toThrow('有效且长度受限');
+    expect(invoke).not.toHaveBeenCalled();
+  });
+  it.each([
+    (r: Record<string, unknown>) => { r.runtime_status = 'running'; },
+    (r: Record<string, unknown>) => { r.authentication = 'authenticated'; },
+    (r: Record<string, unknown>) => { r.version_recognition = 'reviewed_manifest_version'; },
+    (r: Record<string, unknown>) => { (r.mutation_capabilities as Record<string, unknown>).manage_plugins = true; },
+    (r: Record<string, unknown>) => { (r.mutation_capabilities as Record<string, unknown>).future_write = true; },
+    (r: Record<string, unknown>) => { r.profile_manifest = { status: 'read', issue: null, metadata: null }; },
+    (r: Record<string, unknown>) => { r.profile_manifest = { status: 'missing', issue: 'missing', metadata: { name: 'partial' } }; },
+    (r: Record<string, unknown>) => { r.limitations = ['secret\u001b[0m']; },
+    (r: Record<string, unknown>) => { (r.limits as Record<string, unknown>).max_files = 100; },
+    (r: Record<string, unknown>) => { r.profile_manifest = { status: 'corrupt', issue: 'missing', metadata: null }; },
+  ])('rejects incompatible responses without presenting partial success', async (mutate) => {
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    const report = JSON.parse(JSON.stringify(dshDemoReport(false))) as Record<string, unknown>;
+    mutate(report);
+    vi.mocked(invoke).mockResolvedValue(report);
+    await expect(bridge.inspectDshProfile('/selected/profile', null)).rejects.toThrow('响应格式不兼容');
+  });
+  it('rejects an unsolicited runtime manifest and malformed dependency states', async () => {
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    vi.mocked(invoke).mockResolvedValue(dshDemoReport(true));
+    await expect(bridge.inspectDshProfile('/selected/profile', null)).rejects.toThrow('所选文件不一致');
+    const report = dshDemoReport(false);
+    Object.assign(report.profile_manifest.metadata!.declared_dependencies[0], { installed: 'installed' });
+    vi.mocked(invoke).mockResolvedValue(report);
+    await expect(bridge.inspectDshProfile('/selected/profile', null)).rejects.toThrow('响应格式不兼容');
+  });
+  it('rejects unsafe runtime metadata rather than reflecting arbitrary strings', async () => {
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    for (const field of ['reported_version', 'declared_node_engine'] as const) {
+      const report = dshDemoReport(true);
+      report.runtime_manifest!.metadata![field] = 'https://private.invalid/TOKEN';
+      vi.mocked(invoke).mockResolvedValue(report);
+      await expect(bridge.inspectDshProfile('/selected/profile', '/runtime/package.json')).rejects.toThrow('响应格式不兼容');
+    }
+  });
 });
 describe('runtime boundary', () => {
   it('rejects browser reads and writes without an explicit demo', async () => {

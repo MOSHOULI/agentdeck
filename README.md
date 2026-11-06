@@ -1,10 +1,12 @@
 # AgentDeck（AI 中枢）
 
+简体中文 | [English](README.en.md)
+
+本文描述当前开发分支。安装来源识别、受限 npm 安装计划及 DSH 桌面/CLI 被动盘点均尚未发布，不包含在已发布的 v1.1.1 安装包中；同一版本号不代表同一源码。下载时请核对安装包的 `BUILD_COMMIT.txt` 与对应提交。
+
 在一个桌面界面中管理本机 AI Agent：发现与安装、配置、可选择的对话记忆导出、加密密钥、MCP 和配置备份。
 
 **当前支持的完整桌面平台是 Windows 10/11 x64。** React + Tauri 2 + Rust 架构；Linux 可运行非密钥相关的核心/CLI，尚不提供 Linux/macOS 的受保护密钥库或完整安装包。
-
-**开发分支说明：** 以下安装来源识别、安全 npm 安装预检与 CLI 同步保护尚未包含在已发布的 v1.1.1 中。请核对安装包的 `BUILD_COMMIT.txt`，版本字符串相同不代表源码相同。
 
 ## 安装与运行
 
@@ -29,20 +31,21 @@ npm exec --prefix web/ui -- tauri build --bundles nsis --ci -- --locked
 
 ## 使用
 
-桌面界面分为 Agent 管理、记忆管理、MCP 服务、密钥与备份、注册表更新五个工作区。侧栏可折叠，支持浅色、深色或跟随系统；导航不会中断正在执行的操作，顶部与侧栏会保留操作状态。Agent 搜索只筛选当前真实列表，详情中的未知状态不会被替换成成功。
+当前开发分支的桌面界面有 Agent 管理、记忆管理、MCP 服务、密钥与备份、DSH 声明盘点、注册表更新六个工作区。侧栏可折叠，支持浅色、深色或跟随系统；导航不会中断正在执行的操作，顶部与侧栏会保留操作状态。Agent 搜索只筛选当前真实列表，详情中的未知状态不会被替换成成功。
 
-- **Agent 管理**：安装前确认，默认只安装软件，不初始化 profile、密钥库或 Git 备份，也不自动应用配置。检测区分已验证、PATH 中未发现、检测失败及无法检测；PATH 未发现不代表整台机器都未安装。已有安装、检测失败或无法检测时，不会隐式重装或升级。操作完成与列表刷新失败分别显示，状态过期时暂停写操作。
+- **Agent 管理**：安装前确认，只安装软件，不初始化 profile、密钥库或 Git 备份，也不自动应用配置。仅支持固定 npm 适配器和已检查的管理器/prefix，不执行任意注册表 shell 配方。检测区分已验证、PATH 中未发现、检测失败及无法检测；PATH 未发现不代表整台机器都未安装。目标 prefix 中已有的包或启动器即使不在 PATH，也会阻止安装；证据不足、冲突或目标变化时拒绝继续，不隐式重装或升级。安装器失败或安装后核验失败时，软件可能已发生改动，**不会自动回滚或卸载**。操作完成与列表刷新失败分别显示，状态过期时暂停写操作。
 - **安装实例与来源证据**：分别显示 PATH 候选路径、文件真实路径、可证明的实际入口及当前活动实例的实测版本。重复的 PATH 别名不会冒充多套安装；不同实例或无法完整检查时明确提示，暂停配置操作。PATH 搜索不是整机扫描，无法检测到的其他安装不会被假定不存在。
 - **npm 关联与卸载边界**：只有确切 npm 实例的全局 root/prefix、包 name/bin、链接或受支持的标准 Windows shim 与实际入口全部一致，才显示“npm 全局目录匹配”。这只是当前目录关联证据，**不证明安装历史，也不授权卸载**。自定义 wrapper、冲突或证据不足时仍为未知；不从注册表安装方式或 package.json 的版本推定来源与实测版本。自动卸载和 Agent 软件升级仍未开放，包括已匹配 npm 目录的实例，请使用原安装方式管理。
-- **个性化与模型配置**：通过独立的“应用配置”操作确认后才应用默认 profile，不执行安装器。模板首次配置时初始化，保留用户已有模板。个性化使用受管理的 Markdown 区块，保留区块外原文；格式不兼容的目标不强行覆盖。跳过原因单独显示。当前尚无配置差异预览或本机改动三方对账，应用前请检查模板和现有配置。
+- **个性化与模型配置**：通过独立的“应用配置”操作确认后才应用默认 profile，不执行安装器。配置与个性化同步要求受支持的适配器、成功且无歧义的最新安装验证；在准备 profile/备份前检查，并在写入前复查。仅来源关联未知不会禁用一个已验证且无歧义的实例，但不授予卸载/升级权限。模板首次配置时初始化，保留用户已有模板。个性化使用受管理的 Markdown 区块，保留区块外原文；格式不兼容的目标不强行覆盖。跳过原因单独显示。当前尚无配置差异预览或本机改动三方对账，应用前请检查模板和现有配置。
 - **记忆**：采集 Codex、Claude Code、OpenCode 的本地会话；搜索、手动选择和自动注入标记分别管理。撤销自动标记会立即刷新导出文件；显式手动选择会保留。导出位置为 `~/.agentdeck/memory/<agent>.md`，**外部 Agent 不保证自动读取此文件**，需将其作为上下文或配置引用。定时采集默认关闭，需明确开启后才每小时读取本地会话；可随时关闭。手动采集保持独立。采集有取消/时间预算和部分失败反馈。
 - **密钥与备份**：vault 使用 AES-256-GCM，主密钥由 Windows DPAPI 保护。列表只显示脱敏值；复制密钥才取明文。Git 快照中的配置备份加密，随机 nonce，旧快照仍可解密。恢复保留主密钥及未管理文件。
 - **MCP**：只修改注册表管理的服务器，保留用户自建服务器；批量变更验证完成后一次写入。HTTP 服务器需要自行启动，AgentDeck 不托管 RAGFlow。
+- **DSH 声明盘点**：在新增工作区中输入明确的 profile 绝对目录路径，可另选 runtime `package.json`，点击后才读取最多两份有界 manifest。路径不持久化，不扫描 HOME，不创建目录，不运行 DSH/Node/包管理器，不读取凭据、`cordis.yml` 或插件代码，也不写配置。保存的声明不证明软件已安装或插件已启用；运行、认证和实际启用状态始终未知，所有管理修改均关闭。普通浏览器不可读取本地文件，显式演示仅返回合成示例。
 - **在线更新**：只更新 Agent/MCP 注册表，不更新桌面二进制；通过内置公钥验签，校验所有文件后提交，持久化注册表版本。安装程序升级请下载新的 Release。
 
 浏览器直接打开前端时不会模拟操作成功。仅 `?demo=1` 显式启用**只读演示**，有清晰标识，禁止安装、写配置和读取密钥。
 
-实例与来源证据的字段、判定条件及后续管理边界见 [安装证据说明](docs/INSTALLATION-EVIDENCE.md)。
+实例与来源证据、安装计划及配置守卫见 [安装证据说明](docs/INSTALLATION-EVIDENCE.zh-CN.md)。各 Agent 的上游要求与关闭的适配器见 [注册表来源核验](docs/REGISTRY-SOURCES.zh-CN.md)：Pi/Hermes 配置写入保持关闭；OpenCode 的 MCP/模型写入关闭，保留受支持的指令文件适配器，`opencode-ai` 安装途径只对应 V1。桌面路径选择及版本范围见 [DSH 被动盘点说明](docs/DSH-PASSIVE-INVENTORY.zh-CN.md)。
 
 ## 数据与恢复边界
 
@@ -60,6 +63,8 @@ npm exec --prefix web/ui -- tauri build --bundles nsis --ci -- --locked
 ```powershell
 cargo run --locked -p aisync-cli -- health
 cargo run --locked -p aisync-cli -- agents
+# DSH 静态盘点：仅显式选定的已有目录，不启动 DSH 或创建 profile
+cargo run --locked -p aisync-cli -- dsh inspect --profile-dir "C:\DSH\profiles\web"
 cargo run --locked -p aisync-cli -- deploy --agent codex --action verify
 cargo run --locked -p aisync-cli -- deploy --agent codex --action install --yes
 # 可选的独立配置操作，需要 Git 备份与受保护密钥库支持
@@ -70,7 +75,9 @@ cargo run --locked -p aisync-cli -- backups
 cargo run --locked -p aisync-cli -- restore <timestamp> --full --yes
 ```
 
-安装、配置、同步、恢复需要 `--yes`；安装不会隐式写配置。`deploy --action verify` 输出实例与来源观察；配置操作在准备 profile 或备份前重新检查实例，存在歧义时拒绝。自动卸载即使传入 `--yes` 也尚未开放。受保护密钥/备份相关命令仅 Windows 可用，纯软件安装不依赖该备份流程。
+安装、配置、同步、恢复需要 `--yes`；安装不会隐式写配置，只执行通过目标核验的固定 npm 计划。`deploy --action verify` 输出实例与来源观察。配置及个性化同步在准备 profile 或备份前检查安装资格，并在写入前复查；CLI `sync` 先检查全部个性化目标，任一不合格都不会开始备份或写入。仅记忆导出不要求安装。自动卸载与 Agent 软件升级仍未开放，`--yes` 不会解除限制。受保护密钥/备份相关命令仅 Windows 可用，纯软件安装不依赖该备份流程。
+
+`dsh inspect` 与桌面 DSH 工作区使用相同的被动读取器；它仅返回 JSON，不进入上述部署流程。它只读取明确选择的 profile 的 `package.json`，可通过 `--runtime-manifest` 另外选择一个 runtime 包的 `package.json`。不扫描 HOME，不调用 DSH/npm/pnpm，不读取凭据、`cordis.yml` 或插件代码。包依赖和 bundle selection 仅是保存的声明，版本仅是 manifest 报告值，不代表软件已安装、插件正在运行或已经认证。退出码 0 只表示成功产生报告；缺失、不支持或未知状态需检查 JSON。解析约定仅依据 `0.2.2-alpha.3` 快照审查；2026-11-06 固定核验的上游默认分支已声明 `0.2.2-rc.1`，不表示本分支新支持 rc.1。所有版本的管理写操作均未开放。详见 [DSH 被动盘点边界](docs/DSH-PASSIVE-INVENTORY.zh-CN.md)。
 
 ## 测试与发布
 
@@ -90,7 +97,7 @@ Linux 核心检查：`python scripts/run-isolated.py cargo test --locked -p aisy
 
 测试运行器设置 `AGENTDECK_TEST_HOME`，核心路径解析显式尊重此绝对路径（Windows Known Folder API 不受普通 HOME 变量影响）。
 
-**所有测试使用隔离 HOME。不要运行 `--ignored` 或 `--include-ignored`**：标记忽略的真实环境测试可能安装/卸载第三方软件、访问会话和修改配置。常规 CI 只使用合成夹具。
+**所有测试使用隔离 HOME。不要运行 `--ignored` 或 `--include-ignored`**：标记忽略的真实环境测试可能安装/卸载第三方软件、访问会话和修改配置。常规 CI 只使用合成夹具。当前安装安全与 DSH 增量未通过真实 Agent 安装或桌面 GUI 流程验证；模拟 IPC、临时 manifest 和替身进程测试不能替代这些验证。
 
 CI 验证前端、Linux 核心/CLI、Windows 全工作区（含 DPAPI），构建 NSIS 并记录 SHA256 和源码提交。PR 或合并 main 不会自动发布安装包；只有在 main 手动触发工作流并明确开启 `publish_release`，且全部验证门禁通过后，才会先上传草稿 Release，再下载核对安装包字节、SHA256、构建提交与实际标签提交，全部一致才公开发布。现有 Release（包括草稿）或指向其他提交的标签会阻止发布，需人工核查，不会覆盖或按成功跳过。
 

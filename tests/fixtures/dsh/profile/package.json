@@ -1,0 +1,10 @@
+{
+  "name": "dsh-profile-synthetic",
+  "private": true,
+  "dependencies": {"@deepseek-ai/dsh-base": "0.2.2-alpha.3"},
+  "optionalDependencies": {"synthetic-plugin": "https://user:SYNTHETIC_SECRET@example.invalid/a?token=SYNTHETIC_SECRET"},
+  "dsh": {"manifestVersion": 1, "profile": {"bundles": ["@deepseek-ai/dsh-base", "@deepseek-ai/dsh-web-app"]}},
+  "description": "SYNTHETIC_SECRET",
+  "scripts": {"postinstall": "DO_NOT_EXECUTE"},
+  "config": {"apiKey": "SYNTHETIC_SECRET"}
+}
