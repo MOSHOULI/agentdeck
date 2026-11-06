@@ -8,10 +8,11 @@ command. This brings the desktop to six workspaces. DSH is not part of the gener
 view, not a plugin manager: installation, configuration, plugin activation, update,
 downgrade, removal, authentication and runtime connections remain unavailable.
 
-These features are unreleased and are not in the published v1.1.1 installer.
-A matching version string does not identify the source included in a build. Check
-the release's `BUILD_COMMIT.txt` against the relevant source revision. DSH itself
-does not need to be installed or started to inspect synthetic or copied manifests.
+These features are planned for v1.2.0 and are not in the published v1.1.1 installer.
+Confirm publication on the versioned Release page and compare its `BUILD_COMMIT.txt`
+with the source revision. A version string alone does not identify the included
+source. DSH itself does not need to be installed or started to inspect synthetic
+or copied manifests.
 
 ## Desktop usage
 

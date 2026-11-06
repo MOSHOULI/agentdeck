@@ -307,6 +307,13 @@ fn apply_update_with(
 mod tests {
     use super::*;
     use crate::release::ManifestFile;
+
+    fn next_patch_version(version: &str) -> String {
+        let (prefix, patch) = version.rsplit_once('.').unwrap();
+        let patch = patch.parse::<u64>().unwrap().checked_add(1).unwrap();
+        format!("{prefix}.{patch}")
+    }
+
     struct Fixture {
         root: std::path::PathBuf,
         paths: DataPaths,
@@ -360,11 +367,22 @@ mod tests {
     #[test]
     fn versions_reject_invalid_and_downgrades() {
         let f = Fixture::new();
-        let m = f.manifest();
+        let mut m = f.manifest();
+        m.version = next_patch_version(env!("CARGO_PKG_VERSION"));
         assert!(is_update_available("1.0.0", &m));
-        assert!(!is_update_available("9.9.9", &m));
+        assert!(!is_update_available(&m.version, &m));
+        assert!(!is_update_available(&next_patch_version(&m.version), &m));
         assert!(!is_update_available_for("0.9.0", "0.9.0", &m));
-        assert!(!is_update_available("invalid", &m));
+        for invalid in ["", "invalid", "1..0", "1.2.0-rc.1", "18446744073709551616"] {
+            assert!(!is_update_available(invalid, &m));
+            assert!(!is_update_available_for("1.0.0", invalid, &m));
+            let mut invalid_manifest = m.clone();
+            invalid_manifest.version = invalid.into();
+            assert!(!is_update_available("1.0.0", &invalid_manifest));
+            invalid_manifest = m.clone();
+            invalid_manifest.min_version = invalid.into();
+            assert!(!is_update_available("1.0.0", &invalid_manifest));
+        }
         assert!(compare_versions("1.10.0", "1.9.0").is_gt());
     }
 
@@ -372,16 +390,34 @@ mod tests {
     fn stock_feed_cannot_replace_bundled_metadata_even_for_unknown_legacy_data() {
         let f = Fixture::new();
         let mut manifest = f.manifest();
-        for version in ["1.0.0", "1.0.1", "1.1.0", "1.1.0.0", "1.1.1", "1.1.1.0"] {
+        let bundled = env!("CARGO_PKG_VERSION");
+        let equal_with_zero = format!("{bundled}.0");
+        for version in [
+            "1.0.0",
+            "1.0.1",
+            "1.1.0",
+            "1.1.0.0",
+            "1.1.1",
+            "1.1.1.0",
+            "1.1.2",
+            bundled,
+            &equal_with_zero,
+        ] {
             manifest.version = version.into();
             assert!(!is_update_available("0.0.0", &manifest));
             assert!(!is_update_available("1.0.0", &manifest));
             assert!(!is_update_available("1.1.0", &manifest));
+            assert!(!is_update_available(bundled, &manifest));
         }
-        manifest.version = "1.1.2".into();
+        manifest.version = next_patch_version(bundled);
         assert!(is_update_available("0.0.0", &manifest));
         assert!(is_update_available("1.1.0", &manifest));
-        assert!(!is_update_available("1.2.0", &manifest));
+        assert!(is_update_available(bundled, &manifest));
+        assert!(!is_update_available(&manifest.version, &manifest));
+        assert!(!is_update_available(
+            &next_patch_version(&manifest.version),
+            &manifest
+        ));
     }
 
     #[test]
@@ -404,12 +440,23 @@ mod tests {
         let (secret, public) = crate::release::generate_keypair().unwrap();
         let mut manifest = f.manifest();
         manifest.pubkey_fp = crate::release::pubkey_fingerprint(&public);
-        for version in ["1.0.0", "1.1.0", "1.1.1", "1.1.2"] {
+        let bundled = env!("CARGO_PKG_VERSION");
+        let equal_with_zero = format!("{bundled}.0");
+        let future = next_patch_version(bundled);
+        for version in [
+            "1.0.0",
+            "1.1.0",
+            "1.1.1",
+            "1.1.2",
+            bundled,
+            &equal_with_zero,
+            &future,
+        ] {
             manifest.version = version.into();
             let json = crate::release::canonical_manifest_json(&manifest).unwrap();
             let sig = crate::release::sign_manifest(&manifest, &secret).unwrap();
             let verified = parse_and_verify(&json, &sig, &public).unwrap();
-            if version != "1.1.2" {
+            if version != future {
                 assert!(apply_update_at(&verified, &f.paths).is_err());
                 for (name, bytes) in stock {
                     assert_eq!(
@@ -423,8 +470,8 @@ mod tests {
             }
         }
         assert_eq!(
-            crate::registry::installed_version_at(&f.paths, "1.1.0").unwrap(),
-            "1.1.2"
+            crate::registry::installed_version_at(&f.paths, bundled).unwrap(),
+            future
         );
         let backup = std::fs::read_dir(f.paths.registry_dir.parent().unwrap())
             .unwrap()
@@ -459,7 +506,16 @@ mod tests {
         let (secret, public) = crate::release::generate_keypair().unwrap();
         let mut manifest = f.manifest();
         manifest.pubkey_fp = crate::release::pubkey_fingerprint(&public);
-        for version in ["1.0.0", "1.1.0"] {
+        let bundled = env!("CARGO_PKG_VERSION");
+        let equal_with_zero = format!("{bundled}.0");
+        for version in [
+            "1.0.0",
+            "1.1.0",
+            "1.1.1",
+            "1.1.2",
+            bundled,
+            &equal_with_zero,
+        ] {
             manifest.version = version.into();
             let json = crate::release::canonical_manifest_json(&manifest).unwrap();
             let sig = crate::release::sign_manifest(&manifest, &secret).unwrap();
