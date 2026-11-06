@@ -81,6 +81,8 @@ python scripts/run-isolated.py cargo test --locked --workspace
 
 Linux 核心检查：`python scripts/run-isolated.py cargo test --locked -p aisync-core -p aisync-cli`。
 
+本分支为 Linux 桌面依赖 `glib 0.18.5` 回移了 `RUSTSEC-2024-0429` 的上游两行修复，保留原版本与告警。源码、实际依赖路径及18项真实 GLib 回归已在三档优化下验证通过；完整 Linux 桌面构建和图形界面仍未验证，也未消除其他维护警告。精确提交、CI证据和限制见 [中文说明](docs/GLIB-BACKPORT.zh-CN.md) / [English guide](docs/GLIB-BACKPORT.md)。
+
 测试运行器设置 `AGENTDECK_TEST_HOME`，核心路径解析显式尊重此绝对路径（Windows Known Folder API 不受普通 HOME 变量影响）。
 
 **所有测试使用隔离 HOME。不要运行 `--ignored` 或 `--include-ignored`**：标记忽略的真实环境测试可能安装/卸载第三方软件、访问会话和修改配置。常规 CI 只使用合成夹具。
