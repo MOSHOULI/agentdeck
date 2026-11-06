@@ -4,6 +4,7 @@ pub mod backup;
 /// 每个 Tauri command 对应前端 bridge.ts 的一个函数。
 /// M0 骨架：仅健康检查。M1-M6 逐步添加 deploy/memory/vault/sync/backup 命令。
 pub mod deploy;
+pub mod dsh;
 pub mod memory;
 pub mod sync;
 pub mod update;

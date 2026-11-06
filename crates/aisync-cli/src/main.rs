@@ -193,24 +193,11 @@ fn run_deploy_with(
         DeployAction::Configure => {
             anyhow::ensure!(
                 deploy::can_configure(definition),
-                "{agent} has no supported profile configuration adapter"
+                "{} has no supported profile configuration adapter",
+                definition.id
             );
-            // Check before profile initialization or backup creation. The core
-            // repeats verification immediately before applying configuration.
-            let details = inspect(definition);
-            anyhow::ensure!(
-                !details.ambiguous,
-                "Cannot configure {agent}: multiple or unresolved installation instances"
-            );
-            anyhow::ensure!(
-                details.probe.status == deploy::InstallationStatus::Installed,
-                "Cannot configure {agent}: {}",
-                details
-                    .probe
-                    .message
-                    .as_deref()
-                    .unwrap_or("Installation was not verified")
-            );
+            // Shared rules apply before profile preparation and again in core.
+            deploy::validate_configuration_eligibility(definition, &inspect(definition))?;
             let source = prepare_profile()?;
             let outcome = deploy::configure_agent(definition, &source)?;
             println!("{agent}: profile configuration applied");
@@ -228,6 +215,43 @@ fn run_deploy_with(
     Ok(())
 }
 
+/// Validate the entire personalization selection before any backup, profile
+/// initialization or write. Memory-only export stays independent of installation.
+fn run_sync_with(
+    agents: &[registry::AgentDefinition],
+    mut inspect: impl FnMut(&registry::AgentDefinition) -> deploy::InstallationDetails,
+    backup: impl FnOnce() -> aisync_core::Result<()>,
+    mut personalization: impl FnMut(&str) -> aisync_core::Result<()>,
+    mut memory: impl FnMut(&str) -> aisync_core::Result<()>,
+) -> anyhow::Result<()> {
+    for agent in agents {
+        anyhow::ensure!(
+            config::supports_personalization(agent) || agent.config_inject.memory,
+            "{} has no supported personalization or memory adapter",
+            agent.id
+        );
+        if config::supports_personalization(agent) {
+            deploy::validate_configuration_eligibility(agent, &inspect(agent))?;
+        }
+    }
+    backup()?;
+    for agent in agents {
+        if config::supports_personalization(agent) {
+            personalization(&agent.id)?;
+        } else if agent.config_inject.personalization.is_some() {
+            eprintln!(
+                "Warning: {} personalization has no supported destination; skipped",
+                agent.id
+            );
+        }
+        if agent.config_inject.memory {
+            memory(&agent.id)?;
+        }
+        println!("{}: synchronized", agent.id);
+    }
+    Ok(())
+}
+
 fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Agents => {
@@ -239,12 +263,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     "{}\t{}\t{}",
                     agent.id,
                     agent.name,
-                    if agent
-                        .install
-                        .command
-                        .as_deref()
-                        .is_some_and(|c| !c.trim().is_empty())
-                    {
+                    if deploy::can_install(&agent) {
                         "automatic installation"
                     } else {
                         "manual installation"
@@ -274,28 +293,13 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 .iter()
                 .map(|id| find_agent(id))
                 .collect::<anyhow::Result<Vec<_>>>()?;
-            for agent in &agents {
-                anyhow::ensure!(
-                    config::supports_personalization(agent) || agent.config_inject.memory,
-                    "{} has no supported personalization or memory adapter",
-                    agent.id
-                );
-            }
-            git::backup("CLI sync configurations")?;
-            for agent in agents {
-                if config::supports_personalization(&agent) {
-                    sync::sync_personalization(&agent.id)?;
-                } else if agent.config_inject.personalization.is_some() {
-                    eprintln!(
-                        "Warning: {} personalization has no supported destination; skipped",
-                        agent.id
-                    );
-                }
-                if agent.config_inject.memory {
-                    sync::sync_memory_rules(&agent.id)?;
-                }
-                println!("{}: synchronized", agent.id);
-            }
+            run_sync_with(
+                &agents,
+                deploy::inspect_installation,
+                || git::backup("CLI sync configurations").map(|_| ()),
+                sync::sync_personalization,
+                sync::sync_memory_rules,
+            )?;
         }
         Commands::Deploy { agent, action, yes } => {
             let definition = find_agent(&agent)?;
@@ -895,7 +899,58 @@ mod tests {
             || panic!("Ambiguous instances must not initialize profiles or backups"),
         )
         .unwrap_err();
-        assert!(error.to_string().contains("multiple or unresolved"));
+        assert!(error.to_string().contains("Multiple installation targets"));
+    }
+
+    #[test]
+    fn sync_validates_all_agents_before_backup_profile_or_write() {
+        for (status, ambiguous) in [
+            (deploy::InstallationStatus::NotDetected, false),
+            (deploy::InstallationStatus::Error, false),
+            (deploy::InstallationStatus::Unsupported, false),
+            (deploy::InstallationStatus::Installed, true),
+        ] {
+            let mut inspected = 0;
+            assert!(
+                run_sync_with(
+                    &[configurable_agent(), configurable_agent()],
+                    |_| {
+                        inspected += 1;
+                        if inspected == 1 {
+                            fake_details(deploy::InstallationStatus::Installed, false)
+                        } else {
+                            fake_details(status, ambiguous)
+                        }
+                    },
+                    || panic!("Blocked batch must not create a backup"),
+                    |_| panic!(
+                        "Blocked batch must not initialize profiles or write personalization"
+                    ),
+                    |_| panic!("Blocked batch must not export memory"),
+                )
+                .is_err()
+            );
+            assert_eq!(inspected, 2);
+        }
+    }
+
+    #[test]
+    fn memory_only_sync_does_not_acquire_an_installation_requirement() {
+        let mut agent = fake_agent();
+        agent.config_inject.memory = true;
+        let exported = std::cell::Cell::new(false);
+        run_sync_with(
+            &[agent],
+            |_| panic!("Memory-only export does not inspect software"),
+            || Ok(()),
+            |_| panic!("No personalization adapter"),
+            |_| {
+                exported.set(true);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(exported.get());
     }
 
     #[test]

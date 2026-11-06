@@ -5,6 +5,26 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { dshDemoReport, dshLimits, validateDshReport } from './dshContract';
+import type { DshInspectionResult } from './dshContract';
+export type { DshInventoryReport, DshInspectionResult } from './dshContract';
+
+/** Independent of deployment: no registry read, discovery, or lifecycle command. */
+export async function inspectDshProfile(profileDir: string, runtimeManifest: string | null): Promise<DshInspectionResult> {
+  const demo = useDemo();
+  const validInput = (value: unknown): value is string => typeof value === 'string'
+    && value.trim().length > 0 && new TextEncoder().encode(value).length <= dshLimits.max_path_bytes
+    && !/[\x00-\x1f\x7f]/.test(value);
+  if (!validInput(profileDir) || !(runtimeManifest === null || validInput(runtimeManifest))) {
+    throw new Error('请提供有效且长度受限的明确路径。');
+  }
+  if (demo) return { report: dshDemoReport(runtimeManifest !== null), synthetic: true };
+  const report = validateDshReport(await invoke<unknown>('inspect_dsh_profile', { profileDir, runtimeManifest }));
+  if ((report.runtime_manifest === null) !== (runtimeManifest === null)) {
+    throw new Error('DSH 盘点响应与所选文件不一致，请重新盘点。');
+  }
+  return { report, synthetic: false };
+}
 
 export function runtimeMode(): 'native' | 'demo' | 'unavailable' {
   if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) return 'native';
@@ -101,13 +121,13 @@ const MOCK_AGENTS: AgentInfo[] = [
     canUninstall: false,
     canConfigure: true,
     uninstallHelp: '示例数据：安装来源未验证，请使用原安装方式卸载。',
-    version: '1.18.15',
+    version: '0.0.0-demo',
     authVerified: true,
     source: 'open',
     uiType: 'all',
-    stars: 194000,
-    popular: true,
-    description: '开源 AI 编程代理，支持 75+ 模型供应商、LSP 集成、Plan/Build 双模式。',
+    stars: 0,
+    popular: false,
+    description: '合成示例：展示 Agent 卡片与配置入口，不代表本机安装或当前产品能力。',
     icon: 'opencode',
     category: 'ai-coding',
   },
@@ -126,9 +146,9 @@ const MOCK_AGENTS: AgentInfo[] = [
     authVerified: false,
     source: 'closed',
     uiType: 'all',
-    stars: 140000,
-    popular: true,
-    description: 'Anthropic 官方终端 AI 编程代理，MCP 原生支持、1M 上下文。',
+    stars: 0,
+    popular: false,
+    description: '合成示例：展示 PATH 未检测到的界面，不代表本机安装或当前产品能力。',
     icon: 'claude-code',
     category: 'ai-coding',
   },
@@ -144,13 +164,13 @@ const MOCK_AGENTS: AgentInfo[] = [
     canUninstall: false,
     canConfigure: true,
     uninstallHelp: '示例数据：安装来源未验证，请使用原安装方式卸载。',
-    version: '1.0.0',
+    version: '0.0.0-demo',
     authVerified: true,
     source: 'open',
     uiType: 'cli+desktop',
-    stars: 104000,
-    popular: true,
-    description: 'OpenAI 官方 AI 编程代理，沙箱安全执行、云端异步批处理。',
+    stars: 0,
+    popular: false,
+    description: '合成示例：展示 CLI 与桌面类型，不代表本机安装或当前产品能力。',
     icon: 'codex',
     category: 'ai-coding',
   },

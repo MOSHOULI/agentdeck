@@ -1,4 +1,4 @@
-//! Bounded execution of trusted registry installation and verification commands.
+//! Frozen package-manager installation and bounded verification commands.
 //!
 //! Callers are responsible for obtaining user confirmation before installation or
 //! configuration. Removal is blocked until installation provenance is recorded.
@@ -14,11 +14,6 @@ pub use inspection::{
 
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
-
-/// 执行注册表里的 shell 命令（Windows 用 cmd /C）
-fn run_shell(cmdline: &str) -> std::io::Result<()> {
-    run_shell_with_timeout(cmdline, Duration::from_secs(300))
-}
 
 fn run_shell_with_timeout(cmdline: &str, timeout: Duration) -> std::io::Result<()> {
     wait_for_shell_with_timeout(spawn_shell(cmdline)?, timeout)
@@ -99,48 +94,15 @@ fn wait_for_shell_with_timeout(mut child: Child, timeout: Duration) -> std::io::
     }
 }
 
-/// Install only after a reliable missing-executable observation, then verify.
-/// This path is not an implicit repair, upgrade or reinstall action.
+/// Install using a supported, frozen package-manager plan. PATH absence alone
+/// never authorizes a reinstall of a package already present in its global root.
 pub fn install_agent(agent: &AgentDefinition) -> crate::Result<()> {
-    install_agent_with(agent, probe_installation, run_shell)
+    inspection::install_agent(agent)
 }
 
-fn install_agent_with(
-    agent: &AgentDefinition,
-    mut probe: impl FnMut(&AgentDefinition) -> InstallationProbe,
-    run: impl FnOnce(&str) -> std::io::Result<()>,
-) -> crate::Result<()> {
-    let command = agent
-        .install
-        .command
-        .as_deref()
-        .filter(|cmd| !cmd.trim().is_empty())
-        .ok_or_else(|| crate::Error::InstallFailed(format!("{} 缺少安装命令", agent.name)))?;
-    let before = probe(agent);
-    if before.status != InstallationStatus::NotDetected {
-        return Err(crate::Error::InstallFailed(format!(
-            "Installation is blocked for {}: {}",
-            agent.name,
-            before
-                .message
-                .as_deref()
-                .unwrap_or("Already installed; reinstall or upgrade must be explicit")
-        )));
-    }
-    run(command)
-        .map_err(|e| crate::Error::InstallFailed(format!("安装 {} 失败: {}", agent.name, e)))?;
-    let after = probe(agent);
-    if after.status != InstallationStatus::Installed {
-        return Err(crate::Error::InstallFailed(format!(
-            "安装 {} 后验证失败: {}",
-            agent.name,
-            after
-                .message
-                .as_deref()
-                .unwrap_or("Installation was not verified")
-        )));
-    }
-    Ok(())
+/// Capability describes a safe executable adapter, not a registry shell recipe.
+pub fn can_install(agent: &AgentDefinition) -> bool {
+    inspection::can_install(agent)
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -162,7 +124,7 @@ pub fn install_agent_with_inject(
 /// independent of installation status; both are checked before configuration.
 pub fn can_configure(agent: &AgentDefinition) -> bool {
     crate::config::supports_personalization(agent)
-        || (matches!(agent.id.as_str(), "codex" | "opencode")
+        || (agent.id == "codex"
             && agent
                 .config_inject
                 .model_config
@@ -192,29 +154,7 @@ fn configure_agent_with(
     source_dir: &std::path::Path,
     apply: impl FnOnce(&AgentDefinition, &std::path::Path) -> crate::Result<crate::config::InjectReport>,
 ) -> crate::Result<InstallOutcome> {
-    if !can_configure(agent) {
-        return Err(crate::Error::InjectFailed(format!(
-            "{} has no supported profile configuration adapter",
-            agent.name
-        )));
-    }
-    let details = inspect_installation(agent);
-    let probe = details.probe;
-    if details.ambiguous {
-        return Err(crate::Error::InjectFailed(
-            "Multiple installation targets were found; choose and resolve the intended installation before configuring".into(),
-        ));
-    }
-    if probe.status != InstallationStatus::Installed {
-        return Err(crate::Error::InjectFailed(format!(
-            "Cannot configure {} without successful installation verification: {}",
-            agent.name,
-            probe
-                .message
-                .as_deref()
-                .unwrap_or("Installation was not verified")
-        )));
-    }
+    ensure_configuration_eligible(agent)?;
     let report = apply(agent, source_dir)?;
     let warnings = [
         ("Personalization", report.personalization),
@@ -227,6 +167,51 @@ fn configure_agent_with(
     })
     .collect();
     Ok(InstallOutcome { warnings })
+}
+
+/// Shared guard for profile configuration and personalization synchronization.
+/// Call before preparing profiles or backups, and recheck at the write boundary.
+/// MCP's independent offline configuration semantics are intentionally unchanged.
+pub fn ensure_configuration_eligible(agent: &AgentDefinition) -> crate::Result<()> {
+    if !can_configure(agent) {
+        return Err(crate::Error::InjectFailed(format!(
+            "{} has no supported profile configuration adapter",
+            agent.name
+        )));
+    }
+    let details = inspect_installation(agent);
+    validate_configuration_eligibility(agent, &details)
+}
+
+/// Validate a fresh observation using the same eligibility rules at every
+/// profile entrypoint. An observation is not a reusable authorization token.
+pub fn validate_configuration_eligibility(
+    agent: &AgentDefinition,
+    details: &InstallationDetails,
+) -> crate::Result<()> {
+    if !can_configure(agent) {
+        return Err(crate::Error::InjectFailed(format!(
+            "{} has no supported profile configuration adapter",
+            agent.name
+        )));
+    }
+    if details.ambiguous {
+        return Err(crate::Error::InjectFailed(
+            "Multiple installation targets were found; choose and resolve the intended installation before configuring".into(),
+        ));
+    }
+    if details.probe.status != InstallationStatus::Installed {
+        return Err(crate::Error::InjectFailed(format!(
+            "Cannot configure {} without successful installation verification: {}",
+            agent.name,
+            details
+                .probe
+                .message
+                .as_deref()
+                .unwrap_or("Installation was not verified")
+        )));
+    }
+    Ok(())
 }
 
 /// Registry installation methods describe available recipes, not the origin of
@@ -484,19 +469,10 @@ mod tests {
     }
 
     #[test]
-    fn install_and_verify_with_echo() {
+    fn shell_recipes_cannot_bypass_safe_install_adapter() {
         let agent = fake_agent();
-        let mut probes = [
-            InstallationStatus::NotDetected,
-            InstallationStatus::Installed,
-        ]
-        .into_iter();
-        install_agent_with(
-            &agent,
-            |_| observation(probes.next().expect("preflight and verification only")),
-            run_shell,
-        )
-        .expect("echo 安装命令应成功");
+        assert!(!can_install(&agent));
+        assert!(install_agent(&agent).is_err());
         assert!(verify_installation(&agent).unwrap());
         assert!(!can_uninstall(&agent));
         assert!(uninstall_agent(&agent).is_err());
@@ -628,24 +604,6 @@ mod tests {
     }
 
     #[test]
-    fn install_rejects_existing_unknown_and_unsupported_before_running() {
-        for status in [
-            InstallationStatus::Installed,
-            InstallationStatus::Error,
-            InstallationStatus::Unsupported,
-        ] {
-            assert!(
-                install_agent_with(
-                    &fake_agent(),
-                    |_| observation(status),
-                    |_| panic!("Installer must remain blocked"),
-                )
-                .is_err()
-            );
-        }
-    }
-
-    #[test]
     fn public_install_entry_point_blocks_existing_and_unverified_software() {
         let directory =
             std::env::temp_dir().join(format!("agentdeck-install-{}", uuid::Uuid::new_v4()));
@@ -659,25 +617,6 @@ mod tests {
             assert!(!marker.exists(), "Blocked install executed its command");
         }
         std::fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn install_requires_successful_post_install_verification() {
-        for status in [
-            InstallationStatus::NotDetected,
-            InstallationStatus::Error,
-            InstallationStatus::Unsupported,
-        ] {
-            let mut probes = [InstallationStatus::NotDetected, status].into_iter();
-            assert!(
-                install_agent_with(
-                    &fake_agent(),
-                    |_| observation(probes.next().unwrap()),
-                    |_| Ok(()),
-                )
-                .is_err()
-            );
-        }
     }
 
     #[test]
@@ -733,7 +672,7 @@ mod tests {
                         file: file.into(),
                         format: format.into(),
                     });
-                    assert!(can_configure(&agent));
+                    assert_eq!(can_configure(&agent), id == "codex");
                 }
             }
             for (file, format) in [
@@ -750,6 +689,14 @@ mod tests {
             }
         }
         agent.config_inject.model_config = None;
+        agent.config_inject.personalization = Some(crate::registry::PersonalizationInject {
+            template: "opencode".into(),
+            target: "~/.config/opencode/AGENTS.md".into(),
+        });
+        assert!(
+            can_configure(&agent),
+            "OpenCode Markdown personalization remains supported"
+        );
         agent.config_inject.personalization = Some(crate::registry::PersonalizationInject {
             template: "synthetic".into(),
             target: "unsupported://instructions".into(),
@@ -948,7 +895,7 @@ mod tests {
         let pi = registry.agents.get("pi").unwrap();
         assert_eq!(
             pi.install.command.as_deref(),
-            Some("npm install -g @earendil-works/pi-coding-agent")
+            Some("npm install -g --ignore-scripts @earendil-works/pi-coding-agent")
         );
         assert_eq!(
             pi.install.uninstall_cmd.as_deref(),

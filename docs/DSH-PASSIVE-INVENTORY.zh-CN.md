@@ -1,18 +1,34 @@
-# DSH 被动盘点：首个实现阶段
+# DSH 被动盘点：桌面与 CLI
 
 [English](DSH-PASSIVE-INVENTORY.md) | 简体中文
 
-本次增量基于 PR #2 的安装证据工作，基准提交为
-`7f43da1f654307241eee1558c920a79f80b1dd69`。它新增核心读取器和独立 CLI
-入口，不会将 DSH 加入通用部署注册表，不提供桌面管理页面，也不开放安装、配置、
-更新、降级、移除、认证或运行时连接。
+当前开发分支通过新增的桌面工作区“DSH 声明盘点”（现共六个工作区）和独立的 `aisync` CLI 命令，
+使用同一个被动核心读取器。DSH 不在通用部署注册表中。此页面仅用于盘点，不是插件管理器；
+安装、配置、插件启停、更新、降级、移除、认证和运行时连接仍未开放。
 
-这是源码分支中的功能，并不表示版本字符串相同的已发布安装包也包含该功能。
-判断安装包是否含有此命令前，请将其 `BUILD_COMMIT.txt` 与源码修订版本核对。
-盘点合成或复制的 manifest，不需要安装或启动 DSH 本身。
+这些功能尚未发布，不在已发布的 v1.1.1 安装包中。版本字符串相同不能证明构建包含相同
+源码，请核对发布中的 `BUILD_COMMIT.txt` 与对应源码修订版本。盘点合成或复制的 manifest，
+不需要安装或启动 DSH 本身。
 
-本阶段通过从源码构建的 `aisync` CLI 提供功能，没有桌面按钮。安装 NSIS 桌面包本身
-不会安装该 CLI 命令。在本仓库中满足文档所列 Rust 前提条件后，例如可以运行：
+## 桌面使用
+
+在从源码构建的桌面应用中，打开 **DSH 声明盘点**，输入明确选择的已有 profile 目录的
+绝对路径。可选填另一份 runtime `package.json` 的绝对路径，然后点击 **盘点所选声明**。
+打开工作区或编辑输入不会开始扫描；没有默认路径，也不会持久化保存所选路径。
+
+桌面调用独立的 `inspect_dsh_profile` IPC 命令，在读取任何文件前验证两项路径选择，
+再交给与 CLI 相同的被动读取器，不调用 `aisync` 或 DSH CLI。更改任一路径会清除旧报告；
+读取期间阻止重复提交，并丢弃旧路径选择对应的迟到结果。切换工作区不需要重新开始盘点。
+
+页面分别显示文件观察、已保存的依赖和 bundle 选择，以及始终**未知**的运行时、认证与
+实际启用状态。所有修改能力均**关闭**。不兼容的响应会被拒绝，不会显示为部分成功。
+普通浏览器不能读取本地路径；显式 `?demo=1` 只展示带标识的合成声明，不读取输入路径或
+任何本地文件。
+
+## CLI 使用
+
+安装 NSIS 桌面包本身不会安装 `aisync` 命令。在本仓库中满足文档所列 Rust 前提条件后，
+例如可以运行：
 
 ```powershell
 cargo run --locked -p aisync-cli -- dsh inspect --profile-dir "C:\DSH\profiles\web"
@@ -68,10 +84,17 @@ JSON 键会被拒绝。只盘点 `dependencies`、`optionalDependencies` 和
 
 ## 固定的上游参考版本
 
-已审查的上游快照为
-[`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/commit/8bd073392eef6f54e921a093b95076248eb08cbb)，
-其中 CLI 版本为 `0.2.2-alpha.3`。审查时，上游默认分支为 `master`。
-预览版接口可能变化；较新的版本需要重新审查接口约定，不能直接作宽泛的兼容性假设。
+受支持的 schema 子集依据上游快照
+[`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/commit/8bd073392eef6f54e921a093b95076248eb08cbb)
+审查，其中 CLI 版本为 `0.2.2-alpha.3`。只有 runtime manifest 的包名为预期的
+`@deepseek-ai/dsh` 或 `@deepseek-ai/dsh-app-boot`，且声明该版本时，才标为“已审阅的
+manifest 版本”。这仍是声明识别，不是兼容性测试。
+
+另一次 **2026-11-06** 官方默认分支核验固定在
+[`fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159`](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/cli/package.json)，
+其 manifest 声明 CLI `0.2.2-rc.1`、Node `>=24.9.0`。这份较新的元数据**不会扩展**已审阅
+的解析约定，也不表示已支持 rc.1。较新的 manifest 可能标为未识别版本，或因不支持的
+schema/结构而被拒绝。预览版变化需要重新审查；任何版本都不会开放管理操作。
 
 - profile manifest 可以只包含部分字段，不一定有包版本。
 - `dsh.manifestVersion` 如存在，描述的是 manifest schema，与 runtime/包版本和已保存的会话版本相互独立。
@@ -101,14 +124,18 @@ JSON 键会被拒绝。只盘点 `dependencies`、`optionalDependencies` 和
 DSH/Node/包管理器调用；这不等于覆盖所有系统调用的跟踪，也不是操作系统沙箱。
 已有真实环境测试仍保持忽略。
 
-Windows 特有的路径、重解析点和句柄检查，需要在原生 Windows 上验证；可移植的
-Linux 测试通过不代表这些检查已经运行。本阶段不声称完成 Windows GUI 测试或真实
-DSH 集成测试。
+桌面 IPC 测试使用临时 manifest；前端测试使用合成报告和模拟 IPC，覆盖显式提交、重复
+点击、路径变化、过期响应、导航、错误及演示/浏览器边界。它们不证明已启动真实桌面 GUI，
+也不证明已完成真实 DSH 集成。Windows 特有的路径、重解析点和句柄检查，需要在原生
+Windows 上验证；可移植的 Linux 测试通过不代表这些检查已经运行。
 
 文件系统验证采取保守策略，但不是用于防御同权限进程并发替换文件的操作系统沙箱，
 也不保证每次文件系统操作都有超时。读取普通文件可能更新文件系统的访问元数据。
 本实现不请求写入配置或文件内容。
 
-桌面 profile 归属、已认证的运行时传输、插件实际激活、凭据处理和修改计划，均属于
-后续独立工作。静态 manifest 不能授权这些操作。本功能没有修改或解决现有 glib
-安全通告涉及的问题。
+不写文件内容的边界针对本次盘点，不涵盖桌面应用的所有操作或启动活动。此 IPC 路径不
+加载注册表，不初始化 AgentDeck 主目录，不创建 profile，也不准备配置。
+
+profile 归属、已认证的运行时传输、插件实际激活、凭据处理和修改计划，均属于后续独立
+工作。静态 manifest 不能授权这些操作。本功能不改变 GLib 回移修复及其剩余告警/验证
+限制，参见 [GLib 说明](GLIB-BACKPORT.zh-CN.md)。

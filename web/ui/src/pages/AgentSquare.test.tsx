@@ -26,10 +26,11 @@ describe('AgentSquare', () => {
     useAgentStore.setState({ agents: [], loading: false, error: null, notice: null, refreshError: null, dataStale: true, selectedAgentId: null, memories: {} });
   });
 
-  it('renders the heading, three filters, search and observed rows only', async () => {
+  it('renders the heading, two status filters, search and observed rows only', async () => {
     render(<AgentSquare />);
     expect(screen.getByRole('heading', { name: 'Agent 广场' })).toBeInTheDocument();
-    for (const name of ['全部', '热度推荐', '已安装']) expect(screen.getByRole('button', { name })).toBeInTheDocument();
+    for (const name of ['全部', '已安装']) expect(screen.getByRole('button', { name })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '热度推荐' })).not.toBeInTheDocument();
     expect(screen.getByRole('searchbox', { name: '搜索 Agent' })).toBeInTheDocument();
     await screen.findByRole('article', { name: 'OpenCode' });
     expect(screen.getAllByRole('article')).toHaveLength(3);
@@ -50,24 +51,43 @@ describe('AgentSquare', () => {
     expect(useAgentStore.getState().selectedAgentId).toBe('cli-tool');
     expect(select).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByText('当前选择：CLI Tool')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '热度推荐' }));
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'OpenCode' } });
     expect(screen.queryByRole('article', { name: 'CLI Tool' })).not.toBeInTheDocument();
     expect(screen.getByText('当前选择：CLI Tool')).toBeInTheDocument();
     expect(bridge.installAgent).not.toHaveBeenCalled();
   });
 
-  it('filters popular and installed records, excluding unknown installation status', async () => {
+  it('filters installed records, excluding unknown installation status', async () => {
     render(<AgentSquare />);
     await screen.findByRole('article', { name: 'OpenCode' });
-    fireEvent.click(screen.getByRole('button', { name: '热度推荐' }));
-    expect(screen.getAllByRole('article')).toHaveLength(1);
-    expect(screen.getByRole('article', { name: 'OpenCode' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '已安装' }));
     expect(screen.getAllByRole('article')).toHaveLength(1);
     expect(screen.getByRole('article', { name: 'CLI Tool' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '已安装' })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(screen.getByRole('button', { name: '全部' }));
     expect(screen.getAllByRole('article')).toHaveLength(3);
+  });
+
+  it('keeps all unranked catalog entries visible without an empty recommendation filter', async () => {
+    vi.mocked(bridge.getAgents).mockResolvedValue(agents.map((entry) => ({ ...entry, popular: false, stars: 0 })));
+    render(<AgentSquare />);
+    await screen.findByRole('article', { name: 'OpenCode' });
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+    expect(screen.getByText('显示 3 / 3 款 Agent')).toBeInTheDocument();
+    expect(screen.queryByText('暂无热度推荐')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '热度推荐' })).not.toBeInTheDocument();
+  });
+
+  it('sorts by name without treating legacy popularity or star counts as recommendations', async () => {
+    vi.mocked(bridge.getAgents).mockResolvedValue([
+      { ...base, id: 'zulu', name: 'Zulu Agent', popular: true, stars: 999999 },
+      { ...base, id: 'alpha', name: 'Alpha Agent', popular: false, stars: 0 },
+    ]);
+    render(<AgentSquare />);
+    await screen.findByRole('article', { name: 'Zulu Agent' });
+    expect(screen.getAllByRole('article').map((row) => row.getAttribute('aria-label'))).toEqual(['Alpha Agent', 'Zulu Agent']);
+    expect(screen.getByText('按名称排序')).toBeInTheDocument();
+    expect(screen.queryByText('热度推荐')).not.toBeInTheDocument();
   });
 
   it('searches actual names, IDs and descriptions locally with active filters', async () => {

@@ -482,7 +482,6 @@ fn model_config_content(
     source_dir: &Path,
 ) -> crate::Result<Option<String>> {
     let relative = match agent.id.as_str() {
-        "opencode" => "personalization/opencode/opencode.jsonc",
         "codex" => "personalization/codex.json",
         _ => return Ok(None),
     };
@@ -551,7 +550,16 @@ fn inject_for_agent_apply(
     }
 
     if let Some(mc) = &agent.config_inject.model_config {
-        if mc.file.contains("://") || !(mc.file.starts_with("~/") || mc.file.starts_with("~\\")) {
+        if agent.id == "opencode" {
+            // Retained runtime registries may still advertise the old unvalidated
+            // JSON merge adapter. Neither its profile nor its target is safe to use
+            // until an adapter validates the supported OpenCode schema.
+            model_config = Some(InjectStatus::Skipped(
+                "OpenCode model configuration adapter is not supported".into(),
+            ));
+        } else if mc.file.contains("://")
+            || !(mc.file.starts_with("~/") || mc.file.starts_with("~\\"))
+        {
             model_config = Some(InjectStatus::Skipped("特殊通道暂不支持".into()));
         } else if let Some(content) = model_config_content(agent, source_dir)? {
             let format = match mc.format.as_str() {
@@ -603,6 +611,8 @@ fn inject_for_agent_with_home(
                 .config_inject
                 .model_config
                 .as_ref()
+                // A retired adapter must not even read its destination for rollback.
+                .filter(|_| agent.id != "opencode")
                 .map(|m| m.file.as_str()),
         );
     for raw in targets {
@@ -892,7 +902,6 @@ mod tests {
             ".codex/AGENTS.md",
             ".codex/config.toml",
             ".config/opencode/AGENTS.md",
-            ".config/opencode/opencode.jsonc",
             ".claude/CLAUDE.md",
             ".gemini/GEMINI.md",
         ] {
@@ -900,6 +909,72 @@ mod tests {
             assert!(target.starts_with(&target_home));
             assert!(target.is_file(), "临时目标缺失: {}", relative);
         }
+        assert!(!target_home.join(".config/opencode/opencode.jsonc").exists());
+    }
+
+    fn legacy_opencode_definition() -> AgentDefinition {
+        let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        let mut agent = doc.agents.get("opencode").unwrap().clone();
+        // A retained/custom runtime registry can still contain this retired adapter.
+        agent.config_inject.model_config = Some(crate::registry::ModelConfigInject {
+            file: "~/.config/opencode/opencode.jsonc".into(),
+            format: "jsonc_merge".into(),
+        });
+        agent
+    }
+
+    #[test]
+    fn legacy_opencode_model_descriptor_preserves_v2_bytes_and_personalization() {
+        let home = temp_dir("opencode-retired-model");
+        let source = profile_source_dir_in(&home).unwrap();
+        let agent = legacy_opencode_definition();
+        let target = home.join(".config/opencode/opencode.jsonc");
+        let instructions = home.join(".config/opencode/AGENTS.md");
+        let original = b"// Keep this user's V2 configuration byte-for-byte.\n{\n  \"mcp\": {\"servers\": {\"ragflow\": {\"type\": \"remote\", \"url\": \"http://localhost:9382/mcp\"}}},\n  \"model\": \"user/model\"\n}\n";
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, original).unwrap();
+        fs::write(&instructions, "# User instructions\nKeep this.\n").unwrap();
+
+        let report = inject_for_agent_in_home(&agent, &source, &home).unwrap();
+        assert_eq!(report.personalization, Some(InjectStatus::Ok));
+        assert_eq!(
+            report.model_config,
+            Some(InjectStatus::Skipped(
+                "OpenCode model configuration adapter is not supported".into()
+            ))
+        );
+        assert_eq!(fs::read(&target).unwrap(), original);
+        let personalized = fs::read_to_string(&instructions).unwrap();
+        assert!(personalized.starts_with("# User instructions\nKeep this.\n"));
+        assert_eq!(personalized.matches(INSTRUCTIONS_START).count(), 1);
+        inject_for_agent_in_home(&agent, &source, &home).unwrap();
+        assert_eq!(fs::read_to_string(&instructions).unwrap(), personalized);
+        assert_eq!(fs::read(&target).unwrap(), original);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn legacy_opencode_model_descriptor_does_not_read_profile_or_snapshot_target() {
+        let home = temp_dir("opencode-retired-model-unreadable");
+        let source = profile_source_dir_in(&home).unwrap();
+        let agent = legacy_opencode_definition();
+        let profile = source.join("personalization/opencode/opencode.jsonc");
+        fs::remove_file(&profile).unwrap();
+        // Reading either directory as a model file would fail, even with elevated
+        // test privileges. Personalization must still succeed without those reads.
+        fs::create_dir_all(&profile).unwrap();
+        let target = home.join(".config/opencode/opencode.jsonc");
+        fs::create_dir_all(&target).unwrap();
+        assert!(model_config_content(&agent, &source).unwrap().is_none());
+        let report = inject_for_agent_in_home(&agent, &source, &home).unwrap();
+        assert_eq!(report.personalization, Some(InjectStatus::Ok));
+        assert!(matches!(
+            report.model_config,
+            Some(InjectStatus::Skipped(_))
+        ));
+        assert!(target.is_dir());
+        assert!(!home.join(".agentdeck/backups").exists());
+        fs::remove_dir_all(home).unwrap();
     }
 
     #[test]
@@ -1112,8 +1187,12 @@ mod tests {
             );
             assert_eq!(
                 report.model_config,
-                Some(InjectStatus::Ok),
-                "{} model_config 注入应成功",
+                if id == "codex" {
+                    Some(InjectStatus::Ok)
+                } else {
+                    None
+                },
+                "{} model_config 报告应符合已支持的能力",
                 id
             );
         }

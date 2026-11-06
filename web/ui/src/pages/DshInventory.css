@@ -1,0 +1,31 @@
+.dsh-workspace, .dsh-report { display: grid; gap: 18px; min-width: 0; }
+.dsh-workspace .workspace-heading, .dsh-workspace .panel { margin-bottom: 0; }
+.dsh-workspace h2 { margin: 0 0 12px; font-size: 15px; }
+.dsh-workspace h3 { margin: 18px 0 10px; font-size: 13px; }
+.dsh-workspace p { line-height: 1.7; }
+.dsh-workspace .notice { line-height: 1.7; }
+.dsh-form { display: grid; gap: 16px; }
+.dsh-field { display: grid; gap: 7px; min-width: 0; }
+.dsh-field label { font-size: 12px; font-weight: 600; }
+.dsh-field input { width: 100%; min-width: 0; }
+.dsh-form p { margin: 0; font-size: 12px; }
+.dsh-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.dsh-form-actions > span { font-size: 12px; }
+.dsh-manifests { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.dsh-manifests > section { min-width: 0; }
+.dsh-manifest-state { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px; }
+.dsh-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 0; }
+.dsh-facts dt { color: var(--muted); font-size: 11px; margin-bottom: 5px; }
+.dsh-facts dd { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.dsh-state-panel .dsh-facts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.dsh-state-panel > p, .dsh-manifests p, .dsh-report section > .muted { font-size: 12px; }
+.dsh-name, .dsh-bundles { overflow-wrap: anywhere; }
+.dsh-bundles { padding-left: 22px; font-size: 12px; line-height: 1.8; }
+.dsh-table-scroll { max-width: 100%; overflow-x: auto; }
+.dsh-dependencies { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
+.dsh-dependencies th, .dsh-dependencies td { padding: 12px 10px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.dsh-dependencies th { color: var(--muted); font-weight: 500; background: var(--surface-subtle); }
+.dsh-dependencies td:first-child { min-width: 140px; max-width: 320px; }
+.dsh-boundary-note { margin: 0; font-size: 11px; }
+@media (max-width: 900px) { .dsh-manifests { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) { .dsh-state-panel .dsh-facts, .dsh-facts { grid-template-columns: minmax(0, 1fr); } }

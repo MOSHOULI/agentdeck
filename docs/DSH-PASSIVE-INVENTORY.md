@@ -1,21 +1,44 @@
-# DSH passive inventory: first slice
+# DSH passive inventory: desktop and CLI
 
 English | [简体中文](DSH-PASSIVE-INVENTORY.zh-CN.md)
 
-This increment is based on the installation-evidence work in PR #2, commit
-`7f43da1f654307241eee1558c920a79f80b1dd69`. It adds a core reader and a separate CLI
-entry point. It does not add DSH to the generic deployment registry, provide a
-desktop management screen, or enable installation, configuration, update,
-downgrade, removal, authentication, or runtime connections.
+The development branch exposes one passive core reader through the new desktop
+workspace, “DSH 声明盘点” (“DSH declaration inventory”), and a separate `aisync` CLI
+command. This brings the desktop to six workspaces. DSH is not part of the generic deployment registry. This is an inventory
+view, not a plugin manager: installation, configuration, plugin activation, update,
+downgrade, removal, authentication and runtime connections remain unavailable.
 
-This is source-branch functionality, not a claim about an already published
-installer with the same version string. Check that installer's `BUILD_COMMIT.txt`
-against the source revision before assuming the command is included. DSH itself
+These features are unreleased and are not in the published v1.1.1 installer.
+A matching version string does not identify the source included in a build. Check
+the release's `BUILD_COMMIT.txt` against the relevant source revision. DSH itself
 does not need to be installed or started to inspect synthetic or copied manifests.
 
-This first slice is exposed through the source-built `aisync` CLI, not a desktop
-button. Installing the NSIS desktop package does not by itself install this CLI
-command. With this repository and its documented Rust prerequisites, for example:
+## Desktop usage
+
+In a source-built desktop app, open **DSH 声明盘点**. Enter the absolute path of the
+existing profile directory you want to inspect. Optionally enter a separate
+runtime `package.json` absolute path, then click **盘点所选声明** (“Inspect selected
+declarations”). Opening the workspace or editing an input does not start a scan.
+There are no default paths, and the selections are not persisted.
+
+The desktop invokes the dedicated `inspect_dsh_profile` IPC command, which validates
+both selections before reading either file and delegates to the same passive reader
+as the CLI. It does not invoke the `aisync` or DSH CLI. Changing either path clears
+the previous report; repeated submits are blocked while a read is in progress, and
+responses for an older selection are discarded. Switching workspaces does not
+require restarting the inspection.
+
+The view separates file observations, saved dependencies and bundle selections
+from runtime, authentication and actual-enabled states, which always remain
+**unknown**. Every mutation capability is **disabled**. Incompatible responses
+are rejected rather than presented as partial success. An ordinary browser cannot
+read local paths; explicit `?demo=1` displays labeled synthetic declarations and
+does not read the input paths or any local files.
+
+## CLI usage
+
+Installing an NSIS desktop package does not by itself install the `aisync` command.
+With this repository and its documented Rust prerequisites, for example:
 
 ```powershell
 cargo run --locked -p aisync-cli -- dsh inspect --profile-dir "C:\DSH\profiles\web"
@@ -82,11 +105,18 @@ are errors.
 
 ## Fixed upstream reference
 
-The reviewed upstream snapshot is
+The supported schema subset was reviewed against upstream snapshot
 [`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/commit/8bd073392eef6f54e921a093b95076248eb08cbb),
-whose CLI is `0.2.2-alpha.3`. The default upstream branch was `master` when
-reviewed. Preview interfaces can change; a later version needs fresh contract
-review rather than a broad automatic compatibility assumption.
+whose CLI is `0.2.2-alpha.3`. Only that runtime manifest version, under the expected
+`@deepseek-ai/dsh` or `@deepseek-ai/dsh-app-boot` name, receives the “reviewed manifest
+version” label. This is still declaration recognition, not a compatibility test.
+
+A separate **2026-11-06** check of the official default branch, pinned at
+[`fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159`](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/cli/package.json),
+found CLI `0.2.2-rc.1` and Node `>=24.9.0` in its manifest. This newer metadata does
+**not** expand the reviewed parser contract or claim rc.1 support. A newer manifest
+may be reported as unrecognized or rejected for unsupported schema/shape. Preview
+changes require fresh review; no version enables management operations.
 
 - A profile manifest is partial and need not have a package version.
 - `dsh.manifestVersion`, when present, describes the manifest schema and is
@@ -122,16 +152,23 @@ process runner or writer. CLI tests use fake PATH sentinels to detect accidental
 DSH/Node/package-manager calls; these are not syscall-wide tracing or an OS
 sandbox. Existing real-environment tests remain ignored.
 
+Desktop IPC tests use temporary manifests; frontend tests use synthetic reports
+and mocked IPC to cover explicit submission, repeated clicks, input changes,
+stale responses, navigation, errors and demo/browser boundaries. They do not
+establish that a real desktop GUI was launched or that real DSH was integrated.
 Windows-specific path, reparse and handle checks need native Windows validation;
-passing portable Linux tests does not establish those checks have run. This slice
-does not claim a Windows GUI or real DSH integration test.
+passing portable Linux tests does not establish those checks have run.
 
 Filesystem validation is conservative, but it is not an OS sandbox against a
 same-privilege process replacing files concurrently, nor a guaranteed timeout
 for every filesystem operation. Reading a regular file may update filesystem
 access metadata. No configuration/content writes are requested.
 
-Desktop profile ownership, authenticated runtime transport, actual plugin
-activation, credential handling, and mutation plans remain separate future
-work. A static manifest cannot authorize those operations. The existing glib
-advisory is not modified or resolved by this feature.
+The no-content-write boundary applies to this inspection, not to every operation
+or startup activity of the desktop application. This IPC path does not load the
+registry, initialize AgentDeck's home, create profiles or prepare configuration.
+
+Profile ownership, authenticated runtime transport, actual plugin activation,
+credential handling and mutation plans remain future work. A static manifest cannot
+authorize those operations. This feature does not change the GLib backport or its
+remaining advisory/validation limits; see the [GLib guide](GLIB-BACKPORT.md).
