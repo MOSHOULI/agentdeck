@@ -22,14 +22,38 @@ function useDemo(write = false): boolean {
 
 // ─── Agent 管理 ────────────────────────────────────
 
+export type InstallationStatus = 'installed' | 'not_detected' | 'error' | 'unsupported';
+
+/** Evidence about the current files, never an installation/ownership history. */
+export type InstallationSource =
+  | { kind: 'unknown'; reason: string }
+  | { kind: 'npm'; package: string; packageRoot: string; globalRoot: string; prefix: string; managerPath: string };
+
+export interface InstallationInstance {
+  path: string;
+  resolvedPath: string | null;
+  entrypointPath: string | null;
+  version: string | null;
+  source: InstallationSource;
+  active: boolean;
+}
+
+export interface InstallationDetails {
+  probe: { status: InstallationStatus; message: string | null };
+  instances: InstallationInstance[];
+  ambiguous: boolean;
+  message: string | null;
+}
+
 export interface AgentInfo {
   id: string;
   name: string;
   installed: boolean;
   // Optional for legacy backends; missing values must never authorize a mutation.
-  installationStatus?: 'installed' | 'not_detected' | 'error' | 'unsupported';
+  installationStatus?: InstallationStatus;
   installationMessage?: string | null;
-  installSource?: 'unknown';
+  installSource?: 'unknown' | 'npm';
+  installationDetails?: InstallationDetails;
   uninstallHelp?: string | null;
   canConfigure?: boolean;
   canInstall?: boolean;
@@ -37,7 +61,7 @@ export interface AgentInfo {
   canUninstall?: boolean;
   installHelp?: string | null;
   homepage?: string | null;
-  version?: string;
+  version?: string | null;
   authVerified: boolean;
   source: 'open' | 'closed';
   uiType: string;
@@ -46,6 +70,22 @@ export interface AgentInfo {
   description: string;
   icon: string;
   category: string;
+}
+
+/** Shared UI/store write gate. Legacy DTOs have no details; present evidence must agree. */
+export function installationEvidenceProblem(agent: AgentInfo): 'invalid' | 'ambiguous' | null {
+  const details: unknown = agent.installationDetails;
+  if (details === undefined) return null;
+  const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (!isRecord(details) || !isRecord(details.probe) || typeof details.probe.status !== 'string'
+    || !['installed', 'not_detected', 'error', 'unsupported'].includes(details.probe.status)
+    || details.probe.status !== agent.installationStatus
+    || agent.installed !== (details.probe.status === 'installed')
+    || typeof details.ambiguous !== 'boolean' || !Array.isArray(details.instances)
+    || details.instances.some((instance) => !isRecord(instance) || typeof instance.path !== 'string'
+      || !instance.path.trim() || typeof instance.active !== 'boolean')) return 'invalid';
+  const activeCount = details.instances.filter((instance) => instance.active).length;
+  return details.ambiguous || (details.instances.length > 0 && activeCount !== 1) ? 'ambiguous' : null;
 }
 
 const MOCK_AGENTS: AgentInfo[] = [
@@ -61,13 +101,13 @@ const MOCK_AGENTS: AgentInfo[] = [
     canUninstall: false,
     canConfigure: true,
     uninstallHelp: '示例数据：安装来源未验证，请使用原安装方式卸载。',
-    version: '1.18.15',
+    version: '0.0.0-demo',
     authVerified: true,
     source: 'open',
     uiType: 'all',
-    stars: 194000,
-    popular: true,
-    description: '开源 AI 编程代理，支持 75+ 模型供应商、LSP 集成、Plan/Build 双模式。',
+    stars: 0,
+    popular: false,
+    description: '合成示例：展示 Agent 卡片与配置入口，不代表本机安装或当前产品能力。',
     icon: 'opencode',
     category: 'ai-coding',
   },
@@ -86,9 +126,9 @@ const MOCK_AGENTS: AgentInfo[] = [
     authVerified: false,
     source: 'closed',
     uiType: 'all',
-    stars: 140000,
-    popular: true,
-    description: 'Anthropic 官方终端 AI 编程代理，MCP 原生支持、1M 上下文。',
+    stars: 0,
+    popular: false,
+    description: '合成示例：展示 PATH 未检测到的界面，不代表本机安装或当前产品能力。',
     icon: 'claude-code',
     category: 'ai-coding',
   },
@@ -104,13 +144,13 @@ const MOCK_AGENTS: AgentInfo[] = [
     canUninstall: false,
     canConfigure: true,
     uninstallHelp: '示例数据：安装来源未验证，请使用原安装方式卸载。',
-    version: '1.0.0',
+    version: '0.0.0-demo',
     authVerified: true,
     source: 'open',
     uiType: 'cli+desktop',
-    stars: 104000,
-    popular: true,
-    description: 'OpenAI 官方 AI 编程代理，沙箱安全执行、云端异步批处理。',
+    stars: 0,
+    popular: false,
+    description: '合成示例：展示 CLI 与桌面类型，不代表本机安装或当前产品能力。',
     icon: 'codex',
     category: 'ai-coding',
   },
@@ -163,10 +203,10 @@ export async function configureAgent(id: string): Promise<InstallOutcome> {
   return invoke<InstallOutcome>('configure_agent', { id });
 }
 
-/** 卸载指定 agent */
-export async function uninstallAgent(id: string): Promise<void> {
-  if (useDemo(true)) return;
-  return invoke<void>('uninstall_agent', { id });
+/** Automatic uninstall is unavailable, including for currently matched npm files. */
+export async function uninstallAgent(_id: string): Promise<void> {
+  useDemo(true);
+  throw new Error('自动卸载功能尚未提供；来源目录匹配不代表安装历史或管理权限。请使用原安装方式或官方卸载说明。');
 }
 
 /** 验证 agent 认证状态 */

@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAgentStore } from './agentStore';
 import * as bridge from '../bridge';
-import { agentCatalog, installedAgent, notDetectedAgent } from '../test-fixtures/agents';
+import { agentCatalog, installedAgent, notDetectedAgent, ambiguousAgent, npmMatchedAgent, activeInstance } from '../test-fixtures/agents';
 
-vi.mock('../bridge', () => ({
+vi.mock('../bridge', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../bridge')>(),
   getAgents: vi.fn(), installAgent: vi.fn(), configureAgent: vi.fn(), uninstallAgent: vi.fn(),
   verifyAgentAuth: vi.fn(), collectMemory: vi.fn(), searchMemory: vi.fn(),
   injectMemory: vi.fn(), toggleAutoInject: vi.fn(),
@@ -82,6 +83,113 @@ describe('agentStore', () => {
     await useAgentStore.getState().uninstallAgent('opencode');
     expect(bridge.uninstallAgent).not.toHaveBeenCalled();
     expect(useAgentStore.getState().error).toContain('安装来源未验证');
+  });
+
+  it('blocks all uninstall management even when complete npm source evidence and forged capabilities are present', async () => {
+    seedFresh([{ ...npmMatchedAgent, canUninstall: true }]);
+    await useAgentStore.getState().uninstallAgent('opencode');
+    expect(bridge.uninstallAgent).not.toHaveBeenCalled();
+    expect(bridge.getAgents).not.toHaveBeenCalled();
+    expect(useAgentStore.getState().error).toContain('自动卸载功能尚未提供');
+    expect(useAgentStore.getState().error).toContain('来源目录匹配不代表安装历史或管理权限');
+    expect(useAgentStore.getState().loading).toBe(false);
+  });
+
+  it('rejects ambiguous configuration even if the caller bypasses the disabled card', async () => {
+    seedFresh([ambiguousAgent]);
+    await useAgentStore.getState().configureAgent('opencode');
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+    expect(bridge.getAgents).not.toHaveBeenCalled();
+    expect(useAgentStore.getState().error).toContain('PATH 候选优先级存在歧义');
+    expect(useAgentStore.getState().dataStale).toBe(false);
+  });
+
+  it.each([
+    null, {}, { instances: null }, { instances: [null], ambiguous: false },
+    { instances: [activeInstance, { ...activeInstance, path: '/synthetic/duplicate' }], ambiguous: false },
+  ])('blocks configuration on inconsistent or incomplete instance details (%j)', async (installationDetails) => {
+    seedFresh([{ ...installedAgent, installationDetails } as bridge.AgentInfo]);
+    await useAgentStore.getState().configureAgent('opencode');
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+    expect(useAgentStore.getState().error).toContain('已暂停安装与应用配置');
+  });
+
+  it('permits separately requested configuration only after a fresh read removes the ambiguity', async () => {
+    seedFresh([ambiguousAgent]);
+    await useAgentStore.getState().configureAgent('opencode');
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+    vi.mocked(bridge.getAgents).mockResolvedValue([npmMatchedAgent]);
+    await useAgentStore.getState().loadAgents();
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+    await useAgentStore.getState().configureAgent('opencode');
+    expect(bridge.configureAgent).toHaveBeenCalledTimes(1);
+    expect(bridge.installAgent).not.toHaveBeenCalled();
+    expect(bridge.uninstallAgent).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, null, {}, { status: 'error' }, { status: 'not_detected' }, { status: 'unsupported' }, { status: 'forged' }, { status: 42 }])('rejects direct configuration with an invalid or contradictory probe (%j)', async (probe) => {
+    seedFresh([{ ...npmMatchedAgent, installationDetails: {
+      ...npmMatchedAgent.installationDetails!, probe,
+    } } as unknown as bridge.AgentInfo]);
+    await useAgentStore.getState().configureAgent('opencode');
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+    expect(bridge.getAgents).not.toHaveBeenCalled();
+    expect(useAgentStore.getState().error).toContain('安装检测证据不完整或状态不一致');
+    expect(useAgentStore.getState().loading).toBe(false);
+  });
+
+  it.each([undefined, null, {}, { status: 'error' }, { status: 'installed' }, { status: 'unsupported' }, { status: 'forged' }])('rejects direct installation with an invalid or contradictory probe (%j)', async (probe) => {
+    seedFresh([{ ...notDetectedAgent, installationDetails: {
+      ...installedAgent.installationDetails!, probe,
+    } } as unknown as bridge.AgentInfo]);
+    await useAgentStore.getState().installAgent('opencode');
+    expect(bridge.installAgent).not.toHaveBeenCalled();
+    expect(bridge.getAgents).not.toHaveBeenCalled();
+    expect(useAgentStore.getState().error).toContain('安装检测证据不完整或状态不一致');
+  });
+
+  it.each([
+    { installed: false, installationStatus: 'installed', probeStatus: 'installed' },
+    { installed: true, installationStatus: 'not_detected', probeStatus: 'not_detected' },
+  ] as const)('rejects all writes when status strings agree but the installed boolean contradicts them (%j)', async ({ installed, installationStatus, probeStatus }) => {
+    seedFresh([{ ...installedAgent, installed, installationStatus, installationDetails: {
+      ...installedAgent.installationDetails!, probe: { status: probeStatus, message: null },
+    } }]);
+    await useAgentStore.getState().configureAgent('opencode');
+    await useAgentStore.getState().installAgent('opencode');
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+    expect(bridge.installAgent).not.toHaveBeenCalled();
+    expect(useAgentStore.getState().error).toContain('安装检测证据不完整或状态不一致');
+  });
+
+  it.each(['install', 'configure'] as const)('blocks %s when nonempty observations have no active candidate', async (operation) => {
+    const target = operation === 'install' ? notDetectedAgent : installedAgent;
+    seedFresh([{ ...target, installationDetails: {
+      probe: { status: target.installationStatus!, message: null },
+      instances: [{ ...activeInstance, active: false }], ambiguous: false, message: null,
+    } }]);
+    await (operation === 'install' ? useAgentStore.getState().installAgent('opencode') : useAgentStore.getState().configureAgent('opencode'));
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+    expect(bridge.installAgent).not.toHaveBeenCalled();
+    expect(useAgentStore.getState().error).toContain('当前实例未确认');
+  });
+
+  it('allows a consistent not-detected custom probe with an empty candidate list', async () => {
+    seedFresh([{ ...notDetectedAgent, installationDetails: {
+      probe: { status: 'not_detected', message: null }, instances: [], ambiguous: false, message: null,
+    } }]);
+    await useAgentStore.getState().installAgent('opencode');
+    expect(bridge.installAgent).toHaveBeenCalledExactlyOnceWith('opencode');
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+  });
+
+  it('never uninstalls a claimed npm source with missing canonical evidence', async () => {
+    seedFresh([{ ...npmMatchedAgent, canUninstall: true, installationDetails: {
+      ...npmMatchedAgent.installationDetails!, instances: [{ ...npmMatchedAgent.installationDetails!.instances[0], resolvedPath: null }],
+    } }]);
+    await useAgentStore.getState().uninstallAgent('opencode');
+    expect(bridge.uninstallAgent).not.toHaveBeenCalled();
+    expect(useAgentStore.getState().error).toContain('自动卸载功能尚未提供');
   });
 
   it('serializes installation, configuration, uninstall and refresh before React rerenders', async () => {

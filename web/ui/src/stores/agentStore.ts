@@ -55,9 +55,15 @@ export const useAgentStore = create<AgentState>((set, get) => {
     const agent = get().agents.find((entry) => entry.id === id);
     const installed = agent?.installed === true && agent.installationStatus === 'installed';
     if (operation === 'uninstall') {
-      // No currently supported install source has verified provenance. Do not
-      // infer package-manager ownership from a binary found on PATH.
-      set({ error: agent?.uninstallHelp || '安装来源未验证，无法自动卸载。请使用原安装方式或官方卸载说明。' });
+      // Matching current files to a package manager does not enable management.
+      set({ error: `自动卸载功能尚未提供；来源目录匹配不代表安装历史或管理权限。${agent?.uninstallHelp || '请使用原安装方式或官方卸载说明。'}` });
+      return;
+    }
+    const evidenceProblem = agent ? bridge.installationEvidenceProblem(agent) : null;
+    if (evidenceProblem) {
+      set({ error: evidenceProblem === 'invalid'
+        ? '安装检测证据不完整或状态不一致，已暂停安装与应用配置。请刷新列表。'
+        : 'PATH 候选优先级存在歧义或当前实例未确认，已暂停安装与应用配置。请先确认实际使用的实例并刷新列表。' });
       return;
     }
     const allowed = operation === 'install'
