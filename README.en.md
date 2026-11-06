@@ -4,6 +4,8 @@
 
 This document describes the v1.2.0 source and planned delivery: installation-instance and source evidence, restricted npm installation, catalog corrections, and desktop/CLI DSH passive inventory. The published v1.1.1 installer does not include these increments. Confirm publication on the versioned Release page and compare `BUILD_COMMIT.txt` with the successful release CI commit. See the [bilingual v1.2.0 notes](docs/RELEASE-1.2.0.md).
 
+This development branch also includes the [MCP toggle preflight and backup-order fix](docs/MCP-SAFETY.md), which is not part of the frozen, pending v1.2.0 release. Validation uses synthetic fixtures only, not real agents or the desktop GUI.
+
 Manage local AI agents from one desktop interface: discovery and installation, configuration, optional conversation-memory exports, encrypted keys, MCP, and configuration backups.
 
 **Windows 10/11 x64 is currently the fully supported desktop platform.** AgentDeck uses React + Tauri 2 + Rust. Linux can run the core/CLI features that do not involve keys; a protected vault and complete installers are not yet available for Linux/macOS.

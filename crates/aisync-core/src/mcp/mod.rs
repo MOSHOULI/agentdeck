@@ -526,8 +526,122 @@ fn save_config(path: &Path, original: &str, updated: &str) -> crate::Result<()> 
     write_text(path, updated)
 }
 
-/// Toggle a managed server atomically. Independent configuration writers share a lock.
-pub fn toggle(agent_id: &str, server_name: &str, enabled: bool) -> crate::Result<()> {
+// Keep both absence and bytes: a file created during backup is a conflict even
+// when it is empty. Validate the same path restrictions as the atomic writer
+// before reading it or allowing a backup callback to have side effects.
+fn read_toggle_destination(path: &Path) -> crate::Result<Option<String>> {
+    if !path.is_absolute()
+        || path.file_name().is_none()
+        || path
+            .components()
+            .any(|component| component == std::path::Component::ParentDir)
+    {
+        return Err(Error::Other(format!(
+            "MCP path cannot be resolved on this platform: {}",
+            path.display()
+        )));
+    }
+    let mut exists = false;
+    for ancestor in path.ancestors() {
+        match std::fs::symlink_metadata(ancestor) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err(Error::Other("MCP path must not contain symlinks".into()));
+                }
+                if ancestor == path {
+                    if !metadata.is_file() {
+                        return Err(Error::Other(
+                            "MCP destination must be a regular file".into(),
+                        ));
+                    }
+                    exists = true;
+                } else if !metadata.is_dir() {
+                    return Err(Error::Other("MCP parent must be a directory".into()));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    if exists {
+        Ok(Some(std::fs::read_to_string(path)?))
+    } else {
+        Ok(None)
+    }
+}
+
+/// An immutable, validated change. No registry or transformation is rerun after
+/// backup, so a registry update cannot redirect this operation to a new target.
+struct PreparedToggle {
+    path: PathBuf,
+    original: Option<String>,
+    updated: String,
+}
+
+impl PreparedToggle {
+    fn new(
+        target: &crate::registry::McpInject,
+        server_name: &str,
+        def: &McpServerDef,
+        enabled: bool,
+    ) -> crate::Result<Self> {
+        let path = expand_path(&target.file);
+        let original = read_toggle_destination(&path)?;
+        let updated = apply_server(
+            original.as_deref().unwrap_or_default(),
+            target,
+            server_name,
+            def,
+            enabled,
+        )?;
+        Ok(Self {
+            path,
+            original,
+            updated,
+        })
+    }
+
+    fn save(self) -> crate::Result<()> {
+        // Catch edits, creation/removal and path-type changes during backup.
+        // This is not a cross-process lock or an atomic compare-and-swap: an
+        // unrelated writer can still race the final check and atomic replace.
+        if read_toggle_destination(&self.path)? != self.original {
+            return Err(Error::Other(
+                "MCP configuration changed during backup; retry the operation".into(),
+            ));
+        }
+        save_config(
+            &self.path,
+            self.original.as_deref().unwrap_or_default(),
+            &self.updated,
+        )
+    }
+}
+
+fn toggle_target_with_backup(
+    target: &crate::registry::McpInject,
+    server_name: &str,
+    def: &McpServerDef,
+    enabled: bool,
+    backup: impl FnOnce() -> crate::Result<()>,
+) -> crate::Result<()> {
+    let prepared = PreparedToggle::new(target, server_name, def, enabled)?;
+    // Preserve desktop semantics: even a valid no-op invokes backup, and a
+    // failed backup prevents configuration/local-backup writes.
+    backup()?;
+    prepared.save()
+}
+
+/// Validate and prepare a toggle before invoking backup, then write that exact
+/// change. The callback must not reenter configuration writers: the shared
+/// in-process writer lock is held throughout preparation, backup and save.
+/// Registry loader lock/recovery bookkeeping is independent of this backup.
+pub fn toggle_with_backup(
+    agent_id: &str,
+    server_name: &str,
+    enabled: bool,
+    backup: impl FnOnce() -> crate::Result<()>,
+) -> crate::Result<()> {
     let _guard = crate::config::write_lock();
     let target = agent_target(agent_id)?;
     let def = if enabled {
@@ -543,10 +657,13 @@ pub fn toggle(agent_id: &str, server_name: &str, enabled: bool) -> crate::Result
             disabled: true,
         }
     };
-    let path = expand_path(&target.file);
-    let text = read_text(&path)?;
-    let updated = apply_server(&text, &target, server_name, &def, enabled)?;
-    save_config(&path, &text, &updated)
+    toggle_target_with_backup(&target, server_name, &def, enabled, backup)
+}
+
+/// Toggle a managed server with an atomic file replacement. Configuration
+/// writers in this process share a lock; this API does not run a git backup.
+pub fn toggle(agent_id: &str, server_name: &str, enabled: bool) -> crate::Result<()> {
+    toggle_with_backup(agent_id, server_name, enabled, || Ok(()))
 }
 
 fn sync_text(
@@ -588,6 +705,9 @@ pub fn sync(agent_id: &str, enabled_servers: &[String]) -> crate::Result<Vec<Str
     save_config(&path, &original, &updated)?;
     Ok(enabled_servers.to_vec())
 }
+
+#[cfg(test)]
+mod preflight_tests;
 
 #[cfg(test)]
 mod tests {

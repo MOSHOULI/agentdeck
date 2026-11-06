@@ -20,10 +20,88 @@ pub async fn toggle_mcp_for_agent(
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let action = if enabled { "on" } else { "off" };
-        aisync_core::git::backup(&format!("mcp: {} {} {}", action, server_name, agent_id))?;
-        mcp::toggle(&agent_id, &server_name, enabled)
+        mcp::toggle_with_backup(&agent_id, &server_name, enabled, || {
+            aisync_core::git::backup(&format!("mcp: {} {} {}", action, server_name, agent_id))
+                .map(|_| ())
+        })
     })
     .await
     .map_err(|e| e.to_string())?
     .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_ipc_targets_never_start_backups() {
+        const CHILD: &str = "AGENTDECK_MCP_PREFLIGHT_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let home = std::path::PathBuf::from(
+                std::env::var_os("AGENTDECK_TEST_HOME").expect("isolated child HOME"),
+            );
+            assert!(home.is_absolute());
+            for agent in ["opencode", "not-an-agent"] {
+                for enabled in [true, false] {
+                    // Exercise the real asynchronous command and spawn_blocking
+                    // boundary, not a copy of its ordering or a real agent.
+                    let error = tauri::async_runtime::block_on(toggle_mcp_for_agent(
+                        "ragflow".into(),
+                        agent.into(),
+                        enabled,
+                    ))
+                    .unwrap_err();
+                    assert!(error.contains(&format!("agent 不支持 MCP: {agent}")));
+                    for name in ["git-backup", "vault", "backups"] {
+                        assert!(
+                            !home.join(".agentdeck").join(name).exists(),
+                            "unexpected {name}"
+                        );
+                    }
+                }
+            }
+            return;
+        }
+
+        // Separate child process so parallel workspace tests do not share an
+        // application HOME. Never mutate this process's environment.
+        let base = std::path::PathBuf::from(
+            std::env::var_os("AGENTDECK_TEST_HOME").expect("run with scripts/run-isolated.py"),
+        );
+        assert!(base.is_absolute());
+        let root = base.join(format!(
+            "mcp-ipc-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "commands::sync::tests::unsupported_ipc_targets_never_start_backups",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("AGENTDECK_TEST_HOME", &root)
+            .env("HOME", &root)
+            .env("USERPROFILE", &root)
+            .env("APPDATA", root.join("AppData/Roaming"))
+            .env("LOCALAPPDATA", root.join("AppData/Local"))
+            .env("XDG_CONFIG_HOME", root.join(".config"))
+            .env("XDG_DATA_HOME", root.join(".local/share"))
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(
+            result.status.success(),
+            "IPC child failed:\n{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed"));
+    }
 }
