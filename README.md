@@ -6,7 +6,7 @@
 
 ## 安装与运行
 
-1. 从 [AgentDeck v1.1.0 安装包发布页](https://github.com/MOSHOULI/agentdeck/releases/tag/v1.1.0) 下载 `AgentDeck_1.1.0_x64-setup.exe`，用同一发布中的 `SHA256SUMS.txt` 验证文件。发布须通过下述 CI 门禁；若页面尚不存在，安装包尚未发布。
+1. 从 [AgentDeck v1.1.1 安装包发布页](https://github.com/MOSHOULI/agentdeck/releases/tag/v1.1.1) 下载 `AgentDeck_1.1.1_x64-setup.exe`，用同一发布中的 `SHA256SUMS.txt` 验证文件。发布须通过下述 CI 门禁；若页面尚不存在，安装包尚未发布。
 2. 安装 [Git for Windows](https://git-scm.com/downloads/win) 并确保 `git` 在 PATH（加密备份需要）。使用 npm 类型 Agent 前还需要 Node.js/npm。
 3. 安装包目前**未做 Windows Authenticode 代码签名**。SHA256 用于完整性核对，不等同于发布者身份签名。
 
@@ -89,8 +89,8 @@ Linux 核心检查：`python scripts/run-isolated.py cargo test --locked -p aisy
 
 CI 验证前端、Linux 核心/CLI、Windows 全工作区（含 DPAPI），构建 NSIS 并记录 SHA256 和源码提交。主分支全部门禁通过后先上传草稿 Release，再下载核对安装包字节、SHA256、构建提交与实际标签提交，全部一致才公开发布。现有 Release（包括草稿）或指向其他提交的标签会阻止发布，需人工核查，不会覆盖或按成功跳过。
 
-安装包发布与已签名注册表更新分开：当前注册表检查使用 GitHub 的 `latest` 下载入口，因此仅含安装包的 v1.1.0 发布不会标记为 Latest，保留既有已签名注册表入口。下载桌面新版请使用上方 v1.1.0 链接，不要把 Latest 标签当作最新桌面安装包。
+安装包发布与已签名注册表更新分开：当前注册表检查使用 GitHub 的 `latest` 下载入口，因此仅含安装包的 v1.1.1 发布不会标记为 Latest，保留既有已签名注册表入口。下载桌面新版请使用上方 v1.1.1 链接，不要把 Latest 标签当作最新桌面安装包。
 
 升级时，仅当本地两份注册表与官方 v1.0.0 已签名资产的 SHA256 完全一致，且版本标记为 v1.0.0 或不存在，才改用新版内置注册表；原文件和版本标记保持不动。修改过、来源未知或版本更新的本地注册表继续保留并使用。在线更新版本必须同时高于当前实际使用版本与内置版本，不能用旧的 v1.0.0 更新覆盖新版内置修正。
 
-发布者注册表签名使用已有受保护私钥。本仓库不包含该私钥；构建安装包无需它。**没有私钥时不能发布新的可信注册表更新**，不要用新生成的密钥冒充已有信任链；详细验证范围见 [发布说明](docs/RELEASE-1.1.0.md)。
+发布者注册表签名使用已有受保护私钥。本仓库不包含该私钥；构建安装包无需它。**没有私钥时不能发布新的可信注册表更新**，不要用新生成的密钥冒充已有信任链；详细验证范围见 [发布说明](docs/RELEASE-1.1.1.md)。

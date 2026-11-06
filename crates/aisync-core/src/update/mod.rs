@@ -372,13 +372,13 @@ mod tests {
     fn stock_feed_cannot_replace_bundled_metadata_even_for_unknown_legacy_data() {
         let f = Fixture::new();
         let mut manifest = f.manifest();
-        for version in ["1.0.0", "1.0.1", "1.1.0", "1.1.0.0"] {
+        for version in ["1.0.0", "1.0.1", "1.1.0", "1.1.0.0", "1.1.1", "1.1.1.0"] {
             manifest.version = version.into();
             assert!(!is_update_available("0.0.0", &manifest));
             assert!(!is_update_available("1.0.0", &manifest));
             assert!(!is_update_available("1.1.0", &manifest));
         }
-        manifest.version = "1.1.1".into();
+        manifest.version = "1.1.2".into();
         assert!(is_update_available("0.0.0", &manifest));
         assert!(is_update_available("1.1.0", &manifest));
         assert!(!is_update_available("1.2.0", &manifest));
@@ -404,12 +404,12 @@ mod tests {
         let (secret, public) = crate::release::generate_keypair().unwrap();
         let mut manifest = f.manifest();
         manifest.pubkey_fp = crate::release::pubkey_fingerprint(&public);
-        for version in ["1.0.0", "1.1.0", "1.1.1"] {
+        for version in ["1.0.0", "1.1.0", "1.1.1", "1.1.2"] {
             manifest.version = version.into();
             let json = crate::release::canonical_manifest_json(&manifest).unwrap();
             let sig = crate::release::sign_manifest(&manifest, &secret).unwrap();
             let verified = parse_and_verify(&json, &sig, &public).unwrap();
-            if version != "1.1.1" {
+            if version != "1.1.2" {
                 assert!(apply_update_at(&verified, &f.paths).is_err());
                 for (name, bytes) in stock {
                     assert_eq!(
@@ -424,7 +424,7 @@ mod tests {
         }
         assert_eq!(
             crate::registry::installed_version_at(&f.paths, "1.1.0").unwrap(),
-            "1.1.1"
+            "1.1.2"
         );
         let backup = std::fs::read_dir(f.paths.registry_dir.parent().unwrap())
             .unwrap()

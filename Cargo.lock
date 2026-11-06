@@ -45,7 +45,7 @@ dependencies = [
 
 [[package]]
 name = "agentdeck"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "aisync-core",
  "base64 0.22.1",
@@ -68,7 +68,7 @@ dependencies = [
 
 [[package]]
 name = "aisync-cli"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "aisync-core",
  "anyhow",
@@ -80,7 +80,7 @@ dependencies = [
 
 [[package]]
 name = "aisync-core"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
