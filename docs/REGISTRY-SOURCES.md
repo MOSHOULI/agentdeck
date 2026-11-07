@@ -11,7 +11,7 @@ Last focused review: **2026-11-06**. This review covers the Node requirements an
 - **Local observations** in this review are limited to parsing the bundled registry and checking static expectations. No agent, installer, login flow, provider request, or MCP server was run. No real user configuration or credential file was inspected or changed.
 - `future_registry` contains source references, including archived projects. It is not an installation list or a delivery commitment. Moving a name into `agents` requires current source verification, an implemented adapter, and isolated tests.
 
-**Development-only addition:** Qwen Code is being added for the next development version. It is not included in the frozen v1.2.0 release, and this document does not establish publication of a newer installer. The existing nine entries and eight reference entries are retained.
+**Development-only addition:** Qwen Code is being added for the next development version. It is not included in the published v1.1.1 installer, and this document does not establish publication of a newer installer. The existing nine entries and eight reference entries are retained.
 
 The date in `registry-v3.json` records this edit, not a complete revalidation of all installation routes or existing authentication-file hints. A file-presence hint cannot establish a working login or a valid remote token.
 
@@ -41,7 +41,7 @@ Only passive PATH candidate observation is available. A candidate found through 
 
 After manual installation, the documented user flow is to launch `qwen`, then use in-session `/auth`; standalone `qwen auth` was removed. Qwen Account OAuth requires a **Plus/Pro subscription** in the reviewed documentation. API-provider options include QwenCloud, Alibaba ModelStudio, third-party and custom providers; this review promises no free quota or provider access. `auth_type: account_login` describes the account entry point, while `completion_check: null` leaves login unverified without guessing a credential path. AgentDeck does not execute authentication or check authentication files.
 
-All Qwen model, MCP and personalization targets are `null`; skills and memory are `false`, and the memory collector is `null`. Configuration and management capability checks remain false. Upstream support for these features does not enable AgentDeck writers. This entry belongs to the **next development version**, not the frozen **v1.2.0** release, and neither static fixtures nor synthetic passive-discovery tests establish real installation, authentication or published support.
+All Qwen model, MCP and personalization targets are `null`; skills and memory are `false`, and the memory collector is `null`. Configuration and management capability checks remain false. Upstream support for these features does not enable AgentDeck writers. This entry belongs to the **next development version**, not the published **v1.1.1** installer, and neither static fixtures nor synthetic passive-discovery tests establish real installation, authentication or published support.
 
 ## OpenCode: V1 installation route, bounded configuration support
 

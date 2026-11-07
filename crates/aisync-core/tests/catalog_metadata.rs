@@ -231,7 +231,7 @@ fn qwen_source_snapshot_is_not_runtime_or_npm_publication_evidence() {
             "node_dependency",
             "published_bin",
             "manual_install_url",
-            "frozen_release_excluded",
+            "published_release_excluded",
         ] {
             assert!(
                 document.contains(review[field].as_str().unwrap()),
@@ -258,8 +258,8 @@ fn qwen_source_snapshot_is_not_runtime_or_npm_publication_evidence() {
             );
         }
     }
-    assert!(SOURCES_EN.contains("not included in the frozen v1.2.0 release"));
-    assert!(SOURCES_ZH.contains("不包含在已冻结的 v1.2.0 发布版中"));
+    assert!(SOURCES_EN.contains("not included in the published v1.1.1 installer"));
+    assert!(SOURCES_ZH.contains("不包含在已发布的 v1.1.1 安装包中"));
     assert!(SOURCES_EN.contains("AgentDeck does not run `qwen --version`"));
     assert!(SOURCES_ZH.contains("AgentDeck 对该条目不运行 `qwen --version`"));
     assert!(

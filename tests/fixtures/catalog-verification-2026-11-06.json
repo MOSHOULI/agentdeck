@@ -157,6 +157,6 @@
     "automatic_installation": false,
     "runtime_probe": false,
     "source_association": false,
-    "frozen_release_excluded": "v1.2.0"
+    "published_release_excluded": "v1.1.1"
   }
 }
