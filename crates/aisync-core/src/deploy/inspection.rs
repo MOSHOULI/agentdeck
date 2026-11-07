@@ -1920,40 +1920,49 @@ mod tests {
     #[test]
     fn direct_runner_bounds_stdout_stderr_exit_and_descendant_lifetime() {
         let fixture = Fixture::new(Platform::Unix);
-        let script = fixture.directory.join("quoted ' \" ; $(never) probe");
-        write_executable(
-            &script,
-            "#!/bin/sh\nprintf 'codex-cli 1.2.3\\n'\nprintf 'sensitive stderr' >&2\n",
-        );
-        let command = ProbeCommand {
-            npm_metadata: false,
-            program: script.clone(),
-            args: vec!["--version".into()],
+        // Each case owns its script inode. Rewriting a just-executed script can
+        // race the OS/runner's executable handles and produce ETXTBSY instead of
+        // exercising the intended timeout or output behavior.
+        let command = |name: &str, body: &str, args: Vec<std::ffi::OsString>| {
+            let script = fixture
+                .directory
+                .join(format!("quoted ' \" ; $(never) {name}"));
+            write_executable(&script, body);
+            ProbeCommand {
+                npm_metadata: false,
+                program: script,
+                args,
+            }
         };
+        let normal = command(
+            "normal",
+            "#!/bin/sh\nprintf 'codex-cli 1.2.3\\n'\nprintf 'sensitive stderr' >&2\n",
+            vec!["--version".into()],
+        );
         assert_eq!(
-            run_bounded(&command, Duration::from_secs(1), 64).unwrap(),
+            run_bounded(&normal, Duration::from_secs(1), 64).unwrap(),
             b"codex-cli 1.2.3\n"
         );
-        write_executable(&script, "#!/bin/sh\nprintf 'sensitive stderr' >&2\n");
+        let stderr = command(
+            "stderr",
+            "#!/bin/sh\nprintf 'sensitive stderr' >&2\n",
+            vec![],
+        );
         assert!(
-            run_bounded(&command, Duration::from_secs(1), 64)
+            run_bounded(&stderr, Duration::from_secs(1), 64)
                 .unwrap()
                 .is_empty()
         );
-        write_executable(&script, "#!/bin/sh\nprintf 'too much output'\n");
-        assert!(run_bounded(&command, Duration::from_secs(1), 4).is_err());
-        write_executable(&script, "#!/bin/sh\nexit 9\n");
-        assert!(run_bounded(&command, Duration::from_secs(1), 64).is_err());
+        let overflow = command("overflow", "#!/bin/sh\nprintf 'too much output'\n", vec![]);
+        assert!(run_bounded(&overflow, Duration::from_secs(1), 4).is_err());
+        let failure = command("failure", "#!/bin/sh\nexit 9\n", vec![]);
+        assert!(run_bounded(&failure, Duration::from_secs(1), 64).is_err());
         let marker = fixture.directory.join("descendant-marker");
-        write_executable(
-            &script,
+        let command = command(
+            "descendant",
             "#!/bin/sh\n(sleep 0.3; printf late > \"$1\") &\nexit 0\n",
+            vec![marker.as_os_str().to_owned()],
         );
-        let command = ProbeCommand {
-            npm_metadata: false,
-            program: script,
-            args: vec![marker.as_os_str().to_owned()],
-        };
         let result = run_bounded(&command, Duration::from_millis(40), 64).unwrap_err();
         assert_eq!(result.kind(), io::ErrorKind::TimedOut);
         std::thread::sleep(Duration::from_millis(400));
@@ -2022,38 +2031,47 @@ mod tests {
     #[test]
     fn windows_job_terminates_grandchild_retaining_stdout_after_parent_exits() {
         let fixture = Fixture::new(Platform::Windows);
-        let ready = fixture.directory.join("child-ready.txt");
+        let ready = fixture.directory.join("child-started.txt");
         let marker = fixture.directory.join("late-write.txt");
-        // The direct child exits immediately. Its grandchild inherits stdout and
-        // would write later unless closing the private job really terminates it.
+        let release = fixture.directory.join("release-late-write.txt");
+        // The direct child records the successfully spawned grandchild PID, then
+        // exits. This does not depend on a second PowerShell cold start completing
+        // before timeout. The grandchild inherits stdout and waits for a gate that
+        // this test opens only after timeout; a survivor would then write a marker.
+        // Its own deadline also prevents an orphan if the test fails before release.
         // Fixture paths are passed as argv and child environment, never shell text.
         let code = r#"
 $ErrorActionPreference = 'Stop'
-$childCode = '[IO.File]::WriteAllText($env:AGENTDECK_READY, [string]$PID); Start-Sleep -Seconds 10; [IO.File]::WriteAllText($env:AGENTDECK_MARKER, "late")'
+$childCode = '$deadline = [DateTime]::UtcNow.AddSeconds(60); while (-not [IO.File]::Exists($env:AGENTDECK_RELEASE)) { if ([DateTime]::UtcNow -ge $deadline) { exit 1 }; Start-Sleep -Milliseconds 20 }; [IO.File]::WriteAllText($env:AGENTDECK_MARKER, "late")'
 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($childCode))
 $info = New-Object System.Diagnostics.ProcessStartInfo
 $info.FileName = [IO.Path]::Combine($env:SystemRoot, 'System32\WindowsPowerShell\v1.0\powershell.exe')
 $info.Arguments = '-NoLogo -NoProfile -NonInteractive -EncodedCommand ' + $encoded
 $info.UseShellExecute = $false
 $info.CreateNoWindow = $true
-$info.EnvironmentVariables['AGENTDECK_READY'] = $args[0]
 $info.EnvironmentVariables['AGENTDECK_MARKER'] = $args[1]
+$info.EnvironmentVariables['AGENTDECK_RELEASE'] = $args[2]
 $process = New-Object System.Diagnostics.Process
 $process.StartInfo = $info
 if (-not $process.Start()) { throw 'fixture child did not start' }
+[IO.File]::WriteAllText($args[0], [string]$process.Id)
 exit 0
 "#;
         let mut command = powershell_command(&fixture, code, "spawn child");
         command.args.push(ready.as_os_str().to_owned());
         command.args.push(marker.as_os_str().to_owned());
-        let error = run_bounded(&command, Duration::from_secs(8), 64).unwrap_err();
+        command.args.push(release.as_os_str().to_owned());
+        let error = run_bounded(&command, Duration::from_secs(30), 64).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         let child_id: u32 = std::fs::read_to_string(&ready)
-            .expect("Real descendant must start before timeout")
+            .expect("Parent must record a successfully spawned descendant before timeout")
             .trim()
             .parse()
             .unwrap();
-        // Verify process termination directly, then wait past its late-write window.
+        // Release before assertions so even a broken cleanup implementation does
+        // not leave the fixture waiting forever. A survivor is caught by either
+        // its live PID or the late-write marker, even if it exits quickly.
+        std::fs::write(&release, b"release").unwrap();
         use windows_sys::Win32::Foundation::CloseHandle;
         use windows_sys::Win32::System::Threading::{
             GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -2076,7 +2094,7 @@ exit 0
             assert_ne!(success, 0);
             assert_ne!(code, 259, "Grandchild survived closing the probe job");
         }
-        std::thread::sleep(Duration::from_secs(11));
+        std::thread::sleep(Duration::from_secs(1));
         assert!(
             !marker.exists(),
             "Timed-out Windows descendant performed a late write"
