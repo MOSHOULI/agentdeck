@@ -14,6 +14,8 @@ Manage local AI agents from one desktop interface: discovery and installation, c
 
 The catalog can filter currently available automatic installation, manual-only entries and observations needing confirmation. See [catalog filter guidance](docs/CATALOG-FILTERS.md).
 
+Desktop MCP toggles now offer a [change preview](docs/MCP-PREVIEW.md): review the target and action before confirming backup/write; stale previews are rejected. This summary is not a full configuration diff and has not shipped in a public installer.
+
 ## Installation and startup
 
 1. Select a published version and download its installer from the [AgentDeck releases](https://github.com/MOSHOULI/agentdeck/releases), and verify it against `SHA256SUMS.txt` from the same release. Publication requires the CI gates described below. CI test artifacts are not public releases.

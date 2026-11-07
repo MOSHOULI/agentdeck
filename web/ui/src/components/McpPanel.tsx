@@ -1,6 +1,6 @@
 /** Registry-backed MCP configuration. Checkboxes describe configuration, not process health. */
 import React, { useEffect, useRef, useState } from 'react';
-import type { McpServer } from '../bridge';
+import type { McpServer, McpTogglePreview } from '../bridge';
 import * as bridge from '../bridge';
 import { useAgentStore } from '../stores/agentStore';
 import { useWorkspaceActivity } from '../stores/workspaceActivity';
@@ -13,6 +13,11 @@ export const McpPanel: React.FC = () => {
   const agents = useAgentStore((state) => state.agents);
   const [servers, setServers] = useState<McpServer[] | null>(null);
   const operation = useRef(false);
+  const generation = useRef(0);
+  const applying = useRef(false);
+  const returnFocus = useRef<HTMLInputElement | null>(null);
+  const previewHeading = useRef<HTMLHeadingElement | null>(null);
+  const [preview, setPreview] = useState<McpTogglePreview | null>(null);
   const [busy, setBusy] = useState<string | null>('load');
   const [loadError, setLoadError] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -24,51 +29,108 @@ export const McpPanel: React.FC = () => {
 
   useEffect(() => {
     let active = true;
+    const request = ++generation.current;
     operation.current = true;
     bridge.getMcpServers()
-      .then((items) => { if (active) { setServers(items); setLoadError(false); } })
-      .catch((error) => { if (active) { setLoadError(true); setNotice({ tone: 'error', text: `加载 MCP 列表失败: ${error}` }); } })
-      .finally(() => { if (active) { operation.current = false; setBusy(null); } });
-    return () => { active = false; };
+      .then((items) => { if (active && request === generation.current) { setServers(items); setLoadError(false); } })
+      .catch((error) => { if (active && request === generation.current) { setLoadError(true); setNotice({ tone: 'error', text: `加载 MCP 列表失败: ${error}` }); } })
+      .finally(() => { if (active && request === generation.current) { operation.current = false; setBusy(null); } });
+    return () => { active = false; ++generation.current; };
   }, []);
+
+  useEffect(() => { if (preview) previewHeading.current?.focus(); }, [preview]);
 
   const refresh = async () => {
     if (operation.current || !canRead) return;
+    const request = ++generation.current;
     operation.current = true;
     setBusy('load');
     setNotice(null);
     try {
-      setServers(await bridge.getMcpServers());
+      const items = await bridge.getMcpServers();
+      if (request !== generation.current) return;
+      setServers(items);
       setLoadError(false);
     } catch (error) {
+      if (request !== generation.current) return;
       setLoadError(true);
       setNotice({ tone: 'error', text: `加载 MCP 列表失败: ${error}` });
     } finally {
-      operation.current = false;
-      setBusy(null);
+      if (request === generation.current) { operation.current = false; setBusy(null); }
     }
   };
 
-  const onToggle = async (server: McpServer, agentId: string, enabled: boolean) => {
+  const cancelPreview = () => {
+    if (applying.current) return;
+    ++generation.current;
+    operation.current = false;
+    setPreview(null);
+    setBusy(null);
+    // Wait for the fieldset to become enabled before restoring keyboard focus.
+    window.setTimeout(() => returnFocus.current?.focus(), 0);
+  };
+
+  const onToggle = async (server: McpServer, agentId: string, enabled: boolean, input: HTMLInputElement) => {
     if (operation.current || readOnly || loadError || !server.supportedAgents.includes(agentId)) return;
+    const request = ++generation.current;
     operation.current = true;
-    const previous = server.enabledAgents;
-    setBusy(`${server.name}-${agentId}`);
+    returnFocus.current = input;
+    setBusy('preview');
     setNotice(null);
-    setServers((items) => items?.map((item) => item.name === server.name ? {
-      ...item,
-      enabledAgents: enabled ? [...new Set([...item.enabledAgents, agentId])] : item.enabledAgents.filter((id) => id !== agentId),
-    } : item) ?? null);
     try {
-      await bridge.toggleMcpForAgent(server.name, agentId, enabled);
-      const label = agents.find((agent) => agent.id === agentId)?.name ?? agentId;
-      setNotice({ tone: 'success', text: enabled ? `已将 ${server.name} 加入 ${label} 配置。配置状态不代表服务已启动或连接成功。` : `已从 ${label} 配置中移除 ${server.name}。此操作不会停止服务进程。` });
+      const result = await bridge.previewMcpToggle(server.name, agentId, enabled);
+      if (request !== generation.current) return;
+      if (result.agentId !== agentId || result.serverName !== server.name || result.enabled !== enabled
+          || typeof result.format !== 'string' || typeof result.revision !== 'string' || !result.revision
+          || typeof result.configPath !== 'string' || !result.configPath || typeof result.changed !== 'boolean' || typeof result.fileExists !== 'boolean') {
+        throw new Error('预览与请求不一致，请重新预览。');
+      }
+      setPreview(result);
+      setBusy('confirm');
     } catch (error) {
-      setServers((items) => items?.map((item) => item.name === server.name ? { ...item, enabledAgents: previous } : item) ?? null);
-      setNotice({ tone: 'error', text: `切换失败，已恢复原配置选项: ${error}` });
-    } finally {
+      if (request !== generation.current) return;
       operation.current = false;
       setBusy(null);
+      setNotice({ tone: 'error', text: `预览失败，未提交配置修改: ${error}` });
+    }
+  };
+
+  const confirmPreview = async () => {
+    if (!preview || applying.current || busy !== 'confirm' || readOnly) return;
+    const confirmed = preview;
+    const request = ++generation.current;
+    applying.current = true;
+    setBusy('apply');
+    setNotice(null);
+    try {
+      await bridge.applyMcpTogglePreview(confirmed.serverName, confirmed.agentId, confirmed.enabled, confirmed.revision);
+      if (request !== generation.current) return;
+      setPreview(null);
+      const label = agents.find((agent) => agent.id === confirmed.agentId)?.name ?? confirmed.agentId;
+      // Read the current configuration after a confirmed write; do not turn a
+      // successful write into a failure claim when only the follow-up read fails.
+      try {
+        const items = await bridge.getMcpServers();
+        if (request !== generation.current) return;
+        setServers(items);
+        setLoadError(false);
+        setNotice({ tone: 'success', text: confirmed.enabled ? `已将 ${confirmed.serverName} 加入 ${label} 配置。配置状态不代表服务已启动或连接成功。` : `已从 ${label} 配置中移除 ${confirmed.serverName}。此操作不会停止服务进程。` });
+      } catch (error) {
+        if (request !== generation.current) return;
+        setLoadError(true);
+        setNotice({ tone: 'warning', text: `配置修改已完成，但重新读取失败。以下为旧状态，请刷新确认: ${error}` });
+      }
+    } catch (error) {
+      if (request !== generation.current) return;
+      setPreview(null);
+      setLoadError(true);
+      setNotice({ tone: 'error', text: `应用未完成，请刷新配置并重新预览。不会自动重试写入: ${error}` });
+    } finally {
+      if (request === generation.current) {
+        applying.current = false;
+        operation.current = false;
+        setBusy(null);
+      }
     }
   };
 
@@ -85,10 +147,29 @@ export const McpPanel: React.FC = () => {
 
       <div className="notice mcp-config-notice">
         <Icon name="info" />
-        <div><strong>开关代表配置包含状态</strong><p>更改会写回对应 Agent 配置文件，写入前自动备份。此处不检测服务器是否在线，也不负责启动或停止进程。</p></div>
+        <div><strong>开关代表配置包含状态</strong><p>先预览目标与操作，确认后才写回对应 Agent 配置文件，写入前自动备份。此处不检测服务器是否在线，也不负责启动或停止进程。</p></div>
       </div>
 
       {notice && <div className={`notice notice-${notice.tone} mcp-feedback`} role={notice.tone === 'error' ? 'alert' : 'status'}><Icon name={notice.tone === 'success' ? 'check' : 'alert'} /><span>{notice.text}</span>{loadError && <button className="button" onClick={() => void refresh()} disabled={busy !== null || !canRead}>重试加载</button>}</div>}
+
+      {(busy === 'preview' || preview) && <section className="panel mcp-change-preview" aria-labelledby="mcp-preview-title" aria-busy={busy === 'preview' || busy === 'apply'}>
+        <h2 id="mcp-preview-title" ref={previewHeading} tabIndex={-1}>配置变更预览</h2>
+        {preview ? <>
+          <dl className="mcp-preview-details">
+            <div><dt>Agent / 服务</dt><dd>{agents.find((agent) => agent.id === preview.agentId)?.name ?? preview.agentId} / {preview.serverName}</dd></div>
+            <div><dt>目标文件</dt><dd><code>{preview.configPath}</code></dd></div>
+            <div><dt>配置格式</dt><dd>{preview.format}</dd></div>
+            <div><dt>操作</dt><dd>{preview.enabled ? '加入或更新此服务配置' : '移除此服务配置'}</dd></div>
+            <div><dt>文件状态</dt><dd>{preview.fileExists ? '现有配置文件' : '配置文件尚不存在'}</dd></div>
+            <div><dt>预计变化</dt><dd>{preview.changed ? '配置内容将发生变化' : '配置内容无变化'}</dd></div>
+          </dl>
+          <p className="muted">预览不展示配置内容或密钥。启用会按注册表定义新增或替换该同名服务器配置，自定义字段可能被替换。JSON、JSONC、YAML 的格式或注释可能变化。确认时会重新核对文件与变更；预览失效时不会自动重试。确认仍会执行备份，包括内容无变化的请求。</p>
+        </> : <p role="status">正在读取变更预览，尚未提交写入…</p>}
+        <div className="mcp-preview-actions">
+          <button className="button" disabled={busy === 'apply'} onClick={cancelPreview}>取消</button>
+          {preview && <button className="button button-primary" disabled={busy !== 'confirm'} onClick={() => void confirmPreview()}>{busy === 'apply' ? '正在应用…' : '确认并应用'}</button>}
+        </div>
+      </section>}
 
       {servers === null ? (
         <div className="panel empty-state mcp-empty" role={busy === 'load' ? 'status' : undefined}>
@@ -113,10 +194,10 @@ export const McpPanel: React.FC = () => {
                   {server.supportedAgents.length === 0 ? <p className="muted">此服务尚无受支持的 Agent 配置目标。</p> : server.supportedAgents.map((agentId) => {
                     const label = agents.find((agent) => agent.id === agentId)?.name ?? agentId;
                     const enabled = server.enabledAgents.includes(agentId);
-                    const pending = busy === `${server.name}-${agentId}`;
+                    const pending = busy === 'apply' && preview?.serverName === server.name && preview.agentId === agentId;
                     return (
                       <label className="mcp-agent-row" key={agentId}>
-                        <input type="checkbox" aria-label={`${server.name} 的 ${label} 配置`} checked={enabled} onChange={(event) => void onToggle(server, agentId, event.target.checked)} />
+                        <input type="checkbox" aria-label={`${server.name} 的 ${label} 配置`} checked={enabled} onChange={(event) => void onToggle(server, agentId, event.target.checked, event.currentTarget)} />
                         <span>{label}</span>
                         <span className={`mcp-config-state${enabled ? ' mcp-config-included' : ''}`}><Icon name={pending ? 'refresh' : enabled ? 'check' : 'x'} className={pending ? 'mcp-spinning' : undefined} size={14} />{pending ? '正在写入' : enabled ? '已包含' : '未包含'}</span>
                       </label>

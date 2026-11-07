@@ -30,6 +30,41 @@ pub async fn toggle_mcp_for_agent(
     .map_err(|e| e.to_string())
 }
 
+/// Preview a validated MCP toggle without backing up or writing configuration.
+#[tauri::command]
+pub async fn preview_mcp_toggle(
+    server_name: String,
+    agent_id: String,
+    enabled: bool,
+) -> Result<mcp::McpTogglePreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        mcp::preview_toggle(&agent_id, &server_name, enabled)
+    })
+    .await
+    .map_err(|_| "MCP preview worker failed".to_string())?
+    .map_err(|e| e.to_string())
+}
+
+/// Apply only the operation that still matches the reviewed fingerprint.
+#[tauri::command]
+pub async fn apply_mcp_toggle_preview(
+    server_name: String,
+    agent_id: String,
+    enabled: bool,
+    revision: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let action = if enabled { "on" } else { "off" };
+        mcp::apply_preview_with_backup(&agent_id, &server_name, enabled, &revision, || {
+            aisync_core::git::backup(&format!("mcp: {} {} {}", action, server_name, agent_id))
+                .map(|_| ())
+        })
+    })
+    .await
+    .map_err(|_| "MCP apply worker failed; refresh the preview".to_string())?
+    .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -53,6 +88,21 @@ mod tests {
                     ))
                     .unwrap_err();
                     assert!(error.contains(&format!("agent 不支持 MCP: {agent}")));
+                    let preview_error = tauri::async_runtime::block_on(preview_mcp_toggle(
+                        "ragflow".into(),
+                        agent.into(),
+                        enabled,
+                    ))
+                    .unwrap_err();
+                    assert!(preview_error.contains("validation failed"));
+                    let apply_error = tauri::async_runtime::block_on(apply_mcp_toggle_preview(
+                        "ragflow".into(),
+                        agent.into(),
+                        enabled,
+                        "invalid".into(),
+                    ))
+                    .unwrap_err();
+                    assert!(apply_error.contains("validation failed"));
                     for name in ["git-backup", "vault", "backups"] {
                         assert!(
                             !home.join(".agentdeck").join(name).exists(),
@@ -60,6 +110,47 @@ mod tests {
                         );
                     }
                 }
+            }
+            // The same isolated subprocess also exercises successful metadata
+            // previews and stale applies through the actual async IPC commands.
+            let config = home.join(".codex/config.toml");
+            std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+            let secret = "synthetic-preview-secret";
+            let malformed = format!("token = \"{secret}");
+            std::fs::write(&config, malformed).unwrap();
+            let parse_error = tauri::async_runtime::block_on(preview_mcp_toggle(
+                "ragflow".into(),
+                "codex".into(),
+                true,
+            ))
+            .unwrap_err();
+            assert!(parse_error.contains("validation failed"));
+            assert!(!parse_error.contains(secret));
+            std::fs::write(&config, format!("token = \"{secret}\"\n")).unwrap();
+            let preview = tauri::async_runtime::block_on(preview_mcp_toggle(
+                "ragflow".into(),
+                "codex".into(),
+                true,
+            ))
+            .unwrap();
+            assert!(preview.changed);
+            assert!(preview.file_exists);
+            assert!(!serde_json::to_string(&preview).unwrap().contains(secret));
+            std::fs::write(&config, "external = true\n").unwrap();
+            let stale = tauri::async_runtime::block_on(apply_mcp_toggle_preview(
+                "ragflow".into(),
+                "codex".into(),
+                true,
+                preview.revision,
+            ))
+            .unwrap_err();
+            assert!(stale.contains("stale"));
+            assert_eq!(
+                std::fs::read_to_string(&config).unwrap(),
+                "external = true\n"
+            );
+            for name in ["git-backup", "vault", "backups"] {
+                assert!(!home.join(".agentdeck").join(name).exists());
             }
             return;
         }

@@ -319,6 +319,28 @@ export async function toggleMcpForAgent(
   return invoke<void>('toggle_mcp_for_agent', { serverName, agentId, enabled });
 }
 
+/** A content-free preview. revision binds confirmation to the prepared change. */
+export interface McpTogglePreview {
+  agentId: string;
+  serverName: string;
+  enabled: boolean;
+  configPath: string;
+  format: string;
+  fileExists: boolean;
+  changed: boolean;
+  revision: string;
+}
+
+export async function previewMcpToggle(serverName: string, agentId: string, enabled: boolean): Promise<McpTogglePreview> {
+  useDemo(true); // Never fabricate a writable preview in a browser demo.
+  return invoke<McpTogglePreview>('preview_mcp_toggle', { serverName, agentId, enabled });
+}
+
+export async function applyMcpTogglePreview(serverName: string, agentId: string, enabled: boolean, revision: string): Promise<void> {
+  useDemo(true);
+  return invoke<void>('apply_mcp_toggle_preview', { serverName, agentId, enabled, revision });
+}
+
 // ─── 密钥管理 ────────────────────────────────────
 
 export interface ApiKeyInfo {

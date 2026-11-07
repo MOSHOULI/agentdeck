@@ -34,6 +34,8 @@ pub fn run() {
             commands::backup::restore_backup,
             commands::sync::get_mcp_servers,
             commands::sync::toggle_mcp_for_agent,
+            commands::sync::preview_mcp_toggle,
+            commands::sync::apply_mcp_toggle_preview,
             commands::update::check_updates,
             commands::update::apply_updates,
         ])
