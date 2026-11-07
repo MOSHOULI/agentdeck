@@ -4,6 +4,8 @@
 
 This document describes the v1.2.0 source and planned delivery: installation-instance and source evidence, restricted npm installation, catalog corrections, and desktop/CLI DSH passive inventory. The published v1.1.1 installer does not include these increments. Confirm publication on the versioned Release page and compare `BUILD_COMMIT.txt` with the successful release CI commit. See the [bilingual v1.2.0 notes](docs/RELEASE-1.2.0.md).
 
+**Next-development-version note:** This branch adds Qwen Code manual-install guidance and passive PATH candidate observation, not included in the frozen v1.2.0 release. A candidate does not establish a verified installation or login; Qwen Code automatic installation, runtime/source verification and configuration writes remain unavailable. See the [catalog source review](docs/REGISTRY-SOURCES.md#qwen-code-manual-installation-and-passive-path-discovery-only).
+
 Manage local AI agents from one desktop interface: discovery and installation, configuration, optional conversation-memory exports, encrypted keys, MCP, and configuration backups.
 
 **Windows 10/11 x64 is currently the fully supported desktop platform.** AgentDeck uses React + Tauri 2 + Rust. Linux can run the core/CLI features that do not involve keys; a protected vault and complete installers are not yet available for Linux/macOS.
