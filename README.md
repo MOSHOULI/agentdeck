@@ -12,6 +12,8 @@
 
 **当前支持的完整桌面平台是 Windows 10/11 x64。** React + Tauri 2 + Rust 架构；Linux 可运行非密钥相关的核心/CLI，尚不提供 Linux/macOS 的受保护密钥库或完整安装包。
 
+Agent 广场支持按当前可自动安装、仅手动安装和待确认状态筛选，详见[目录筛选说明](docs/CATALOG-FILTERS.md)。
+
 ## 安装与运行
 
 1. 从 [AgentDeck 正式发布列表](https://github.com/MOSHOULI/agentdeck/releases) 选择已发布版本并下载对应安装包，用同一发布中的 `SHA256SUMS.txt` 验证文件。发布须通过下述 CI 门禁；CI 测试产物不等于正式发布。

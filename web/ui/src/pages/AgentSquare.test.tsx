@@ -280,4 +280,129 @@ describe('AgentSquare', () => {
     expect(screen.getByText('npm 全局目录匹配，安装历史未知')).toBeInTheDocument();
     expect(screen.getByText(/显示上次检测结果，当前状态待刷新/)).toBeInTheDocument();
   });
+
+  it('combines capability, installed and search filters, then clears every filter together', async () => {
+    render(<AgentSquare />);
+    await screen.findByRole('article', { name: 'OpenCode' });
+    const capability = screen.getByRole('combobox', { name: '支持能力与状态' });
+    fireEvent.change(capability, { target: { value: 'automatic' } });
+    expect(screen.getAllByRole('article')).toHaveLength(1);
+    expect(screen.getByRole('article', { name: 'OpenCode' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '安装 OpenCode' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: '已安装' }));
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    expect(screen.getByText('没有符合当前筛选条件的 Agent')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'manual' } });
+    expect(screen.getByText('没有匹配的 Agent')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看全部 Agent' }));
+    expect(capability).toHaveValue('all');
+    expect(screen.getByRole('searchbox')).toHaveValue('');
+    expect(screen.getByRole('button', { name: '全部' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+    expect(bridge.getAgents).toHaveBeenCalledTimes(1);
+    expect(bridge.installAgent).not.toHaveBeenCalled();
+  });
+
+  it('keeps passive observations visible under manual and uncertain filters without granting actions', async () => {
+    const manual = { ...agents[2], id: 'qwen-code', name: 'Qwen Code', description: '被动观察', installationDetails: {
+      probe: { status: 'unsupported' as const, message: null }, instances: [{ path: '/synthetic/qwen', active: true, resolvedPath: null, entrypointPath: null, version: null, source: { kind: 'unknown' as const, reason: 'Passive only' } }], ambiguous: false, message: null,
+    } };
+    vi.mocked(bridge.getAgents).mockResolvedValue([base, manual]);
+    render(<AgentSquare />);
+    await screen.findByRole('article', { name: 'Qwen Code' });
+    const capability = screen.getByRole('combobox');
+    fireEvent.change(capability, { target: { value: 'manual' } });
+    expect(screen.getAllByRole('article')).toHaveLength(1);
+    expect(screen.getByRole('article', { name: 'Qwen Code' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '选择 Qwen Code' }));
+    fireEvent.change(capability, { target: { value: 'attention' } });
+    expect(screen.getByRole('article', { name: 'Qwen Code' })).toBeInTheDocument();
+    expect(screen.getByText(/不等于软件损坏/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '已安装' }));
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    expect(screen.getByText('当前选择：Qwen Code')).toBeInTheDocument();
+    expect(bridge.installAgent).not.toHaveBeenCalled();
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+    expect(bridge.uninstallAgent).not.toHaveBeenCalled();
+  });
+
+  it('removes stale automatic candidates until a successful refresh and keeps the selected capability', async () => {
+    render(<AgentSquare />);
+    await screen.findByRole('article', { name: 'OpenCode' });
+    const capability = screen.getByRole('combobox');
+    fireEvent.change(capability, { target: { value: 'automatic' } });
+    expect(screen.getByRole('article', { name: 'OpenCode' })).toBeInTheDocument();
+    vi.mocked(bridge.getAgents).mockRejectedValueOnce(new Error('offline'));
+    fireEvent.click(screen.getByRole('button', { name: '刷新列表' }));
+    await screen.findByRole('alert');
+    expect(capability).toHaveValue('automatic');
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    expect(screen.getByText('当前检测状态待刷新，可自动安装列表暂不展示候选。')).toBeInTheDocument();
+    fireEvent.change(capability, { target: { value: 'attention' } });
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+    expect(screen.getByRole('button', { name: '安装 OpenCode' })).toBeDisabled();
+    fireEvent.change(capability, { target: { value: 'automatic' } });
+    fireEvent.click(screen.getByRole('button', { name: '刷新列表' }));
+    await screen.findByRole('article', { name: 'OpenCode' });
+    expect(screen.getByRole('button', { name: '安装 OpenCode' })).toBeEnabled();
+    expect(capability).toHaveValue('automatic');
+    expect(bridge.installAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not advertise actionable automatic installation in read-only mode', async () => {
+    vi.mocked(bridge.runtimeMode).mockReturnValue('demo');
+    render(<AgentSquare />);
+    await screen.findByRole('article', { name: 'OpenCode' });
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'automatic' } });
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    expect(screen.getByText('当前为只读模式。请在桌面应用中刷新检测后查看可自动安装项。')).toBeInTheDocument();
+    expect(bridge.installAgent).not.toHaveBeenCalled();
+  });
+
+  it('excludes invalid evidence from installed results and surfaces it for review', async () => {
+    const invalid = { ...installedAgent, installationDetails: { probe: { status: 'not_detected' as const, message: null }, instances: [], ambiguous: false, message: null } };
+    vi.mocked(bridge.getAgents).mockResolvedValue([invalid]);
+    render(<AgentSquare />);
+    await screen.findByRole('article', { name: 'OpenCode' });
+    fireEvent.click(screen.getByRole('button', { name: '已安装' }));
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '全部' }));
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'attention' } });
+    expect(screen.getByRole('article', { name: 'OpenCode' })).toBeInTheDocument();
+    expect(screen.getByText('安装状态未知')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '应用默认配置 OpenCode' })).toBeDisabled();
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+  });
+
+
+  it('preserves cancellation and the operation lock while automatic candidates disappear during installation', async () => {
+    let finish!: (value: bridge.InstallOutcome) => void;
+    vi.mocked(bridge.installAgent).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    render(<AgentSquare />);
+    await screen.findByRole('article', { name: 'OpenCode' });
+    const capability = screen.getByRole('combobox');
+    fireEvent.change(capability, { target: { value: 'automatic' } });
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    expect(bridge.installAgent).not.toHaveBeenCalled();
+    expect(capability).toHaveValue('automatic');
+    fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    expect(bridge.installAgent).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    fireEvent.change(capability, { target: { value: 'all' } });
+    const lockedInstall = screen.getByRole('button', { name: '安装 OpenCode' });
+    expect(lockedInstall).toBeDisabled();
+    fireEvent.click(lockedInstall);
+    expect(bridge.installAgent).toHaveBeenCalledTimes(1);
+    fireEvent.change(capability, { target: { value: 'automatic' } });
+    vi.mocked(bridge.getAgents).mockResolvedValue([installedAgent]);
+    await act(async () => finish({ warnings: [] }));
+    await waitFor(() => expect(useAgentStore.getState().loading).toBe(false));
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();
+    expect(screen.getByText('没有符合当前筛选条件的 Agent')).toBeInTheDocument();
+    fireEvent.change(capability, { target: { value: 'all' } });
+    expect(screen.getByRole('button', { name: '应用默认配置 OpenCode' })).toBeEnabled();
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
+  });
+
 });

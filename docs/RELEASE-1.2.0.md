@@ -1,4 +1,8 @@
-# AgentDeck 1.2.0
+# AgentDeck 1.2.0 — historical release preparation / 历史发布准备记录
+
+**发布计划更新（2026-11-07）：** v1.2.0 未单独发布。下面保留当时的准备范围和门禁，不是当前的发布通知或手动发布请求。开发继续推进，下一安装包将在较大更新并完成验证后发布，版本号尚未确定。
+
+**Release-plan update (2026-11-07):** v1.2.0 was not released separately. The material below preserves its historical preparation scope and gates; it is not a current release announcement or a request to trigger publication. Development continues, with the next installer deferred until a larger verified update. Its version has not been selected.
 
 ## 中文
 

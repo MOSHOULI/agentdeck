@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useAgentStore } from '../stores/agentStore';
 import { AgentCard } from '../components/AgentCard';
 import { Icon } from '../components/Icon';
+import { runtimeMode } from '../bridge';
+import { matchesInstalledFilter, matchesSupportFilter, type SupportFilter } from './catalogFilters';
 import './AgentWorkspace.css';
 
 const filters = [
@@ -13,6 +15,8 @@ export const AgentSquare: React.FC = () => {
   const { agents, loading, error, notice, refreshError, dataStale, selectedAgentId, loadAgents, installAgent, configureAgent, uninstallAgent, selectAgent, clearError } = useAgentStore();
   const [filter, setFilter] = useState<'all' | 'installed'>('all');
   const [query, setQuery] = useState('');
+  const [supportFilter, setSupportFilter] = useState<SupportFilter>('all');
+  const native = runtimeMode() === 'native';
 
   useEffect(() => { void loadAgents(); }, [loadAgents]);
 
@@ -22,13 +26,21 @@ export const AgentSquare: React.FC = () => {
       // Legacy popularity/star fields are not verified recommendations or ranking signals.
       .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
       .filter((agent) => {
-        if (filter === 'installed' && (!agent.installed || agent.installationStatus !== 'installed')) return false;
+        if (filter === 'installed' && !matchesInstalledFilter(agent)) return false;
+        if (!matchesSupportFilter(agent, supportFilter, { native, loading, dataStale })) return false;
         return !search || [agent.name, agent.id, agent.description, agent.uiType, agent.category]
           .some((value) => value.toLocaleLowerCase().includes(search));
       });
-  }, [agents, filter, query]);
+  }, [agents, filter, query, supportFilter, native, loading, dataStale]);
 
-  const resetFilters = () => { setQuery(''); setFilter('all'); };
+  const resetFilters = () => { setQuery(''); setFilter('all'); setSupportFilter('all'); };
+  const supportHint = supportFilter === 'automatic'
+    ? !native ? '当前为只读模式。请在桌面应用中刷新检测后查看可自动安装项。'
+      : loading || dataStale ? '当前检测状态待刷新，可自动安装列表暂不展示候选。'
+      : '仅显示本次检测未发现、支持自动安装且检测证据无冲突的 Agent；安装仍需单独确认。'
+    : supportFilter === 'manual' ? '仅表示目录未提供自动安装能力，不代表未安装；请查看条目详情及官方说明。'
+      : supportFilter === 'attention' ? '包含检测出错、无法自动验证、证据冲突或待刷新的条目，不等于软件损坏。'
+        : '按安装能力或检测状态筛选，可与已安装和搜索组合使用。';
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
 
   return (
@@ -62,12 +74,23 @@ export const AgentSquare: React.FC = () => {
               <button key={id} type="button" className={`button agent-filter${filter === id ? ' agent-filter-active' : ''}`} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>
             ))}
           </div>
+          <div className="agent-support-filter">
+            <label htmlFor="agent-support-filter">支持能力与状态</label>
+            <select id="agent-support-filter" className="control" value={supportFilter} aria-describedby="agent-support-hint" onChange={(event) => setSupportFilter(event.target.value as SupportFilter)}>
+              <option value="all">全部能力与状态</option>
+              <option value="automatic">当前可自动安装</option>
+              <option value="manual">仅手动安装</option>
+              <option value="attention">待确认状态</option>
+            </select>
+          </div>
           <div className="agent-search">
             <Icon name="search" size={16} />
             <label htmlFor="agent-search" className="sr-only">搜索 Agent</label>
             <input id="agent-search" className="control" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、ID 或描述…" />
           </div>
         </div>
+
+        <p id="agent-support-hint" className="agent-support-hint">{supportHint}</p>
 
         <div className="agent-list-summary">
           <span>{loading ? <span role="status">正在读取 Agent 状态…</span> : refreshError && agents.length === 0 ? '列表暂不可用' : `显示 ${filteredAgents.length} / ${agents.length} 款 Agent`}</span>
@@ -82,9 +105,9 @@ export const AgentSquare: React.FC = () => {
           {!loading && (!refreshError || agents.length > 0) && filteredAgents.length === 0 && (
             <div className="empty-state agent-empty">
               <Icon name={query ? 'search' : 'agents'} size={28} />
-              <h2>{query ? '没有匹配的 Agent' : filter === 'installed' ? '还没有检测到已安装的 Agent' : '暂无可显示的 Agent'}</h2>
-              <p>{query ? '试试其他名称、ID 或描述关键词。' : filter === 'installed' ? '无法自动检测的 Agent 不会计入已安装列表。' : '刷新列表，或更换筛选条件。'}</p>
-              {(query || filter !== 'all') && <button type="button" className="button" onClick={resetFilters}>查看全部 Agent</button>}
+              <h2>{query ? '没有匹配的 Agent' : supportFilter !== 'all' ? '没有符合当前筛选条件的 Agent' : filter === 'installed' ? '还没有检测到已安装的 Agent' : '暂无可显示的 Agent'}</h2>
+              <p>{query ? '试试其他名称、ID 或描述关键词。' : supportFilter !== 'all' ? '当前能力、安装状态和搜索条件需要同时满足；可查看全部或刷新检测。' : filter === 'installed' ? '无法自动检测的 Agent 不会计入已安装列表。' : '刷新列表，或更换筛选条件。'}</p>
+              {(query || filter !== 'all' || supportFilter !== 'all') && <button type="button" className="button" onClick={resetFilters}>查看全部 Agent</button>}
             </div>
           )}
         </div>

@@ -9,6 +9,10 @@
 .agent-workspace .agent-search { position: relative; flex: 1 1 200px; max-width: 320px; min-width: 180px; }
 .agent-workspace .agent-search > svg { position: absolute; top: 50%; left: 11px; transform: translateY(-50%); pointer-events: none; color: var(--muted); }
 .agent-workspace .agent-search .control { width: 100%; min-height: 36px; padding-left: 34px; }
+.agent-workspace .agent-support-filter { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.agent-workspace .agent-support-filter label { color: var(--muted); font-size: 11px; }
+.agent-workspace .agent-support-filter .control { min-height: 36px; max-width: 100%; }
+.agent-workspace .agent-support-hint { margin: 0; padding: 10px 16px; color: var(--muted); font-size: 11px; line-height: 1.6; border-bottom: 1px solid var(--border); }
 .agent-workspace .agent-list-summary { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; color: var(--muted); background: var(--surface-subtle); padding: 9px 17px; font-size: 11px; border-bottom: 1px solid var(--border); }
 .agent-workspace .agent-list { min-width: 0; }
 .agent-workspace .agent-card { position: relative; border-bottom: 1px solid var(--border); background: var(--surface); min-width: 0; }
@@ -87,6 +91,8 @@
 @media (max-width: 700px) {
   .agent-workspace .agent-toolbar { gap: 10px; }
   .agent-workspace .agent-search { max-width: none; flex-basis: 100%; }
+  .agent-workspace .agent-support-filter { flex: 1 1 100%; flex-wrap: wrap; }
+  .agent-workspace .agent-support-filter .control { flex: 1; min-width: 0; }
   .agent-workspace .agent-row { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 14px; }
   .agent-workspace .agent-select { grid-column: 1 / -1; }
   .agent-workspace .agent-row-actions { justify-content: flex-end; }
