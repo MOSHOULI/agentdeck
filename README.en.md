@@ -12,6 +12,8 @@ Manage local AI agents from one desktop interface: discovery and installation, c
 
 **Windows 10/11 x64 is currently the fully supported desktop platform.** AgentDeck uses React + Tauri 2 + Rust. Linux can run the core/CLI features that do not involve keys; a protected vault and complete installers are not yet available for Linux/macOS.
 
+The catalog can filter currently available automatic installation, manual-only entries and observations needing confirmation. See [catalog filter guidance](docs/CATALOG-FILTERS.md).
+
 ## Installation and startup
 
 1. Select a published version and download its installer from the [AgentDeck releases](https://github.com/MOSHOULI/agentdeck/releases), and verify it against `SHA256SUMS.txt` from the same release. Publication requires the CI gates described below. CI test artifacts are not public releases.
