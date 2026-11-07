@@ -246,6 +246,10 @@ fn known_agent(agent: &AgentDefinition) -> Option<KnownAgent> {
         "opencode --version" => ("opencode", "opencode", Some("opencode-ai")),
         "gemini --version" => ("gemini-cli", "gemini", Some("@google/gemini-cli")),
         "pi --version" => ("pi", "pi", Some("@earendil-works/pi-coding-agent")),
+        // The Qwen launcher may redirect to a managed runtime or replace its
+        // arguments before handling --version. Only passive PATH discovery is
+        // supported, including when another registry ID uses this command.
+        "qwen --version" => ("qwen-code", "qwen", None),
         "hermes --version" => ("hermes", "hermes", None),
         _ => return None,
     };
@@ -258,6 +262,21 @@ fn known_agent(agent: &AgentDefinition) -> Option<KnownAgent> {
 /// Observe the selected local instance and any shadowed PATH candidates. This is
 /// read-only evidence, not authorization or a durable receipt for future changes.
 pub fn inspect_installation(agent: &AgentDefinition) -> InstallationDetails {
+    // A changed Qwen recipe must not escape the passive boundary through the
+    // legacy custom-shell fallback, including a missing verification command.
+    if agent.id == "qwen-code"
+        && agent.install.verify_cmd.as_deref().map(str::trim) != Some("qwen --version")
+    {
+        return InstallationDetails {
+            probe: InstallationProbe {
+                status: InstallationStatus::Unsupported,
+                message: Some("Qwen Code supports only passive discovery of the qwen command; custom verification is not executed".into()),
+            },
+            instances: Vec::new(),
+            ambiguous: false,
+            message: None,
+        };
+    }
     let Some(known) = known_agent(agent) else {
         // Existing custom verification remains bounded, but arbitrary shell text
         // is never interpreted as a path, actual version, or package-manager proof.
@@ -316,6 +335,30 @@ fn inspect_with(
             instances,
             ambiguous: false,
             message: None,
+        };
+    }
+    if known.executable == "qwen" {
+        // Qwen v0.26.9 processes QWEN_CODE_RELAUNCH_ARGS and CLI_VERSION, reads
+        // home .env files, and selects a managed runtime before --version. Do
+        // not execute the launcher, query npm, or infer runtime ownership from
+        // a global package manifest. A discovered path is not verification.
+        let reason = "Qwen Code launcher behavior is not verified; only command paths were observed without executing Qwen or npm";
+        for instance in &mut instances {
+            instance.source = InstallationSource::unknown(reason);
+        }
+        let distinct: HashSet<_> = instances
+            .iter()
+            .map(|instance| instance.resolved_path.as_ref().unwrap_or(&instance.path))
+            .collect();
+        let ambiguous = distinct.len() > 1;
+        return InstallationDetails {
+            probe: InstallationProbe {
+                status: InstallationStatus::Unsupported,
+                message: Some(reason.into()),
+            },
+            instances,
+            ambiguous,
+            message: ambiguous.then(|| "Multiple distinct qwen command targets were found; runtime and source verification are unsupported".into()),
         };
     }
     // Recognize a safe Windows launcher independently from npm availability.
@@ -959,6 +1002,10 @@ mod tests {
         executable: "codex",
         package: Some("@openai/codex"),
     };
+    const QWEN: KnownAgent = KnownAgent {
+        executable: "qwen",
+        package: None,
+    };
 
     struct Fixture {
         directory: PathBuf,
@@ -972,6 +1019,21 @@ mod tests {
 
     impl Fixture {
         fn new(platform: Platform) -> Self {
+            Self::for_package(platform, "@openai/codex", "codex", "bin/codex.js")
+        }
+
+        fn qwen(platform: Platform) -> Self {
+            // Qwen's tagged packaging source maps qwen to cli-entry.js. Even
+            // this layout is not evidence of the runtime selected by Qwen.
+            Self::for_package(platform, "@qwen-code/qwen-code", "qwen", "cli-entry.js")
+        }
+
+        fn for_package(
+            platform: Platform,
+            package_name: &str,
+            executable: &str,
+            relative_bin: &str,
+        ) -> Self {
             let directory = std::env::temp_dir().join(format!(
                 "agentdeck inspect 中文 & %VAR% ! {}",
                 uuid::Uuid::new_v4()
@@ -982,8 +1044,8 @@ mod tests {
             } else {
                 "lib/node_modules"
             });
-            let package = root.join("@openai/codex");
-            let bin = package.join("bin/codex.js");
+            let package = root.join(package_name);
+            let bin = package.join(relative_bin);
             std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
             write_executable(
                 &bin,
@@ -991,7 +1053,7 @@ mod tests {
             );
             write_manifest(
                 &package,
-                serde_json::json!({"name":"@openai/codex", "version":"99.99.99", "bin":{"codex":"bin/codex.js"}}),
+                serde_json::json!({"name":package_name, "version":"99.99.99", "bin":{(executable):relative_bin}}),
             );
             let bindir = if platform == Platform::Windows {
                 prefix.clone()
@@ -1000,18 +1062,19 @@ mod tests {
             };
             std::fs::create_dir_all(&bindir).unwrap();
             let launcher = bindir.join(if platform == Platform::Windows {
-                "codex.cmd"
+                format!("{executable}.cmd")
             } else {
-                "codex"
+                executable.to_owned()
             });
             if platform == Platform::Windows {
                 std::fs::write(
                     &launcher,
-                    node_cmd_shim("node_modules/@openai/codex/bin/codex.js").replace('\n', "\r\n"),
+                    node_cmd_shim(&format!("node_modules/{package_name}/{relative_bin}"))
+                        .replace('\n', "\r\n"),
                 )
                 .unwrap();
                 std::fs::write(
-                    bindir.join("codex"),
+                    bindir.join(executable),
                     "#!/bin/sh\n# npm companion; must not be selected by cmd\n",
                 )
                 .unwrap();
@@ -1136,6 +1199,133 @@ mod tests {
             details.instances[0].source,
             InstallationSource::Unknown { .. }
         )
+    }
+
+    fn assert_qwen_has_no_runtime_evidence(details: &InstallationDetails, runner: &FakeRunner) {
+        assert!(
+            runner.calls.is_empty(),
+            "Qwen inspection must not run any program"
+        );
+        for instance in &details.instances {
+            assert!(instance.version.is_none());
+            assert!(instance.entrypoint_path.is_none());
+            assert!(matches!(
+                instance.source,
+                InstallationSource::Unknown { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn qwen_exact_command_is_passive_even_under_another_registry_id() {
+        let registry =
+            crate::registry::parse_registry(include_str!("../../../../agents/registry-v3.json"))
+                .unwrap();
+        let fixture = Fixture::qwen(Platform::Windows);
+        for id in ["qwen-code", "custom-qwen", "codex"] {
+            let mut agent = registry.agents["codex"].clone();
+            agent.id = id.into();
+            agent.install.verify_cmd = Some("qwen --version".into());
+            let known = known_agent(&agent).unwrap();
+            assert_eq!(known.executable, "qwen");
+            assert!(known.package.is_none());
+            let mut runner = fixture.runner();
+            let details = inspect_with(known, &fixture.search, &mut runner);
+            assert_eq!(details.probe.status, InstallationStatus::Unsupported);
+            assert_qwen_has_no_runtime_evidence(&details, &runner);
+        }
+    }
+
+    #[test]
+    fn qwen_package_layout_and_spoofed_version_cannot_trigger_a_probe_or_source_claim() {
+        for platform in [
+            Platform::Windows,
+            #[cfg(unix)]
+            Platform::Unix,
+        ] {
+            let fixture = Fixture::qwen(platform);
+            let mut runner = fixture.runner();
+            // Even plausible CLI_VERSION output must not reach a version
+            // parser. Zero callbacks also prohibit relaunch arguments from
+            // turning a version request into another Agent operation.
+            runner.version = b"99.99.99\n".to_vec();
+            let details = inspect_with(QWEN, &fixture.search, &mut runner);
+            assert_eq!(details.probe.status, InstallationStatus::Unsupported);
+            assert!(!details.ambiguous);
+            assert_eq!(details.instances.len(), 1);
+            assert_eq!(details.instances[0].path, fixture.launcher);
+            assert!(details.instances[0].active);
+            assert_qwen_has_no_runtime_evidence(&details, &runner);
+
+            // Passive discovery neither needs nor trusts any package manifest.
+            for manifest in [
+                r#"{"name":"@someone/qwen","version":"99.99.99","bin":{"qwen":"cli-entry.js"}}"#,
+                "not JSON; must not be read as package evidence",
+            ] {
+                std::fs::write(fixture.package.join("package.json"), manifest).unwrap();
+                let details = inspect_with(QWEN, &fixture.search, &mut runner);
+                assert_eq!(details.probe.status, InstallationStatus::Unsupported);
+                assert_qwen_has_no_runtime_evidence(&details, &runner);
+            }
+        }
+    }
+
+    #[test]
+    fn qwen_absent_unusable_and_multiple_candidates_never_run_queries() {
+        let fixture = Fixture::qwen(Platform::Windows);
+        std::fs::remove_file(&fixture.launcher).unwrap();
+        let mut runner = fixture.runner();
+        let details = inspect_with(QWEN, &fixture.search, &mut runner);
+        assert_eq!(details.probe.status, InstallationStatus::NotDetected);
+        assert!(details.instances.is_empty());
+        assert_qwen_has_no_runtime_evidence(&details, &runner);
+
+        std::fs::create_dir(&fixture.launcher).unwrap();
+        let details = inspect_with(QWEN, &fixture.search, &mut runner);
+        assert_eq!(details.probe.status, InstallationStatus::Error);
+        assert_qwen_has_no_runtime_evidence(&details, &runner);
+
+        let fixture = Fixture::qwen(Platform::Windows);
+        write_executable(
+            &fixture.prefix.join("qwen.exe"),
+            "Synthetic second target, never run",
+        );
+        let mut runner = fixture.runner();
+        let details = inspect_with(QWEN, &fixture.search, &mut runner);
+        assert_eq!(details.probe.status, InstallationStatus::Unsupported);
+        assert!(details.ambiguous);
+        assert_eq!(details.instances.len(), 2);
+        assert_qwen_has_no_runtime_evidence(&details, &runner);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn qwen_aliases_are_not_distinct_runtimes_and_dangling_links_are_errors() {
+        let mut fixture = Fixture::qwen(Platform::Unix);
+        let other_bin = fixture.directory.join("other-bin");
+        std::fs::create_dir(&other_bin).unwrap();
+        let alias = other_bin.join("qwen");
+        std::os::unix::fs::symlink(&fixture.bin, &alias).unwrap();
+        fixture.search.directories.push(other_bin);
+        let mut runner = fixture.runner();
+        let details = inspect_with(QWEN, &fixture.search, &mut runner);
+        assert_eq!(details.probe.status, InstallationStatus::Unsupported);
+        assert_eq!(details.instances.len(), 2);
+        assert!(!details.ambiguous);
+        assert_qwen_has_no_runtime_evidence(&details, &runner);
+
+        std::fs::remove_file(&alias).unwrap();
+        std::os::unix::fs::symlink(fixture.directory.join("missing"), &alias).unwrap();
+        let details = inspect_with(QWEN, &fixture.search, &mut runner);
+        assert_eq!(details.probe.status, InstallationStatus::Error);
+        assert_qwen_has_no_runtime_evidence(&details, &runner);
+    }
+
+    #[test]
+    fn qwen_version_is_not_inferred_from_plausible_or_spoofed_output() {
+        for output in [b"0.26.9\n".as_slice(), b"99.99.99\n", b"unknown\n"] {
+            assert!(parse_version("qwen", output).is_none());
+        }
     }
 
     #[cfg(unix)]

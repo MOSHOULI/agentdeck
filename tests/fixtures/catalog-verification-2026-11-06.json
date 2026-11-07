@@ -12,7 +12,18 @@
     "openclaw",
     "opencode",
     "pi",
+    "qwen-code",
     "zcode"
+  ],
+  "future_agent_ids": [
+    "aider",
+    "continue",
+    "crush",
+    "goose",
+    "kilocode",
+    "oh-my-pi",
+    "plandex",
+    "roocode"
   ],
   "npm": {
     "claude-code": {
@@ -51,6 +62,16 @@
       "forbidden_fragments": [
         "gemini login"
       ]
+    },
+    "qwen-code": {
+      "required_fragments": [
+        "qwen",
+        "/auth"
+      ],
+      "forbidden_fragments": [
+        "qwen auth",
+        "file_exists"
+      ]
     }
   },
   "source_only": {
@@ -87,7 +108,16 @@
     "https://opencode.ai/v2/docs",
     "https://opencode.ai/v2/docs/migrate-v1/",
     "https://opencode.ai/v2/docs/mcp-servers/",
-    "https://opencode.ai/v2/docs/instructions/"
+    "https://opencode.ai/v2/docs/instructions/",
+    "https://github.com/QwenLM/qwen-code",
+    "https://github.com/QwenLM/qwen-code/releases/tag/v0.26.9",
+    "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/package.json",
+    "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/scripts/prepare-package.js#L360-L434",
+    "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/users/quickstart.md",
+    "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/scripts/cli-entry.js",
+    "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/developers/tools/shell.md",
+    "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/users/configuration/auth.md",
+    "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/LICENSE"
   ],
   "popularity_evidence": {
     "verified": false,
@@ -111,5 +141,22 @@
     "personalization_template": "opencode",
     "model_config": null,
     "mcp": null
+  },
+  "qwen_source_review": {
+    "upstream_release": "v0.26.9",
+    "source_commit": "600aff0592bcfc21668ca4aba95a5b20c6491b86",
+    "npm_package": "@qwen-code/qwen-code",
+    "documented_npm_command": "npm install -g @qwen-code/qwen-code@latest",
+    "node_dependency": "node >= 22",
+    "published_bin": "cli-entry.js",
+    "manual_install_url": "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/users/quickstart.md",
+    "npm_registry_verified": false,
+    "runtime_verification": false,
+    "install_method": "manual",
+    "verification_marker": "qwen --version",
+    "automatic_installation": false,
+    "runtime_probe": false,
+    "source_association": false,
+    "published_release_excluded": "v1.1.1"
   }
 }

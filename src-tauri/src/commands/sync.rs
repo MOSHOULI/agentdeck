@@ -42,7 +42,7 @@ mod tests {
                 std::env::var_os("AGENTDECK_TEST_HOME").expect("isolated child HOME"),
             );
             assert!(home.is_absolute());
-            for agent in ["opencode", "not-an-agent"] {
+            for agent in ["opencode", "not-an-agent", "qwen-code"] {
                 for enabled in [true, false] {
                     // Exercise the real asynchronous command and spawn_blocking
                     // boundary, not a copy of its ordering or a real agent.

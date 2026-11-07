@@ -3,7 +3,9 @@
 //! Inputs are compile-time repository fixtures. These tests do not resolve HOME,
 //! spawn catalog commands, inspect credentials, or contact upstream providers.
 
-use aisync_core::registry::{InstallMethod, RegistryDoc, parse_registry, sorted_agents};
+use aisync_core::registry::{
+    AuthType, InstallMethod, RegistryDoc, UiType, parse_registry, sorted_agents,
+};
 use serde_json::Value;
 
 const BUNDLED: &str = include_str!("../../../agents/registry-v3.json");
@@ -43,7 +45,17 @@ fn bundled_schema_and_core_ids_remain_compatible_without_promoting_future_entrie
     for (id, agent) in &catalog.agents {
         assert_eq!(&agent.id, id, "parser must still populate the agent ID");
     }
-    for id in catalog.future_registry.unwrap().agents.keys() {
+    let future = catalog.future_registry.as_ref().unwrap();
+    let mut future_ids: Vec<_> = future.agents.keys().map(String::as_str).collect();
+    future_ids.sort_unstable();
+    let expected_future_ids: Vec<_> = expected["future_agent_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    assert_eq!(future_ids, expected_future_ids);
+    for id in future.agents.keys() {
         assert!(
             !catalog.agents.contains_key(id),
             "future entry was activated: {id}"
@@ -116,6 +128,144 @@ fn authentication_guidance_uses_documented_entry_points() {
             );
         }
     }
+}
+
+#[test]
+fn qwen_is_manual_with_passive_detection_and_no_authentication_or_write_claims() {
+    let catalog = catalog();
+    let qwen = &catalog.agents["qwen-code"];
+    assert_eq!(qwen.id, "qwen-code");
+    assert_eq!(qwen.name, "Qwen Code");
+    assert_eq!(qwen.source, "open");
+    assert_eq!(qwen.license.as_deref(), Some("Apache-2.0"));
+    assert_eq!(qwen.github.as_deref(), Some("QwenLM/qwen-code"));
+    assert_eq!(
+        qwen.homepage.as_deref(),
+        Some("https://github.com/QwenLM/qwen-code")
+    );
+    assert_eq!(qwen.ui_type, UiType::Cli);
+    assert_eq!(qwen.category, "ai-coding");
+    assert_eq!(qwen.icon, "qwen-code");
+    assert!(qwen.stars.is_none());
+    assert!(!qwen.popular);
+    assert_eq!(qwen.install.method, InstallMethod::Manual);
+    assert!(qwen.install.command.is_none());
+    assert_eq!(qwen.install.verify_cmd.as_deref(), Some("qwen --version"));
+    assert_eq!(qwen.install.dependencies, ["node >= 22"]);
+    assert!(qwen.install.uninstall_cmd.is_none());
+    assert!(qwen.install.extension_id.is_none());
+    assert_eq!(
+        qwen.install.url.as_deref(),
+        expectations()["qwen_source_review"]["manual_install_url"].as_str()
+    );
+    assert_eq!(qwen.auth_type, AuthType::AccountLogin);
+    // No completion hint: do not invent a credential path or infer logged-in state.
+    assert!(qwen.auth_guide.as_ref().unwrap().completion_check.is_none());
+    assert!(qwen.config_inject.model_config.is_none());
+    assert!(qwen.config_inject.personalization.is_none());
+    assert!(qwen.config_inject.mcp.is_none());
+    assert!(!qwen.config_inject.skills);
+    assert!(!qwen.config_inject.memory);
+    assert!(qwen.memory_collector.is_none());
+    // Capability queries only: none probe PATH, initialize a profile, or spawn an installer.
+    assert!(!aisync_core::deploy::can_install(qwen));
+    assert!(!aisync_core::deploy::can_configure(qwen));
+    assert!(!aisync_core::deploy::can_uninstall(qwen));
+    assert!(!aisync_core::config::supports_personalization(qwen));
+    let bundled: Value = serde_json::from_str(BUNDLED).unwrap();
+    let raw = &bundled["agents"]["qwen-code"];
+    assert!(raw["auth_guide"]["completion_check"].is_null());
+    assert!(
+        raw.get("version").is_none(),
+        "reviewed release is not an observed installed version"
+    );
+    for field in ["upgrade_cmd", "update_cmd"] {
+        assert!(raw["install"].get(field).is_none());
+    }
+}
+
+#[test]
+fn qwen_source_snapshot_is_not_runtime_or_npm_publication_evidence() {
+    let expected = expectations();
+    let review = &expected["qwen_source_review"];
+    assert_eq!(review["upstream_release"], "v0.26.9");
+    assert_eq!(
+        review["source_commit"],
+        "600aff0592bcfc21668ca4aba95a5b20c6491b86"
+    );
+    assert_eq!(review["npm_package"], "@qwen-code/qwen-code");
+    assert_eq!(review["published_bin"], "cli-entry.js");
+    assert_eq!(review["install_method"], "manual");
+    for field in [
+        "npm_registry_verified",
+        "runtime_verification",
+        "automatic_installation",
+        "runtime_probe",
+        "source_association",
+    ] {
+        assert_eq!(review[field], false, "{field}");
+    }
+    let catalog = catalog();
+    let qwen = &catalog.agents["qwen-code"];
+    assert_eq!(
+        qwen.install.dependencies,
+        [review["node_dependency"].as_str().unwrap()]
+    );
+    assert_eq!(
+        qwen.install.verify_cmd.as_deref(),
+        review["verification_marker"].as_str()
+    );
+    let bundled: Value = serde_json::from_str(BUNDLED).unwrap();
+    for field in ["command", "uninstall_cmd"] {
+        assert_eq!(
+            bundled["agents"]["qwen-code"]["install"].get(field),
+            Some(&Value::Null)
+        );
+    }
+    for document in [SOURCES_EN, SOURCES_ZH] {
+        for field in [
+            "upstream_release",
+            "source_commit",
+            "npm_package",
+            "documented_npm_command",
+            "node_dependency",
+            "published_bin",
+            "manual_install_url",
+            "published_release_excluded",
+        ] {
+            assert!(
+                document.contains(review[field].as_str().unwrap()),
+                "missing Qwen source context: {field}"
+            );
+        }
+        for boundary in [
+            "install.method: manual",
+            "install.command: null",
+            "uninstall_cmd: null",
+            "verify_cmd: qwen --version",
+            "completion_check: null",
+            "QWEN_CODE_RELAUNCH_ARGS",
+            "CLI_VERSION",
+            "QWEN_HOME",
+            "Unsupported",
+            "NotDetected",
+            "Plus/Pro",
+            "/auth",
+        ] {
+            assert!(
+                document.contains(boundary),
+                "missing Qwen boundary: {boundary}"
+            );
+        }
+    }
+    assert!(SOURCES_EN.contains("not included in the published v1.1.1 installer"));
+    assert!(SOURCES_ZH.contains("不包含在已发布的 v1.1.1 安装包中"));
+    assert!(SOURCES_EN.contains("AgentDeck does not run `qwen --version`"));
+    assert!(SOURCES_ZH.contains("AgentDeck 对该条目不运行 `qwen --version`"));
+    assert!(
+        SOURCES_EN.contains("not verify the npm dist-tag, tarball integrity or npm publication")
+    );
+    assert!(SOURCES_ZH.contains("没有验证 npm dist-tag、tarball 完整性或 npm 发布状态"));
 }
 
 #[test]

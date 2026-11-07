@@ -60,7 +60,7 @@ fn assert_rejected_before_backup(
 #[test]
 fn unsupported_and_unknown_agents_never_invoke_backup() {
     let fixture = Fixture::new();
-    for agent in ["opencode", "not-an-agent", "pi", "hermes"] {
+    for agent in ["opencode", "not-an-agent", "pi", "hermes", "qwen-code"] {
         for enabled in [true, false] {
             let error = toggle_with_backup(agent, "ragflow", enabled, || {
                 std::fs::create_dir_all(fixture.0.join("fake-backup"))?;

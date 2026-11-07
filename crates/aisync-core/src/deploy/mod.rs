@@ -478,6 +478,54 @@ mod tests {
         assert!(uninstall_agent(&agent).is_err());
     }
 
+    #[test]
+    fn qwen_altered_verification_cannot_reach_the_custom_shell_fallback() {
+        let directory =
+            std::env::temp_dir().join(format!("agentdeck-qwen-passive-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let marker = directory.join("must-not-execute.txt");
+        let mut agent = fake_agent();
+        agent.id = "qwen-code".into();
+        for command in [
+            None,
+            Some(String::new()),
+            Some("qwen -v".into()),
+            Some(format!("echo unexpected > \"{}\"", marker.display())),
+        ] {
+            agent.install.verify_cmd = command;
+            let details = inspect_installation(&agent);
+            assert_eq!(details.probe.status, InstallationStatus::Unsupported);
+            assert!(details.instances.is_empty());
+            assert!(!details.ambiguous);
+            assert!(!verify_installation(&agent).unwrap());
+            assert!(
+                !marker.exists(),
+                "Qwen custom verification must never execute"
+            );
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn qwen_manual_or_npm_recipes_cannot_enable_installation() {
+        let mut agent = fake_agent();
+        agent.id = "qwen-code".into();
+        agent.install.verify_cmd = Some("qwen --version".into());
+        for method in [InstallMethod::Manual, InstallMethod::Npm] {
+            agent.install.method = method;
+            for command in [
+                None,
+                Some("npm install -g @qwen-code/qwen-code"),
+                Some("npm install -g @qwen-code/qwen-code@latest"),
+            ] {
+                agent.install.command = command.map(str::to_owned);
+                assert!(!can_install(&agent));
+                assert!(install_agent(&agent).is_err());
+                assert!(!can_uninstall(&agent));
+            }
+        }
+    }
+
     fn observation(status: InstallationStatus) -> InstallationProbe {
         InstallationProbe {
             status,

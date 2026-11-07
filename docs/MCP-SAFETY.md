@@ -2,7 +2,7 @@
 
 English | [简体中文](MCP-SAFETY.zh-CN.md)
 
-This is a development-only fix, **not part of the frozen, pending v1.2.0 release**.
+This is a development-only fix, **not yet shipped in a public installer**.
 It changes the desktop MCP toggle's backup ordering, without changing registry
 contents, package versions or release artifacts. Batch MCP synchronization
 (`mcp::sync`) is unchanged.

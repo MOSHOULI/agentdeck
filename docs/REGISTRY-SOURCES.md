@@ -2,7 +2,7 @@
 
 English | [简体中文](REGISTRY-SOURCES.zh-CN.md)
 
-Last focused review: **2026-11-06**. This review covers the Node requirements and authentication guidance for Gemini CLI and Claude Code, Pi's runtime/configuration layout, the source-only entries for Roo Code, Crush, and Oh-My-Pi, and the OpenCode V1/V2 installation/configuration boundary. The Hermes findings below retain their **2026-11-02** verification date. This is not certification of every catalog field or agent.
+Last focused review: **2026-11-06**. This review covers the Node requirements and authentication guidance for Gemini CLI and Claude Code, Pi's runtime/configuration layout, the source-only entries for Roo Code, Crush, and Oh-My-Pi, the OpenCode V1/V2 installation/configuration boundary, and the Qwen Code manual catalog/passive-discovery boundary. The Hermes findings below retain their **2026-11-02** verification date. This is not certification of every catalog field or agent.
 
 ## What the catalog does and does not prove
 
@@ -11,11 +11,37 @@ Last focused review: **2026-11-06**. This review covers the Node requirements an
 - **Local observations** in this review are limited to parsing the bundled registry and checking static expectations. No agent, installer, login flow, provider request, or MCP server was run. No real user configuration or credential file was inspected or changed.
 - `future_registry` contains source references, including archived projects. It is not an installation list or a delivery commitment. Moving a name into `agents` requires current source verification, an implemented adapter, and isolated tests.
 
+**Development-only addition:** Qwen Code is being added for the next development version. It is not included in the published v1.1.1 installer, and this document does not establish publication of a newer installer. The existing nine entries and eight reference entries are retained.
+
 The date in `registry-v3.json` records this edit, not a complete revalidation of all installation routes or existing authentication-file hints. A file-presence hint cannot establish a working login or a valid remote token.
 
 **No popularity ranking is certified.** Every core and reference entry now has `stars: null` and `popular: false`. Null means no current verified count is supplied, not zero stars; false withdraws the legacy recommendation flag, not a negative assessment of the product. Unverified download/context/model-version counts, market rankings, and subjective superlatives have been removed from descriptions. The verified Roo Code archival date and explicit OpenCode V1/V2 boundary remain. Product descriptions are identification, not comparative recommendations or blanket capability certification.
 
 The schema remains compatible: `stars` is optional, and sorting treats missing counts as zero while retaining installed-first behavior. Equal unranked entries use the core ID tie-breaker for stable display, not a certified popularity order. Separate UI labels, demo fixtures, and previously cached registries are not evidence of current verification and are not changed by this bundled-catalog edit.
+
+## Qwen Code: manual installation and passive PATH discovery only
+
+- Official repository: [QwenLM/qwen-code](https://github.com/QwenLM/qwen-code), with [Apache-2.0 license](https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/LICENSE).
+- Reviewed GitHub release: [v0.26.9](https://github.com/QwenLM/qwen-code/releases/tag/v0.26.9), at commit `600aff0592bcfc21668ca4aba95a5b20c6491b86`.
+- [Pinned root package manifest](https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/package.json) and [published package manifest generation](https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/scripts/prepare-package.js#L360-L434).
+- [Pinned official quickstart](https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/users/quickstart.md).
+- [Pinned executable wrapper](https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/scripts/cli-entry.js).
+- [Pinned platform/shell documentation](https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/developers/tools/shell.md).
+- [Pinned authentication documentation](https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/users/configuration/auth.md).
+
+This is a point-in-time upstream source review, not an installed version. The reviewed release is **v0.26.9**; the npm registry was not independently readable during this review, so it does not verify the npm dist-tag, tarball integrity or npm publication. The source-generated distribution manifest maps `@qwen-code/qwen-code` to executable `qwen` and published bin `cli-entry.js`. The repository's `scripts/cli-entry.js` path and workspace entrypoints are not the published bin path.
+
+The official npm alternative is `npm install -g @qwen-code/qwen-code@latest` with **Node.js >=22.0.0**. The catalog's `node >= 22` prerequisite records this npm route only; it is not a claim that standalone installation requires a separately installed Node runtime. Upstream now recommends standalone shell/PowerShell installers. The npm command and those installers are **user-run guidance only**: AgentDeck keeps `install.method: manual`, `install.command: null` and `uninstall_cmd: null`. Qwen is not added to the five fixed npm installation adapters. `@latest` is mutable, not a version pin. No installer or dependency lifecycle script was executed in this review.
+
+Upstream supports native Windows, not only WSL. The shell documentation describes `cmd.exe /c` and a PTY fallback on Windows builds `<=19041`; this is not a blanket minimum-OS support table. Exact macOS/Linux minimum versions were not verified. These upstream platform statements do not certify an AgentDeck Windows GUI or real-agent round trip.
+
+The wrapper processes `QWEN_CODE_RELAUNCH_ARGS`, permits a `CLI_VERSION` override, reads home `.env` files to select `QWEN_HOME`, and considers managed-installation metadata **before handling a version request**. Clearing the two argument/version overrides alone would not avoid home lookup or establish that a reported version belongs to the npm installation on PATH. Therefore AgentDeck does not run `qwen --version`, query npm, inspect Qwen manifests, or read Qwen configuration/credentials for this entry. The retained `verify_cmd: qwen --version` is a fixed backend identification marker, **not an executed verification recipe**.
+
+Only passive PATH candidate observation is available. A candidate found through a complete search remains `Unsupported`, with version and installation source unknown; absence is `NotDetected` on the inspected PATH, not proof of whole-machine absence. Incomplete or unusable searches return `Error`, never a missing-installation claim. Multiple distinct candidates remain ambiguous. Automatic installation, upgrade and uninstall are unavailable. No package association or actual runtime result is inferred from the source snapshot, file name or catalog recipe.
+
+After manual installation, the documented user flow is to launch `qwen`, then use in-session `/auth`; standalone `qwen auth` was removed. Qwen Account OAuth requires a **Plus/Pro subscription** in the reviewed documentation. API-provider options include QwenCloud, Alibaba ModelStudio, third-party and custom providers; this review promises no free quota or provider access. `auth_type: account_login` describes the account entry point, while `completion_check: null` leaves login unverified without guessing a credential path. AgentDeck does not execute authentication or check authentication files.
+
+All Qwen model, MCP and personalization targets are `null`; skills and memory are `false`, and the memory collector is `null`. Configuration and management capability checks remain false. Upstream support for these features does not enable AgentDeck writers. This entry belongs to the **next development version**, not the published **v1.1.1** installer, and neither static fixtures nor synthetic passive-discovery tests establish real installation, authentication or published support.
 
 ## OpenCode: V1 installation route, bounded configuration support
 
@@ -91,7 +117,7 @@ Registry metadata may change upstream; future revisions should recheck these sou
 
 ## Isolated catalog regression checks
 
-`crates/aisync-core/tests/catalog_metadata.rs` parses the actual bundled schema-v3 registry and the dated expectations in `tests/fixtures/catalog-verification-2026-11-06.json`. It checks the Node/auth corrections, disabled Pi/Hermes write adapters, the explicit OpenCode V1 route with disabled MCP/model writes and retained instruction target, archived/source-only status, reviewed fixed install recipes, the existing nine core IDs, and withdrawal of unverified popularity metadata across all core/reference entries. A focused ordering check preserves installed-first behavior without inventing a ranking. It never executes a catalog command, reads a user's home, or contacts a provider.
+`crates/aisync-core/tests/catalog_metadata.rs` parses the actual bundled schema-v3 registry and the dated expectations in `tests/fixtures/catalog-verification-2026-11-06.json`. It checks the Node/auth corrections, disabled Pi/Hermes write adapters, the explicit OpenCode V1 route with disabled MCP/model writes and retained instruction target, archived/source-only status, reviewed fixed install recipes, the ten core IDs (the original nine plus Qwen Code), the unchanged eight reference IDs, Qwen Code's manual/passive-only boundary and disabled management/configuration capabilities, and withdrawal of unverified popularity metadata across all core/reference entries. A focused ordering check preserves installed-first behavior without inventing a ranking. It never executes a catalog command, reads a user's home, or contacts a provider.
 
 Run through the repository's isolated-home wrapper:
 

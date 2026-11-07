@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "description": "AgentDeck（AI 中枢）Agent 注册表。9 款核心目录条目 + 8 款仅供参考的未接入或已归档条目。安装与配置能力以已验证适配器为准。",
+  "description": "AgentDeck（AI 中枢）Agent 注册表。10 款核心目录条目 + 8 款仅供参考的未接入或已归档条目。安装与配置能力以已验证适配器为准。",
   "updated_at": "2026-11-06",
   "agents": {
     "opencode": {
@@ -347,6 +347,46 @@
       "memory_collector": null,
       "icon": "pi",
       "homepage": "https://pi.dev"
+    },
+    "qwen-code": {
+      "name": "Qwen Code",
+      "source": "open",
+      "license": "Apache-2.0",
+      "github": "QwenLM/qwen-code",
+      "stars": null,
+      "ui_type": "cli",
+      "category": "ai-coding",
+      "popular": false,
+      "description": "Qwen 官方开源终端编程代理。请按官方文档手动安装；AgentDeck 仅被动观察 PATH 候选，不执行版本查询或确认安装来源，不提供自动安装、认证验证或配置写入。",
+      "install": {
+        "method": "manual",
+        "command": null,
+        "url": "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/users/quickstart.md",
+        "verify_cmd": "qwen --version",
+        "uninstall_cmd": null,
+        "dependencies": [
+          "node >= 22"
+        ]
+      },
+      "auth_type": "account_login",
+      "auth_guide": {
+        "steps": [
+          "自行安装后，在终端运行 qwen，通过会话内 /auth 选择 Qwen Account OAuth 或 API Provider",
+          "Qwen Account OAuth 需要 Plus/Pro 订阅；API Provider 选项与要求以官方认证文档为准",
+          "AgentDeck 不执行登录流程，也不检查登录完成状态或读取认证文件"
+        ],
+        "completion_check": null
+      },
+      "config_inject": {
+        "skills": false,
+        "mcp": null,
+        "memory": false,
+        "personalization": null,
+        "model_config": null
+      },
+      "memory_collector": null,
+      "icon": "qwen-code",
+      "homepage": "https://github.com/QwenLM/qwen-code"
     }
   },
   "future_registry": {

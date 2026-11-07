@@ -2,9 +2,11 @@
 
 [简体中文](README.md) | English
 
-This document describes the v1.2.0 source and planned delivery: installation-instance and source evidence, restricted npm installation, catalog corrections, and desktop/CLI DSH passive inventory. The published v1.1.1 installer does not include these increments. Confirm publication on the versioned Release page and compare `BUILD_COMMIT.txt` with the successful release CI commit. See the [bilingual v1.2.0 notes](docs/RELEASE-1.2.0.md).
+This document describes the ongoing development source: installation-instance and source evidence, restricted npm installation, catalog corrections, and desktop/CLI DSH passive inventory. The published v1.1.1 installer does not include these increments. Confirm publication on the versioned Release page and compare `BUILD_COMMIT.txt` with the successful release CI commit. v1.2.0 was not released separately. The next installer will follow a larger, verified update; its version is not yet selected. See the historical [bilingual v1.2.0 preparation notes](docs/RELEASE-1.2.0.md).
 
-This development branch also includes the [MCP toggle preflight and backup-order fix](docs/MCP-SAFETY.md), which is not part of the frozen, pending v1.2.0 release. Validation uses synthetic fixtures only, not real agents or the desktop GUI.
+This development branch also includes the [MCP toggle preflight and backup-order fix](docs/MCP-SAFETY.md), which has not shipped in a public installer. Validation uses synthetic fixtures only, not real agents or the desktop GUI.
+
+**Next-development-version note:** This branch adds Qwen Code manual-install guidance and passive PATH candidate observation, not yet shipped in a public installer. A candidate does not establish a verified installation or login; Qwen Code automatic installation, runtime/source verification and configuration writes remain unavailable. See the [catalog source review](docs/REGISTRY-SOURCES.md#qwen-code-manual-installation-and-passive-path-discovery-only).
 
 Manage local AI agents from one desktop interface: discovery and installation, configuration, optional conversation-memory exports, encrypted keys, MCP, and configuration backups.
 
@@ -12,7 +14,7 @@ Manage local AI agents from one desktop interface: discovery and installation, c
 
 ## Installation and startup
 
-1. Download `AgentDeck_1.2.0_x64-setup.exe` from the [AgentDeck v1.2.0 installer release page](https://github.com/MOSHOULI/agentdeck/releases/tag/v1.2.0), and verify it against `SHA256SUMS.txt` from the same release. Publication requires the CI gates described below. If the page does not exist yet, the installer has not been published.
+1. Select a published version and download its installer from the [AgentDeck releases](https://github.com/MOSHOULI/agentdeck/releases), and verify it against `SHA256SUMS.txt` from the same release. Publication requires the CI gates described below. CI test artifacts are not public releases.
 2. Install [Git for Windows](https://git-scm.com/downloads/win) and ensure `git` is on PATH; encrypted backups require it. npm-based agents also require Node.js/npm.
 3. The installer is currently **not Windows Authenticode-signed**. SHA256 verifies integrity; it is not a signature establishing publisher identity.
 

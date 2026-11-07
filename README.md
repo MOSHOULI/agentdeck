@@ -2,9 +2,11 @@
 
 简体中文 | [English](README.en.md)
 
-本文描述 v1.2.0 源码及计划交付内容：安装实例与来源证据、受限 npm 安装、目录元数据修正和 DSH 桌面/CLI 被动盘点。已发布的 v1.1.1 不包含这些增量；是否已发布请以对应 Release 为准，并核对 `BUILD_COMMIT.txt` 与成功的发布 CI 提交。详见 [v1.2.0 中英文说明](docs/RELEASE-1.2.0.md)。
+本文描述持续开发中的源码：安装实例与来源证据、受限 npm 安装、目录元数据修正和 DSH 桌面/CLI 被动盘点。已发布的 v1.1.1 不包含这些增量；是否已发布请以对应 Release 为准，并核对 `BUILD_COMMIT.txt` 与成功的发布 CI 提交。v1.2.0 未单独发布，后续安装包将在较大更新并完成验证后提供；版本号尚未确定。历史准备内容见 [v1.2.0 中英文说明](docs/RELEASE-1.2.0.md)。
 
-本开发分支另含 [MCP 开关预检与备份顺序修复](docs/MCP-SAFETY.zh-CN.md)，不包含在已冻结、待发布的 v1.2.0 中；验证仅使用合成夹具，未测试真实 Agent 或桌面 GUI。
+本开发分支另含 [MCP 开关预检与备份顺序修复](docs/MCP-SAFETY.zh-CN.md)，尚未随正式安装包发布；验证仅使用合成夹具，未测试真实 Agent 或桌面 GUI。
+
+**下一开发版本说明：** 当前分支新增 Qwen Code 手动安装指引与被动 PATH 候选观察，尚未随正式安装包发布。找到候选也不代表安装或登录已验证；Qwen Code 的自动安装、版本/来源验证及配置写入均未开放。详见[注册表来源核验](docs/REGISTRY-SOURCES.zh-CN.md#qwen-code手动安装与仅被动-path-发现)。
 
 在一个桌面界面中管理本机 AI Agent：发现与安装、配置、可选择的对话记忆导出、加密密钥、MCP 和配置备份。
 
@@ -12,7 +14,7 @@
 
 ## 安装与运行
 
-1. 从 [AgentDeck v1.2.0 安装包发布页](https://github.com/MOSHOULI/agentdeck/releases/tag/v1.2.0) 下载 `AgentDeck_1.2.0_x64-setup.exe`，用同一发布中的 `SHA256SUMS.txt` 验证文件。发布须通过下述 CI 门禁；若页面尚不存在，安装包尚未发布。
+1. 从 [AgentDeck 正式发布列表](https://github.com/MOSHOULI/agentdeck/releases) 选择已发布版本并下载对应安装包，用同一发布中的 `SHA256SUMS.txt` 验证文件。发布须通过下述 CI 门禁；CI 测试产物不等于正式发布。
 2. 安装 [Git for Windows](https://git-scm.com/downloads/win) 并确保 `git` 在 PATH（加密备份需要）。使用 npm 类型 Agent 前还需要 Node.js/npm。
 3. 安装包目前**未做 Windows Authenticode 代码签名**。SHA256 用于完整性核对，不等同于发布者身份签名。
 
