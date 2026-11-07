@@ -499,3 +499,11 @@
   font-size: 11px;
   line-height: 1.6;
 }
+
+.mcp-change-preview h2 { margin-top: 0; }
+.mcp-preview-details { display: grid; gap: 12px; }
+.mcp-preview-details > div { display: grid; grid-template-columns: minmax(90px, 120px) minmax(0, 1fr); gap: 12px; }
+.mcp-preview-details dt { color: var(--muted); }
+.mcp-preview-details dd { margin: 0; overflow-wrap: anywhere; }
+.mcp-preview-details code { white-space: pre-wrap; }
+.mcp-preview-actions { display: flex; justify-content: flex-end; gap: 10px; }

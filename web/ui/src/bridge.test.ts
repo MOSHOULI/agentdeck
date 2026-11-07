@@ -147,3 +147,22 @@ describe('runtime boundary', () => {
     expect(invoke).toHaveBeenCalledWith('install_agent', { id: 'codex' });
   });
 });
+
+describe('MCP preview boundary', () => {
+  it.each(['/', '/?demo=1'])('does not fabricate previews or apply in browser mode %s', async (url) => {
+    window.history.replaceState({}, '', url);
+    await expect(bridge.previewMcpToggle('ragflow', 'codex', true)).rejects.toThrow();
+    await expect(bridge.applyMcpTogglePreview('ragflow', 'codex', true, 'revision')).rejects.toThrow();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+  it('uses separate preview and revision-bound apply commands', async () => {
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    const preview = { agentId: 'codex', serverName: 'ragflow', enabled: true, configPath: '/synthetic/config.toml', format: 'toml_section', fileExists: true, changed: true, revision: 'revision-1' };
+    vi.mocked(invoke).mockResolvedValueOnce(preview);
+    expect(await bridge.previewMcpToggle('ragflow', 'codex', true)).toEqual(preview);
+    expect(invoke).toHaveBeenNthCalledWith(1, 'preview_mcp_toggle', { serverName: 'ragflow', agentId: 'codex', enabled: true });
+    vi.mocked(invoke).mockResolvedValueOnce(undefined);
+    await bridge.applyMcpTogglePreview('ragflow', 'codex', true, preview.revision);
+    expect(invoke).toHaveBeenNthCalledWith(2, 'apply_mcp_toggle_preview', { serverName: 'ragflow', agentId: 'codex', enabled: true, revision: 'revision-1' });
+  });
+});

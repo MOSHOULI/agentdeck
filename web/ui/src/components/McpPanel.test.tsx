@@ -1,13 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { McpPanel } from './McpPanel';
-import type { AgentInfo, McpServer } from '../bridge';
+import type { AgentInfo, McpServer, McpTogglePreview } from '../bridge';
 import { useAgentStore } from '../stores/agentStore';
 
 vi.mock('../bridge', () => ({
   runtimeMode: vi.fn(() => 'native'),
   getMcpServers: vi.fn(),
   toggleMcpForAgent: vi.fn(),
+  previewMcpToggle: vi.fn(),
+  applyMcpTogglePreview: vi.fn(),
 }));
 
 import * as bridge from '../bridge';
@@ -59,44 +61,13 @@ beforeEach(() => {
   useAgentStore.setState({ agents });
   vi.mocked(bridge.runtimeMode).mockReturnValue('native');
   vi.mocked(bridge.getMcpServers).mockResolvedValue(servers);
-  vi.mocked(bridge.toggleMcpForAgent).mockResolvedValue();
+  vi.mocked(bridge.previewMcpToggle).mockImplementation(async (name, id, enabled) => makePreview(name, id, enabled));
+  vi.mocked(bridge.applyMcpTogglePreview).mockResolvedValue();
 });
 
-describe('McpPanel', () => {
-
-
-  it('展示服务器与按 agent 开关状态', async () => {
-    render(<McpPanel />);
-    await waitFor(() => expect(screen.getByText('ragflow')).toBeInTheDocument());
-    const codex = screen.getByRole('checkbox', { name: 'ragflow 的 Codex 配置' }) as HTMLInputElement;
-    const opencode = screen.getByRole('checkbox', { name: 'ragflow 的 OpenCode 配置' }) as HTMLInputElement;
-    expect(codex.checked).toBe(true);
-    expect(opencode.checked).toBe(false);
-  });
-
-  it('切换开关调用后端并乐观更新', async () => {
-    vi.mocked(bridge.toggleMcpForAgent).mockResolvedValue(undefined);
-    render(<McpPanel />);
-    await waitFor(() => expect(screen.getByText('ragflow')).toBeInTheDocument());
-
-    fireEvent.click(screen.getByRole('checkbox', { name: 'ragflow 的 OpenCode 配置' }));
-    await waitFor(() =>
-      expect(bridge.toggleMcpForAgent).toHaveBeenCalledWith('ragflow', 'opencode', true)
-    );
-    expect((screen.getByRole('checkbox', { name: 'ragflow 的 OpenCode 配置' }) as HTMLInputElement).checked).toBe(true);
-  });
-
-  it('切换失败时回滚开关', async () => {
-    vi.mocked(bridge.toggleMcpForAgent).mockRejectedValue(new Error('boom'));
-    render(<McpPanel />);
-    await waitFor(() => expect(screen.getByText('ragflow')).toBeInTheDocument());
-
-    fireEvent.click(screen.getByRole('checkbox', { name: 'ragflow 的 OpenCode 配置' }));
-    await waitFor(() => expect(screen.getByText(/切换失败/)).toBeInTheDocument());
-    expect((screen.getByRole('checkbox', { name: 'ragflow 的 OpenCode 配置' }) as HTMLInputElement).checked).toBe(false);
-  });
-});
-
+function makePreview(serverName = 'ragflow', agentId = 'opencode', enabled = true): McpTogglePreview {
+  return { serverName, agentId, enabled, configPath: `/synthetic/${agentId}/config.json`, format: 'json_merge', fileExists: true, changed: true, revision: 'revision-1' };
+}
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -104,119 +75,191 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const checkbox = (name: string) => screen.getByRole('checkbox', { name: `ragflow 的 ${name} 配置` });
+async function openPreview(name = 'OpenCode') {
+  fireEvent.click(checkbox(name));
+  return screen.findByRole('button', { name: '确认并应用' });
+}
+async function mount() { render(<McpPanel />); await screen.findByRole('heading', { name: 'ragflow' }); }
 
-it('only renders supported Agent configuration targets without claiming server health', async () => {
-  useAgentStore.setState({ agents: [...agents, { ...agents[0], id: 'unsupported', name: 'Unsupported Agent' }] });
-  render(<McpPanel />);
-  await screen.findByRole('heading', { name: 'ragflow' });
+it('shows only supported configuration states, without claiming server health', async () => {
+  useAgentStore.setState({ agents: [...agents, { ...agents[0], id: 'unsupported', name: 'Unsupported' }] });
+  await mount();
   expect(screen.getAllByRole('checkbox')).toHaveLength(2);
-  expect(screen.queryByRole('checkbox', { name: /Unsupported/ })).not.toBeInTheDocument();
-  expect(screen.getByRole('group', { name: '包含此服务的 Agent 配置' })).toBeInTheDocument();
-  expect(screen.getByText('开关代表配置包含状态')).toBeInTheDocument();
+  expect(checkbox('Codex')).toBeChecked();
+  expect(checkbox('OpenCode')).not.toBeChecked();
   expect(screen.getByText(/此处不检测服务器是否在线/)).toBeInTheDocument();
-  expect(screen.getByText('HTTP')).toBeInTheDocument();
 });
 
-it('guards repeated toggles and refresh while a write is pending', async () => {
+it('requires matching preview and confirmation before applying, then reads actual state', async () => {
+  await mount();
+  const confirm = await openPreview();
+  expect(bridge.previewMcpToggle).toHaveBeenCalledWith('ragflow', 'opencode', true);
+  expect(bridge.applyMcpTogglePreview).not.toHaveBeenCalled();
+  expect(checkbox('OpenCode')).not.toBeChecked();
+  expect(screen.getByText('/synthetic/opencode/config.json')).toBeInTheDocument();
+  vi.mocked(bridge.getMcpServers).mockResolvedValue([{ ...servers[0], enabledAgents: ['codex', 'opencode'] }]);
+  fireEvent.click(confirm);
+  await waitFor(() => expect(checkbox('OpenCode')).toBeChecked());
+  expect(bridge.applyMcpTogglePreview).toHaveBeenCalledWith('ragflow', 'opencode', true, 'revision-1');
+  expect(bridge.toggleMcpForAgent).not.toHaveBeenCalled();
+});
+
+it('cancels without writing and keeps original inclusion', async () => {
+  await mount();
+  await openPreview('Codex');
+  expect(screen.getByText('移除此服务配置')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '取消' }));
+  expect(bridge.applyMcpTogglePreview).not.toHaveBeenCalled();
+  expect(checkbox('Codex')).toBeChecked();
+  expect(checkbox('Codex')).toBeEnabled();
+});
+
+it('cancels in-flight preview and ignores late response without replacing a newer preview', async () => {
+  const pending = deferred<McpTogglePreview>();
+  vi.mocked(bridge.previewMcpToggle).mockReturnValueOnce(pending.promise);
+  await mount();
+  fireEvent.click(checkbox('OpenCode'));
+  fireEvent.click(checkbox('OpenCode'));
+  expect(bridge.previewMcpToggle).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: '取消' }));
+  await openPreview('Codex');
+  await act(async () => pending.resolve(makePreview()));
+  expect(screen.getByText('/synthetic/codex/config.json')).toBeInTheDocument();
+  expect(screen.queryByText('/synthetic/opencode/config.json')).not.toBeInTheDocument();
+  expect(bridge.applyMcpTogglePreview).not.toHaveBeenCalled();
+});
+
+it('guards repeated toggles, confirmation, cancel and refresh during apply', async () => {
   const pending = deferred<void>();
-  vi.mocked(bridge.toggleMcpForAgent).mockReturnValue(pending.promise);
-  render(<McpPanel />);
-  await screen.findByText('ragflow');
-  fireEvent.click(checkbox('OpenCode'));
-  fireEvent.click(checkbox('OpenCode'));
+  vi.mocked(bridge.applyMcpTogglePreview).mockReturnValue(pending.promise);
+  await mount();
+  const confirm = await openPreview();
   fireEvent.click(checkbox('Codex'));
   fireEvent.click(screen.getByRole('button', { name: '刷新配置' }));
-  expect(bridge.toggleMcpForAgent).toHaveBeenCalledTimes(1);
+  expect(bridge.previewMcpToggle).toHaveBeenCalledTimes(1);
+  fireEvent.click(confirm); fireEvent.click(confirm);
+  fireEvent.click(screen.getByRole('button', { name: '取消' }));
+  expect(bridge.applyMcpTogglePreview).toHaveBeenCalledTimes(1);
   expect(bridge.getMcpServers).toHaveBeenCalledTimes(1);
   expect(checkbox('Codex')).toBeDisabled();
-  expect(checkbox('OpenCode')).toBeChecked();
   expect(screen.getByText('正在写入')).toBeInTheDocument();
   await act(async () => pending.resolve());
   expect(checkbox('Codex')).toBeEnabled();
   expect(screen.getByRole('status')).toHaveTextContent('配置状态不代表服务已启动或连接成功');
 });
 
-it('also restores an existing inclusion when removing it fails', async () => {
-  vi.mocked(bridge.toggleMcpForAgent).mockRejectedValue(new Error('file locked'));
-  render(<McpPanel />);
-  await screen.findByText('ragflow');
-  fireEvent.click(checkbox('Codex'));
-  expect(await screen.findByRole('alert')).toHaveClass('notice-error');
+it('discards failed apply and requires refresh, never automatically retries', async () => {
+  vi.mocked(bridge.applyMcpTogglePreview).mockRejectedValue(new Error('preview expired'));
+  await mount();
+  fireEvent.click(await openPreview('Codex'));
+  expect(await screen.findByRole('alert')).toHaveTextContent('不会自动重试写入');
   expect(checkbox('Codex')).toBeChecked();
-  expect(bridge.toggleMcpForAgent).toHaveBeenCalledWith('ragflow', 'codex', false);
-});
-
-it('makes a load failure distinct from an empty registry and supports retry', async () => {
-  vi.mocked(bridge.getMcpServers).mockRejectedValueOnce(new Error('registry unavailable'));
-  render(<McpPanel />);
-  expect(await screen.findByRole('alert')).toHaveTextContent('加载 MCP 列表失败');
-  expect(screen.getByText('暂时无法读取 MCP 配置')).toBeInTheDocument();
-  expect(screen.queryByText('暂无可用 MCP 服务器')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '重试加载' }));
-  await screen.findByText('ragflow');
-  expect(bridge.getMcpServers).toHaveBeenCalledTimes(2);
-  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-});
-
-it('shows an empty state when no registered services are returned', async () => {
-  vi.mocked(bridge.getMcpServers).mockResolvedValue([]);
-  render(<McpPanel />);
-  await screen.findByText('暂无可用 MCP 服务器');
-  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '刷新配置' })).toBeEnabled();
-});
-
-it('retains last read on refresh failure and blocks editing until a successful refresh', async () => {
-  render(<McpPanel />);
-  await screen.findByText('ragflow');
-  vi.mocked(bridge.getMcpServers).mockRejectedValueOnce(new Error('read denied'));
+  expect(checkbox('Codex')).toBeDisabled();
+  expect(screen.queryByRole('button', { name: '确认并应用' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '刷新配置' }));
-  await screen.findByRole('alert');
-  expect(screen.getByText(/以下保留上次成功读取的配置/)).toBeInTheDocument();
-  expect(checkbox('Codex')).toBeChecked();
-  expect(checkbox('Codex')).toBeDisabled();
-  fireEvent.click(screen.getByRole('button', { name: '重试加载' }));
   await waitFor(() => expect(checkbox('Codex')).toBeEnabled());
+  expect(bridge.applyMcpTogglePreview).toHaveBeenCalledTimes(1);
 });
 
-it('keeps demo configuration read-only without calling mutation APIs', async () => {
-  vi.mocked(bridge.runtimeMode).mockReturnValue('demo');
-  render(<McpPanel />);
-  await screen.findByText('ragflow');
+it('reports preview failure without changing inclusion or applying', async () => {
+  vi.mocked(bridge.previewMcpToggle).mockRejectedValue(new Error('read denied'));
+  await mount(); fireEvent.click(checkbox('Codex'));
+  expect(await screen.findByRole('alert')).toHaveTextContent('预览失败，未提交配置修改');
+  expect(checkbox('Codex')).toBeChecked(); expect(checkbox('Codex')).toBeEnabled();
+  expect(bridge.applyMcpTogglePreview).not.toHaveBeenCalled();
+});
+
+it('rejects mismatched preview targets', async () => {
+  vi.mocked(bridge.previewMcpToggle).mockResolvedValue(makePreview('other'));
+  await mount(); fireEvent.click(checkbox('OpenCode'));
+  expect(await screen.findByRole('alert')).toHaveTextContent('预览与请求不一致');
+  expect(bridge.applyMcpTogglePreview).not.toHaveBeenCalled();
+});
+
+it('ignores preview completion after unmount', async () => {
+  const pending = deferred<McpTogglePreview>();
+  vi.mocked(bridge.previewMcpToggle).mockReturnValue(pending.promise);
+  const view = render(<McpPanel />); await screen.findByText('ragflow');
+  fireEvent.click(checkbox('OpenCode')); view.unmount();
+  await act(async () => pending.resolve(makePreview()));
+  expect(bridge.applyMcpTogglePreview).not.toHaveBeenCalled();
+});
+
+it('does not launch follow-up reads after an unmounted apply completes', async () => {
+  const pending = deferred<void>();
+  vi.mocked(bridge.applyMcpTogglePreview).mockReturnValue(pending.promise);
+  const view = render(<McpPanel />); await screen.findByText('ragflow');
+  fireEvent.click(await openPreview()); view.unmount();
+  await act(async () => pending.resolve());
+  expect(bridge.getMcpServers).toHaveBeenCalledTimes(1);
+});
+
+it('distinguishes a successful write from a failed follow-up read', async () => {
+  await mount(); const confirm = await openPreview('Codex');
+  vi.mocked(bridge.getMcpServers).mockRejectedValueOnce(new Error('read denied'));
+  fireEvent.click(confirm);
+  expect(await screen.findByRole('status')).toHaveTextContent('配置修改已完成，但重新读取失败');
   expect(checkbox('Codex')).toBeDisabled();
-  expect(checkbox('OpenCode')).toBeDisabled();
-  fireEvent.click(checkbox('OpenCode'));
-  expect(bridge.toggleMcpForAgent).not.toHaveBeenCalled();
-  expect(screen.getByText('只读视图，配置修改不可用')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '刷新配置' })).toBeEnabled();
+  expect(bridge.applyMcpTogglePreview).toHaveBeenCalledTimes(1);
 });
 
-it('describes removal as configuration removal, not process shutdown', async () => {
-  render(<McpPanel />);
-  await screen.findByText('ragflow');
-  fireEvent.click(checkbox('Codex'));
+it('shows absent-file and no-change states without displaying revision or contents', async () => {
+  vi.mocked(bridge.previewMcpToggle).mockResolvedValue({ ...makePreview(), fileExists: false, changed: false });
+  await mount(); await openPreview();
+  expect(screen.getByText('配置文件尚不存在')).toBeInTheDocument();
+  expect(screen.getByText('配置内容无变化')).toBeInTheDocument();
+  expect(screen.queryByText('revision-1')).not.toBeInTheDocument();
+});
+
+it('describes removal as configuration removal, not shutdown', async () => {
+  await mount(); const confirm = await openPreview('Codex');
+  vi.mocked(bridge.getMcpServers).mockResolvedValue([{ ...servers[0], enabledAgents: [] }]);
+  fireEvent.click(confirm);
   expect(await screen.findByRole('status')).toHaveTextContent('此操作不会停止服务进程');
   expect(checkbox('Codex')).not.toBeChecked();
 });
 
-it('renders stdio commands and unsupported-target state without invented controls', async () => {
-  vi.mocked(bridge.getMcpServers).mockResolvedValue([{ name: 'local-tools', description: 'Local tools', kind: 'stdio', command: 'tool-server', args: ['--stdio'], supportedAgents: [], enabledAgents: [] }]);
+it('distinguishes load failure from empty registry and allows retry', async () => {
+  vi.mocked(bridge.getMcpServers).mockRejectedValueOnce(new Error('registry unavailable'));
   render(<McpPanel />);
-  await screen.findByText('local-tools');
-  expect(screen.getByText('STDIO')).toBeInTheDocument();
-  expect(screen.getByText('tool-server --stdio')).toBeInTheDocument();
-  expect(screen.getByText('此服务尚无受支持的 Agent 配置目标。')).toBeInTheDocument();
+  expect(await screen.findByRole('alert')).toHaveTextContent('加载 MCP 列表失败');
+  expect(screen.queryByText('暂无可用 MCP 服务器')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '重试加载' }));
+  await screen.findByText('ragflow');
+  expect(bridge.getMcpServers).toHaveBeenCalledTimes(2);
+});
+
+it('shows an empty registry', async () => {
+  vi.mocked(bridge.getMcpServers).mockResolvedValue([]); render(<McpPanel />);
+  await screen.findByText('暂无可用 MCP 服务器');
   expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
 });
 
-it('reports an unavailable backend and disables reads and writes instead of showing sample services', async () => {
-  vi.mocked(bridge.runtimeMode).mockReturnValue('unavailable');
-  vi.mocked(bridge.getMcpServers).mockRejectedValue(new Error('未连接桌面后端'));
-  render(<McpPanel />);
-  expect(await screen.findByRole('alert')).toHaveTextContent('未连接桌面后端');
+it('retains stale state and blocks edits after failed refresh', async () => {
+  await mount(); vi.mocked(bridge.getMcpServers).mockRejectedValueOnce(new Error('read denied'));
+  fireEvent.click(screen.getByRole('button', { name: '刷新配置' })); await screen.findByRole('alert');
+  expect(checkbox('Codex')).toBeChecked(); expect(checkbox('Codex')).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: '重试加载' }));
+  await waitFor(() => expect(checkbox('Codex')).toBeEnabled());
+});
+
+it('keeps demo read-only without preview or apply', async () => {
+  vi.mocked(bridge.runtimeMode).mockReturnValue('demo'); await mount();
+  expect(checkbox('Codex')).toBeDisabled(); fireEvent.click(checkbox('OpenCode'));
+  expect(bridge.previewMcpToggle).not.toHaveBeenCalled(); expect(bridge.applyMcpTogglePreview).not.toHaveBeenCalled();
+});
+
+it('renders stdio commands and unsupported targets without invented controls', async () => {
+  vi.mocked(bridge.getMcpServers).mockResolvedValue([{ name: 'tools', description: 'Tools', kind: 'stdio', command: 'tool-server', args: ['--stdio'], supportedAgents: [], enabledAgents: [] }]);
+  render(<McpPanel />); await screen.findByText('tools');
+  expect(screen.getByText('tool-server --stdio')).toBeInTheDocument();
   expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+});
+
+it('reports unavailable backend and disables reads and writes', async () => {
+  vi.mocked(bridge.runtimeMode).mockReturnValue('unavailable');
+  vi.mocked(bridge.getMcpServers).mockRejectedValue(new Error('未连接桌面后端')); render(<McpPanel />);
+  expect(await screen.findByRole('alert')).toHaveTextContent('未连接桌面后端');
   expect(screen.getByRole('button', { name: '刷新配置' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: '重试加载' })).toBeDisabled();
-  expect(bridge.toggleMcpForAgent).not.toHaveBeenCalled();
+  expect(bridge.previewMcpToggle).not.toHaveBeenCalled(); expect(bridge.applyMcpTogglePreview).not.toHaveBeenCalled();
 });

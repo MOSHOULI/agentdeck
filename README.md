@@ -14,6 +14,8 @@
 
 Agent 广场支持按当前可自动安装、仅手动安装和待确认状态筛选，详见[目录筛选说明](docs/CATALOG-FILTERS.md)。
 
+桌面 MCP 开关新增[配置变更预览](docs/MCP-PREVIEW.zh-CN.md)：先查看目标与动作摘要，确认后才备份写入；过期预览会被拒绝。此摘要不是完整配置 diff，尚未随正式安装包发布。
+
 ## 安装与运行
 
 1. 从 [AgentDeck 正式发布列表](https://github.com/MOSHOULI/agentdeck/releases) 选择已发布版本并下载对应安装包，用同一发布中的 `SHA256SUMS.txt` 验证文件。发布须通过下述 CI 门禁；CI 测试产物不等于正式发布。

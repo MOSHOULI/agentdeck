@@ -17,7 +17,7 @@ const ALLOWED_BINARIES: &[&str] = &[
     "npx", "uvx", "python", "python3", "node", "docker", "bun", "deno",
 ];
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct McpServerDef {
     name: String,
     #[serde(default)]
@@ -46,6 +46,22 @@ pub struct McpServerInfo {
     pub supported_agents: Vec<String>,
     /// 已启用该服务器的 agent id 列表
     pub enabled_agents: Vec<String>,
+}
+
+/// Metadata-only preview. No configuration text, credentials, commands or
+/// arguments cross the desktop IPC boundary. The revision is a change fingerprint,
+/// not an authorization token; all normal validation still runs on application.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpTogglePreview {
+    pub agent_id: String,
+    pub server_name: String,
+    pub enabled: bool,
+    pub config_path: String,
+    pub format: String,
+    pub file_exists: bool,
+    pub changed: bool,
+    pub revision: String,
 }
 
 fn load_mcp_registry() -> crate::Result<Vec<McpServerDef>> {
@@ -618,6 +634,125 @@ impl PreparedToggle {
     }
 }
 
+/// Hash the full selected operation with unambiguous JSON framing. Including
+/// target and definition metadata means a selected registry entry changed since
+/// preview cannot silently redirect or alter the confirmed operation.
+fn preview_for_prepared(
+    prepared: &PreparedToggle,
+    agent_id: &str,
+    server_name: &str,
+    enabled: bool,
+    target: &crate::registry::McpInject,
+    def: &McpServerDef,
+) -> crate::Result<McpTogglePreview> {
+    use sha2::{Digest, Sha256};
+    let fingerprint = serde_json::to_vec(&(
+        "agentdeck-mcp-preview-v1",
+        agent_id,
+        server_name,
+        enabled,
+        target,
+        def,
+        &prepared.path,
+        &prepared.original,
+        &prepared.updated,
+    ))
+    .map_err(|_| Error::Other("Cannot fingerprint MCP change".into()))?;
+    Ok(McpTogglePreview {
+        agent_id: agent_id.into(),
+        server_name: server_name.into(),
+        enabled,
+        config_path: prepared.path.to_string_lossy().into_owned(),
+        format: target.format.clone(),
+        file_exists: prepared.original.is_some(),
+        changed: prepared.original.as_deref().unwrap_or_default() != prepared.updated,
+        revision: format!("{:x}", Sha256::digest(fingerprint)),
+    })
+}
+
+fn toggle_definition(server_name: &str, enabled: bool) -> crate::Result<McpServerDef> {
+    if enabled {
+        find_server(server_name)
+    } else {
+        // Removing an obsolete registry entry remains possible.
+        Ok(McpServerDef {
+            name: server_name.into(),
+            description: None,
+            url: None,
+            command: None,
+            args: vec![],
+            disabled: true,
+        })
+    }
+}
+
+fn prepare_preview(
+    agent_id: &str,
+    server_name: &str,
+    enabled: bool,
+) -> crate::Result<(PreparedToggle, McpTogglePreview)> {
+    let target = agent_target(agent_id)?;
+    let def = toggle_definition(server_name, enabled)?;
+    let prepared = PreparedToggle::new(&target, server_name, &def, enabled)?;
+    let preview = preview_for_prepared(&prepared, agent_id, server_name, enabled, &target, &def)?;
+    Ok((prepared, preview))
+}
+
+/// Prepare metadata without invoking backup or writing the agent configuration.
+/// Registry loading retains its existing lock/recovery bookkeeping. Parse errors
+/// are deliberately not returned because they can contain configuration secrets.
+pub fn preview_toggle(
+    agent_id: &str,
+    server_name: &str,
+    enabled: bool,
+) -> crate::Result<McpTogglePreview> {
+    let _guard = crate::config::write_lock();
+    prepare_preview(agent_id, server_name, enabled)
+        .map(|(_, preview)| preview)
+        .map_err(|_| {
+            Error::Other(
+                "Cannot preview MCP change: target, server or configuration validation failed"
+                    .into(),
+            )
+        })
+}
+
+fn apply_prepared_preview(
+    prepared: PreparedToggle,
+    preview: &McpTogglePreview,
+    revision: &str,
+    backup: impl FnOnce() -> crate::Result<()>,
+) -> crate::Result<()> {
+    if revision != preview.revision {
+        return Err(Error::Other(
+            "MCP preview is stale; review a new preview before applying".into(),
+        ));
+    }
+    backup()
+        .map_err(|_| Error::Other("MCP backup failed; configuration was not changed".into()))?;
+    prepared.save().map_err(|_| {
+        Error::Other(
+            "MCP change could not be saved; refresh the preview and check the configuration".into(),
+        )
+    })
+}
+
+/// Re-prepare and compare the confirmed revision under the writer lock. A stale
+/// preview is rejected before backup. Keep the existing post-backup snapshot check
+/// and atomic replacement, without claiming a cross-process transaction.
+pub fn apply_preview_with_backup(
+    agent_id: &str,
+    server_name: &str,
+    enabled: bool,
+    revision: &str,
+    backup: impl FnOnce() -> crate::Result<()>,
+) -> crate::Result<()> {
+    let _guard = crate::config::write_lock();
+    let (prepared, preview) = prepare_preview(agent_id, server_name, enabled)
+        .map_err(|_| Error::Other("Cannot apply MCP preview: target, server or configuration validation failed; refresh the preview".into()))?;
+    apply_prepared_preview(prepared, &preview, revision, backup)
+}
+
 fn toggle_target_with_backup(
     target: &crate::registry::McpInject,
     server_name: &str,
@@ -644,19 +779,7 @@ pub fn toggle_with_backup(
 ) -> crate::Result<()> {
     let _guard = crate::config::write_lock();
     let target = agent_target(agent_id)?;
-    let def = if enabled {
-        find_server(server_name)?
-    } else {
-        // A disabled/removed registry entry must still be removable locally.
-        McpServerDef {
-            name: server_name.into(),
-            description: None,
-            url: None,
-            command: None,
-            args: vec![],
-            disabled: true,
-        }
-    };
+    let def = toggle_definition(server_name, enabled)?;
     toggle_target_with_backup(&target, server_name, &def, enabled, backup)
 }
 
@@ -708,6 +831,8 @@ pub fn sync(agent_id: &str, enabled_servers: &[String]) -> crate::Result<Vec<Str
 
 #[cfg(test)]
 mod preflight_tests;
+#[cfg(test)]
+mod preview_tests;
 
 #[cfg(test)]
 mod tests {
