@@ -77,6 +77,7 @@ cargo run --locked -p aisync-cli -- deploy --agent codex --action verify
 cargo run --locked -p aisync-cli -- deploy --agent codex --action install --yes
 # 可选的独立配置操作，需要 Git 备份与受保护密钥库支持
 cargo run --locked -p aisync-cli -- deploy --agent codex --action configure --yes
+cargo run --locked -p aisync-cli -- sync --tools codex,claude-code --dry-run
 cargo run --locked -p aisync-cli -- sync --tools codex,claude-code --yes
 cargo run --locked -p aisync-cli -- backup
 cargo run --locked -p aisync-cli -- backups
@@ -86,6 +87,8 @@ cargo run --locked -p aisync-cli -- restore <timestamp> --full --yes
 安装、配置、同步、恢复需要 `--yes`；安装不会隐式写配置，只执行通过目标核验的固定 npm 计划。`deploy --action verify` 输出实例与来源观察。配置及个性化同步在准备 profile 或备份前检查安装资格，并在写入前复查；CLI `sync` 先检查全部个性化目标，任一不合格都不会开始备份或写入。仅记忆导出不要求安装。自动卸载与 Agent 软件升级仍未开放，`--yes` 不会解除限制。受保护密钥/备份相关命令仅 Windows 可用，纯软件安装不依赖该备份流程。
 
 `dsh inspect` 与桌面 DSH 工作区使用相同的被动读取器；它仅返回 JSON，不进入上述部署流程。它只读取明确选择的 profile 的 `package.json`，可通过 `--runtime-manifest` 另外选择一个 runtime 包的 `package.json`。不扫描 HOME，不调用 DSH/npm/pnpm，不读取凭据、`cordis.yml` 或插件代码。包依赖和 bundle selection 仅是保存的声明，版本仅是 manifest 报告值，不代表软件已安装、插件正在运行或已经认证。退出码 0 只表示成功产生报告；缺失、不支持或未知状态需检查 JSON。解析约定仅依据 `0.2.2-alpha.3` 快照审查；2026-11-06 固定核验的上游默认分支已声明 `0.2.2-rc.1`，不表示本分支新支持 rc.1。所有版本的管理写操作均未开放。详见 [DSH 被动盘点边界](docs/DSH-PASSIVE-INVENTORY.zh-CN.md)。
+
+CLI 支持[只读同步计划](docs/SYNC-DRY-RUN.zh-CN.md)：`sync --tools codex,claude-code --dry-run` 输出目标与动作元数据，不执行探测、不初始化或修改文件；不是完整 diff，也不代表安装资格或应用已验证。
 
 ## 测试与发布
 
