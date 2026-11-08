@@ -124,3 +124,5 @@ CI 验证前端、Linux 核心/CLI、Windows 全工作区（含 DPAPI），构�
 ### Qwen 设置检查
 
 明确路径、受版本限制的只读 CLI 检查见 [Qwen 配置检查说明](docs/QWEN-CONFIG-INSPECTION.md)。这不是配置切换或恢复功能。
+
+Qoder CLI 的显式作用域只读检查：`aisync qoder inspect --user-settings /absolute/settings.json`。支持多层文件的脱敏摘要与潜在 MCP 重叠计数，不写 BYOK、不验证生效配置或运行版本。详见 [作用域检查边界](docs/QODER-SCOPE-INSPECTION.md)。
