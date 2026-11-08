@@ -77,6 +77,7 @@ cargo run --locked -p aisync-cli -- deploy --agent codex --action verify
 cargo run --locked -p aisync-cli -- deploy --agent codex --action install --yes
 # Optional separate configuration action; requires Git backups and protected-vault support
 cargo run --locked -p aisync-cli -- deploy --agent codex --action configure --yes
+cargo run --locked -p aisync-cli -- sync --tools codex,claude-code --dry-run
 cargo run --locked -p aisync-cli -- sync --tools codex,claude-code --yes
 cargo run --locked -p aisync-cli -- backup
 cargo run --locked -p aisync-cli -- backups
@@ -86,6 +87,8 @@ cargo run --locked -p aisync-cli -- restore <timestamp> --full --yes
 Installation, configuration, synchronization and restoration require `--yes`. Installation does not implicitly write configuration and only executes a fixed npm plan whose target checks pass. `deploy --action verify` reports instance and source observations. Configuration and personalization sync check installation eligibility before preparing a profile/backup and again before writing. CLI `sync` checks every personalization target first; any ineligible target prevents backup and writes from starting. Memory-only exports do not require installation. Automatic uninstall and agent software upgrade remain unavailable; `--yes` does not override that boundary. Protected-key and backup commands are Windows-only; software-only installation does not depend on that backup workflow.
 
 `dsh inspect` uses the same passive reader as the desktop DSH workspace, returns only JSON and does not enter the deployment workflow above. It reads only the selected profile's `package.json`; `--runtime-manifest` can explicitly select an additional runtime package's `package.json`. It does not scan HOME, invoke DSH/npm/pnpm, or read credentials, `cordis.yml`, or plugin code. Package dependencies and bundle selections are saved declarations only; versions are manifest-reported values. They do not establish that software is installed, plugins are running, or authentication has succeeded. Exit code 0 means only that a report was produced; inspect the JSON for missing, unsupported, or unknown states. The parser contract was reviewed only against the `0.2.2-alpha.3` snapshot. The upstream default-branch snapshot checked on 2026-11-06 declares `0.2.2-rc.1`; this does not add rc.1 support. Management writes remain disabled for all versions. See [DSH passive inventory boundaries](docs/DSH-PASSIVE-INVENTORY.md).
+
+The CLI supports a [read-only sync plan](docs/SYNC-DRY-RUN.md): `sync --tools codex,claude-code --dry-run` reports target/action metadata without executing probes, initializing data, or modifying files. It is not a diff or verified apply readiness.
 
 ## Tests and releases
 

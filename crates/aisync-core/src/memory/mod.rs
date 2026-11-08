@@ -170,7 +170,7 @@ fn validate_injection_target(agent_id: &str) -> crate::Result<String> {
     validate_injection_target_in(agent_id, &registry)
 }
 
-fn validate_injection_target_in(
+pub(crate) fn validate_injection_target_in(
     agent_id: &str,
     registry: &crate::registry::RegistryDoc,
 ) -> crate::Result<String> {

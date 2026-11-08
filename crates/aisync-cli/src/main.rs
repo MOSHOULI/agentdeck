@@ -29,10 +29,16 @@ enum Commands {
         action: DshAction,
     },
     /// Sync personalization and opted-in memory to explicitly selected agents.
+    #[command(
+        long_about = "Sync personalization and opted-in memory to explicitly selected agents. Use --dry-run for a read-only JSON metadata plan without executing agents, creating backups/profiles, or reading configuration and memory contents. Exit 0 for a dry run means a report was produced, not that installation, paths, actual changes, or apply readiness were verified. --yes is required for writes and conflicts with --dry-run."
+    )]
     Sync {
         #[arg(short, long, value_delimiter = ',', required = true, num_args = 1..)]
         tools: Vec<String>,
-        /// Confirm configuration writes.
+        /// Emit a read-only metadata plan as JSON; does not validate installation or file contents.
+        #[arg(long, conflicts_with = "yes")]
+        dry_run: bool,
+        /// Confirm configuration writes (not available with --dry-run).
         #[arg(long)]
         yes: bool,
     },
@@ -286,7 +292,33 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             use std::io::Write;
             writeln!(std::io::stdout().lock(), "{report}")?;
         }
-        Commands::Sync { tools, yes } => {
+        Commands::Sync {
+            tools,
+            yes,
+            dry_run,
+        } => {
+            if dry_run {
+                // Do not use find_agent: the normal registry loader may create
+                // a lock and recover an interrupted update even on a read.
+                let doc = registry::load_registry_read_only()?;
+                let agents = tools
+                    .iter()
+                    .map(|id| {
+                        doc.agents
+                            .get(id)
+                            .cloned()
+                            .ok_or_else(|| anyhow::anyhow!("Unknown agent: {id}"))
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let report = sync::plan_sync(&doc, &agents);
+                use std::io::Write;
+                writeln!(
+                    std::io::stdout().lock(),
+                    "{}",
+                    serde_json::to_string_pretty(&report)?
+                )?;
+                return Ok(());
+            }
             require_confirmation(yes)?;
             // Validate the whole selection before changing any selected agent.
             let agents = tools
@@ -957,10 +989,16 @@ mod tests {
     fn sync_accepts_comma_separated_targets() {
         let cli = Cli::try_parse_from(["aisync", "sync", "--tools", "codex,claude-code", "--yes"])
             .unwrap();
-        let Commands::Sync { tools, yes } = cli.command else {
+        let Commands::Sync {
+            tools,
+            yes,
+            dry_run,
+        } = cli.command
+        else {
             panic!("wrong command")
         };
         assert_eq!(tools, ["codex", "claude-code"]);
+        assert!(!dry_run);
         assert!(yes);
     }
 }

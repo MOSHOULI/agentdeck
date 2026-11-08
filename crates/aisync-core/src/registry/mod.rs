@@ -322,6 +322,72 @@ pub fn load_registry_runtime() -> crate::Result<RegistryDoc> {
     load_registry_at(&DataPaths::discover()?)
 }
 
+/// Read catalog metadata without creating lock files or recovering interrupted
+/// updates. Existing catalogs require their existing coordination lock. A fresh
+/// home may use the bundled catalog without initializing application data.
+pub fn load_registry_read_only() -> crate::Result<RegistryDoc> {
+    load_registry_read_only_at(&DataPaths::discover()?)
+}
+
+pub fn load_registry_read_only_at(paths: &DataPaths) -> crate::Result<RegistryDoc> {
+    let parent = paths
+        .registry_dir
+        .parent()
+        .ok_or_else(|| crate::Error::Other("Invalid registry directory".into()))?;
+    let lock_path = parent.join("registry-update.lock");
+    let journal = parent.join("registry-update.json");
+    // Never repair, delete, create or rename anything in this read-only path.
+    let _lock = match std::fs::symlink_metadata(&lock_path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+            let lock = std::fs::File::open(&lock_path)?;
+            lock.try_lock_shared().map_err(|_| {
+                crate::Error::Other("Registry is busy; retry the dry run later".into())
+            })?;
+            Some(lock)
+        }
+        Ok(_) => {
+            return Err(crate::Error::Other(
+                "Unsafe registry lock; dry run refused".into(),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if paths.registry_dir.try_exists()? {
+                return Err(crate::Error::Other(
+                    "Existing registry has no coordination lock; dry run refused".into(),
+                ));
+            }
+            None
+        }
+        Err(error) => return Err(error.into()),
+    };
+    match std::fs::symlink_metadata(&journal) {
+        Ok(_) => {
+            return Err(crate::Error::Other(
+                "Registry update needs recovery; dry run will not recover it".into(),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    // With an existing lock this is the same selection policy as normal reads,
+    // including the narrowly identified official v1 registry migration.
+    const BUILTIN: &str = include_str!("../../../../agents/registry-v3.json");
+    if _lock.is_none()
+        || matches!(
+            registry_source_locked(paths, BUNDLED_REGISTRY_VERSION)?,
+            RegistrySource::Builtin
+        )
+    {
+        return parse_registry(BUILTIN);
+    }
+    match std::fs::read_to_string(paths.registry_dir.join("registry-v3.json")) {
+        Ok(content) => parse_registry(&content)
+            .map_err(|_| crate::Error::Other("Invalid runtime registry; dry run refused".into())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => parse_registry(BUILTIN),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// The embedded registry is versioned with the core package, independently of
 /// whichever older or newer runtime registry the user has retained.
 pub const BUNDLED_REGISTRY_VERSION: &str = env!("CARGO_PKG_VERSION");
