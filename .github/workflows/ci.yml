@@ -166,10 +166,52 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  windows-acceptance:
+    name: Windows installed application lifecycle
+    needs: windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_SHA }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: AgentDeck-windows-${{ env.BUILD_SHA }}
+          path: acceptance/current
+      - name: Download fixed published upgrade baseline
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download v1.1.1 --repo MOSHOULI/agentdeck --dir acceptance/baseline --pattern 'AgentDeck_1.1.1_x64-setup.exe' --pattern SHA256SUMS.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Published baseline download failed' }
+      - name: Verify artifacts and exercise installed application
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $current = "AgentDeck_$($version)_x64-setup.exe"
+          if ((Get-Content acceptance/current/BUILD_COMMIT.txt -Raw).Trim() -ne $env:BUILD_SHA) { throw 'Artifact build commit mismatch' }
+          foreach ($pair in @(@('acceptance/current', $current), @('acceptance/baseline', 'AgentDeck_1.1.1_x64-setup.exe'))) {
+            $lines = @(Get-Content "$($pair[0])/SHA256SUMS.txt" | Where-Object { $_ -match ('^[a-fA-F0-9]{64}  ' + [regex]::Escape($pair[1]) + '$') })
+            if ($lines.Count -ne 1) { throw 'Missing or ambiguous installer checksum' }
+            $actual = (Get-FileHash "$($pair[0])/$($pair[1])" -Algorithm SHA256).Hash
+            if ($actual -ne $lines[0].Substring(0, 64)) { throw 'Installer checksum mismatch' }
+          }
+          if ((Get-FileHash acceptance/baseline/AgentDeck_1.1.1_x64-setup.exe -Algorithm SHA256).Hash -ne '78be70c5788ca41f118dbabc99b3dcae5fddd37a53c70eef46ef31ab3efe8e2d') { throw 'Published baseline differs from reviewed pinned hash' }
+          ./scripts/windows-installer-acceptance.ps1 -Installer "acceptance/current/$current" -BaselineInstaller acceptance/baseline/AgentDeck_1.1.1_x64-setup.exe -ExpectedVersion $version -ExpectedCommit $env:BUILD_SHA -EvidenceDirectory acceptance/evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-acceptance-${{ env.BUILD_SHA }}
+          path: acceptance/evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
   release:
     name: Publish verified Windows installer
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release == true
-    needs: [frontend, portable-core, dependency-audit, windows]
+    needs: [frontend, portable-core, dependency-audit, windows, windows-acceptance]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
