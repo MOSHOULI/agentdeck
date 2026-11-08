@@ -216,10 +216,13 @@ fn locked_runtime_registry_is_not_read_or_modified() {
         .write(true)
         .open(fixture.0.join(".agentdeck/registry-update.lock"))
         .unwrap();
-    lock.lock().unwrap();
+    // Windows byte-range locks also prevent this test from reading the lock.
+    // Snapshot before acquisition, then release only after the CLI has exited.
     let before = fixture.snapshot();
+    lock.lock().unwrap();
     let output = fixture.run(&["sync", "--tools", "codex", "--dry-run"]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("busy"));
+    drop(lock);
     assert_eq!(fixture.snapshot(), before);
 }
