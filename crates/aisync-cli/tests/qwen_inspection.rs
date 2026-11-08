@@ -4,6 +4,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::atomic::{AtomicUsize, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -12,15 +13,18 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
         let root = std::env::temp_dir().join(format!(
-            "qwen-inspection-{}-{}",
+            "qwen-inspection-{}-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::create_dir_all(root.join("home")).unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("home")).unwrap();
         fs::create_dir_all(root.join("bin")).unwrap();
         fs::write(
             root.join("package.json"),
@@ -154,4 +158,16 @@ fn relative_selection_is_rejected_before_inspection() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert_eq!(before, snapshot(&f.root));
+}
+
+#[test]
+fn fixture_roots_are_distinct_under_parallel_creation() {
+    let fixtures: Vec<_> = (0..16)
+        .map(|_| std::thread::spawn(Fixture::new))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|h| h.join().unwrap())
+        .collect();
+    let roots: std::collections::BTreeSet<_> = fixtures.iter().map(|f| f.root.clone()).collect();
+    assert_eq!(roots.len(), fixtures.len());
 }
