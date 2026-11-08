@@ -8,6 +8,7 @@ pub mod dsh;
 pub mod git;
 pub mod mcp;
 pub mod memory;
+pub mod qwen;
 pub mod registry;
 pub mod release;
 pub mod sync;

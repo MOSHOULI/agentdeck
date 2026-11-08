@@ -1,7 +1,7 @@
 //! AgentDeck command-line interface. Mutating operations require an explicit --yes.
 use std::path::{Path, PathBuf};
 
-use aisync_core::{config, deploy, dsh, git, registry, sync};
+use aisync_core::{config, deploy, dsh, git, qwen, registry, sync};
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
@@ -27,6 +27,11 @@ enum Commands {
     Dsh {
         #[command(subcommand)]
         action: DshAction,
+    },
+    /// Inspect an explicit Qwen settings file using a narrowly reviewed package contract.
+    Qwen {
+        #[command(subcommand)]
+        action: QwenAction,
     },
     /// Sync personalization and opted-in memory to explicitly selected agents.
     #[command(
@@ -74,6 +79,34 @@ enum Commands {
         #[command(subcommand)]
         action: ReleaseAction,
     },
+}
+
+#[derive(Subcommand)]
+enum QwenAction {
+    /// Read fixed section presence only; never executes Qwen, writes files or returns values.
+    #[command(
+        long_about = "Inspect explicitly selected Qwen package/settings files and emit fixed, redacted JSON observations. Only the reviewed package and settings schema are eligible for content inspection. No execution, environment expansion, credential discovery, initialization, backup or writes. This is not effective configuration, installation/authentication verification, a diff or a restore plan. Exit 0 means a report was produced, including unsupported or unavailable observations; invalid paths exit 2."
+    )]
+    Inspect {
+        #[arg(long, value_name = "ABSOLUTE_SETTINGS_JSON", value_parser = parse_qwen_settings)]
+        settings: PathBuf,
+        #[arg(long, value_name = "ABSOLUTE_PACKAGE_JSON", value_parser = parse_qwen_manifest)]
+        runtime_manifest: Option<PathBuf>,
+    },
+}
+
+fn parse_qwen_settings(value: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(value);
+    qwen::validate_settings_path(&path)
+        .map_err(|_| "invalid explicit local settings.json path".to_string())?;
+    Ok(path)
+}
+
+fn parse_qwen_manifest(value: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(value);
+    qwen::validate_runtime_manifest_path(&path)
+        .map_err(|_| "invalid explicit local package.json path".to_string())?;
+    Ok(path)
 }
 
 #[derive(Subcommand)]
@@ -291,6 +324,22 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             )?;
             use std::io::Write;
             writeln!(std::io::stdout().lock(), "{report}")?;
+        }
+        Commands::Qwen {
+            action:
+                QwenAction::Inspect {
+                    settings,
+                    runtime_manifest,
+                },
+        } => {
+            // Deliberately independent of registry, profile, backup and process paths.
+            let report = qwen::inspect_settings(&settings, runtime_manifest.as_deref());
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&report)?
+            )?;
         }
         Commands::Sync {
             tools,
