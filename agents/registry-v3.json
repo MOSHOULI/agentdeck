@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "description": "AgentDeck（AI 中枢）Agent 注册表。16 款核心目录条目（含同一产品的独立 CLI/桌面形态）+ 8 款仅供参考的未接入或已归档条目。目录展示不代表自动管理；安装与配置能力以已验证适配器为准。",
+  "description": "AgentDeck（AI 中枢）Agent 注册表。17 款核心目录条目（含同一产品的独立 CLI/桌面形态）+ 8 款仅供参考的未接入或已归档条目。目录展示不代表自动管理；安装与配置能力以已验证适配器为准。",
   "updated_at": "2026-11-08",
   "agents": {
     "opencode": {
@@ -601,6 +601,44 @@
         ],
         "completion_check": null
       }
+    },
+    "dsh": {
+      "name": "DeepSeek Harness (DSH)",
+      "source": "open",
+      "license": "MIT",
+      "github": "deepseek-ai/deepseek-harness",
+      "stars": null,
+      "ui_type": "cli+desktop",
+      "category": "general-agent",
+      "popular": false,
+      "description": "DeepSeek 官方开发者预览，含独立 CLI 与自带运行时的桌面版。可进入 DSH 声明盘点，显式选择 profile/runtime manifest；不自动安装、启动、配置或管理插件。桌面自带实例不可当全局 npm 包覆盖。",
+      "install": {
+        "method": "manual",
+        "command": null,
+        "url": "https://github.com/deepseek-ai/deepseek-harness",
+        "verify_cmd": null,
+        "uninstall_cmd": null,
+        "dependencies": []
+      },
+      "auth_type": "account_login",
+      "auth_guide": {
+        "steps": [
+          "按官方文档选择桌面或 CLI 安装；CLI 源码快照 0.2.2-rc.1 声明 Node >=24.9.0，不代表已核验 npm 发行",
+          "桌面自带运行时，使用官方 Manage dsh Command 管理其命令入口，勿覆盖为全局 npm 实例",
+          "认证由用户在官方界面完成；AgentDeck 不读取认证文件、不启动运行时"
+        ],
+        "completion_check": null
+      },
+      "config_inject": {
+        "skills": false,
+        "mcp": null,
+        "memory": false,
+        "personalization": null,
+        "model_config": null
+      },
+      "memory_collector": null,
+      "icon": "dsh",
+      "homepage": "https://github.com/deepseek-ai/deepseek-harness"
     }
   },
   "future_registry": {

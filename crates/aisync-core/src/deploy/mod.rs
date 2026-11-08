@@ -480,6 +480,7 @@ mod tests {
             "kimi-code",
             "kimi-code-desktop",
             "qoder-cli",
+            "dsh",
         ] {
             let probe = probe_installation_with(
                 &doc.agents[id],

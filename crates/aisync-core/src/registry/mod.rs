@@ -729,7 +729,7 @@ mod tests {
     #[test]
     fn parses_registry_and_backfills_ids() {
         let doc = parse_registry(REGISTRY_JSON).expect("注册表应可解析");
-        assert_eq!(doc.agents.len(), 16);
+        assert_eq!(doc.agents.len(), 17);
         for (key, agent) in &doc.agents {
             assert_eq!(&agent.id, key, "id 应与 map key 一致");
             assert!(!agent.name.is_empty());

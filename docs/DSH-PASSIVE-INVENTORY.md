@@ -4,11 +4,11 @@ English | [简体中文](DSH-PASSIVE-INVENTORY.zh-CN.md)
 
 The development branch exposes one passive core reader through the new desktop
 workspace, “DSH 声明盘点” (“DSH declaration inventory”), and a separate `aisync` CLI
-command. This brings the desktop to six workspaces. DSH is not part of the generic deployment registry. This is an inventory
+command. This brings the desktop to six workspaces. DSH is now also listed in the main catalog. Its dedicated button opens this workspace without scanning or changing the current inputs. Generic installation/configuration remains disabled. This is an inventory
 view, not a plugin manager: installation, configuration, plugin activation, update,
 downgrade, removal, authentication and runtime connections remain unavailable.
 
-These features are planned for v1.2.0 and are not in the published v1.1.1 installer.
+These features are on the development branch and are not in the published v1.1.1 installer. The next installer is deferred until a larger validated update.
 Confirm publication on the versioned Release page and compare its `BUILD_COMMIT.txt`
 with the source revision. A version string alone does not identify the included
 source. DSH itself does not need to be installed or started to inspect synthetic
@@ -108,16 +108,20 @@ are errors.
 
 The supported schema subset was reviewed against upstream snapshot
 [`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/commit/8bd073392eef6f54e921a093b95076248eb08cbb),
-whose CLI is `0.2.2-alpha.3`. Only that runtime manifest version, under the expected
+whose CLI is `0.2.2-alpha.3`. That runtime manifest version, under the expected
 `@deepseek-ai/dsh` or `@deepseek-ai/dsh-app-boot` name, receives the “reviewed manifest
 version” label. This is still declaration recognition, not a compatibility test.
 
 A separate **2026-11-06** check of the official default branch, pinned at
 [`fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159`](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/cli/package.json),
-found CLI `0.2.2-rc.1` and Node `>=24.9.0` in its manifest. This newer metadata does
-**not** expand the reviewed parser contract or claim rc.1 support. A newer manifest
-may be reported as unrecognized or rejected for unsupported schema/shape. Preview
-changes require fresh review; no version enables management operations.
+found CLI `0.2.2-rc.1` and Node `>=24.9.0` in its manifest. The **2026-11-08** review additionally checked the same `dsh.manifestVersion: 1`,
+partial profile initialization and ordered bundle declaration subset at this fixed
+commit, plus both CLI and app-boot package names/versions. Exact `0.2.2-rc.1`
+declarations now receive the reviewed-manifest label; the parser is not widened.
+This does not verify the published npm artifact, installed runtime, profile ownership
+or plugin compatibility. Later versions remain unrecognized; no version enables
+management operations. The desktop bundles its own runtime: do not replace its CLI
+registration with a global npm install.
 
 - A profile manifest is partial and need not have a package version.
 - `dsh.manifestVersion`, when present, describes the manifest schema and is
