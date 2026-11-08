@@ -448,3 +448,21 @@ fn bilingual_source_notes_record_scope_and_do_not_claim_runtime_verification() {
     assert!(SOURCES_EN.contains("No popularity ranking is certified"));
     assert!(SOURCES_ZH.contains("本目录不认证热度排名"));
 }
+
+#[test]
+fn dsh_is_guidance_and_explicit_inventory_not_automatic_management() {
+    let catalog = catalog();
+    let dsh = &catalog.agents["dsh"];
+    assert_eq!(dsh.github.as_deref(), Some("deepseek-ai/deepseek-harness"));
+    assert_eq!(dsh.install.method, InstallMethod::Manual);
+    assert!(dsh.install.command.is_none());
+    assert!(dsh.install.verify_cmd.is_none());
+    assert!(dsh.install.uninstall_cmd.is_none());
+    assert!(dsh.auth_guide.as_ref().unwrap().completion_check.is_none());
+    assert!(!aisync_core::deploy::can_install(dsh));
+    assert!(!aisync_core::deploy::can_configure(dsh));
+    assert!(!aisync_core::deploy::can_uninstall(dsh));
+    assert!(dsh.config_inject.mcp.is_none());
+    assert!(dsh.config_inject.model_config.is_none());
+    assert!(dsh.memory_collector.is_none());
+}

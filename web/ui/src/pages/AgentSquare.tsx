@@ -11,7 +11,7 @@ const filters = [
   { id: 'installed', label: '已安装' },
 ] as const;
 
-export const AgentSquare: React.FC = () => {
+export const AgentSquare: React.FC<{ onOpenDshInventory?: () => void }> = ({ onOpenDshInventory }) => {
   const { agents, loading, error, notice, refreshError, dataStale, selectedAgentId, loadAgents, installAgent, configureAgent, uninstallAgent, selectAgent, clearError } = useAgentStore();
   const [filter, setFilter] = useState<'all' | 'installed'>('all');
   const [query, setQuery] = useState('');
@@ -99,7 +99,7 @@ export const AgentSquare: React.FC = () => {
         </div>
 
         <div className="agent-list" aria-label="Agent 列表" aria-busy={loading}>
-          {filteredAgents.map((agent) => <AgentCard key={agent.id} agent={agent} busy={loading} dataStale={dataStale} selected={selectedAgentId === agent.id} onInstall={installAgent} onConfigure={configureAgent} onUninstall={uninstallAgent} onSelect={selectAgent} />)}
+          {filteredAgents.map((agent) => <AgentCard key={agent.id} agent={agent} busy={loading} dataStale={dataStale} selected={selectedAgentId === agent.id} onInstall={installAgent} onConfigure={configureAgent} onUninstall={uninstallAgent} onSelect={selectAgent} onOpenDshInventory={onOpenDshInventory} />)}
           {loading && agents.length === 0 && <div className="empty-state agent-empty"><Icon name="agents" size={28} /><h2>正在加载 Agent</h2><p>读取注册表与本地安装状态。</p></div>}
           {!loading && refreshError && agents.length === 0 && <div className="empty-state agent-empty"><Icon name="alert" size={28} /><h2>暂时无法读取 Agent 列表</h2><p>检查桌面后端连接后重试。</p><button type="button" className="button" onClick={() => { void loadAgents(); }}><Icon name="refresh" size={15} />重新加载</button></div>}
           {!loading && (!refreshError || agents.length > 0) && filteredAgents.length === 0 && (

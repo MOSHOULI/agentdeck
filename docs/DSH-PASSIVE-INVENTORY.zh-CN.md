@@ -1,12 +1,15 @@
+> 2026-11-08 更新：DSH 已进入主目录，卡片可直接打开专用声明盘点，导航本身不扫描也不清除已输入路径。安装、配置与插件管理仍关闭。下一安装包等待较大更新后发布。
+> 本轮重新核对固定官方提交 fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159 的 manifestVersion 1、部分 profile 初始化及有序 bundle 声明格式；精确 0.2.2-rc.1 的 CLI/app-boot 声明现可标注“已审阅”，没有扩大解析格式，也不证明 npm 发布物、安装版本或插件兼容性。后续版本仍未知。桌面自带运行时，勿用全局 npm 覆盖其命令注册。
+
 # DSH 被动盘点：桌面与 CLI
 
 [English](DSH-PASSIVE-INVENTORY.md) | 简体中文
 
 当前开发分支通过新增的桌面工作区“DSH 声明盘点”（现共六个工作区）和独立的 `aisync` CLI 命令，
-使用同一个被动核心读取器。DSH 不在通用部署注册表中。此页面仅用于盘点，不是插件管理器；
+使用同一个被动核心读取器。DSH 同时出现在主目录中，可从卡片进入专用盘点，通用部署能力仍关闭。此页面仅用于盘点，不是插件管理器；
 安装、配置、插件启停、更新、降级、移除、认证和运行时连接仍未开放。
 
-这些功能计划随 v1.2.0 交付，不在已发布的 v1.1.1 安装包中。是否已发布以对应 Release
+这些功能在开发分支中，不在已发布的 v1.1.1 安装包中。是否已发布以对应 Release
 为准，请核对其中的 `BUILD_COMMIT.txt` 与源码修订版本。版本字符串相同不能证明构建
 包含相同源码。盘点合成或复制的 manifest，不需要安装或启动 DSH 本身。
 
@@ -87,14 +90,15 @@ JSON 键会被拒绝。只盘点 `dependencies`、`optionalDependencies` 和
 受支持的 schema 子集依据上游快照
 [`8bd073392eef6f54e921a093b95076248eb08cbb`](https://github.com/deepseek-ai/deepseek-harness/commit/8bd073392eef6f54e921a093b95076248eb08cbb)
 审查，其中 CLI 版本为 `0.2.2-alpha.3`。只有 runtime manifest 的包名为预期的
-`@deepseek-ai/dsh` 或 `@deepseek-ai/dsh-app-boot`，且声明该版本时，才标为“已审阅的
+`@deepseek-ai/dsh` 或 `@deepseek-ai/dsh-app-boot`，且声明已审阅的精确版本时，才标为“已审阅的
 manifest 版本”。这仍是声明识别，不是兼容性测试。
 
 另一次 **2026-11-06** 官方默认分支核验固定在
 [`fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159`](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/cli/package.json)，
-其 manifest 声明 CLI `0.2.2-rc.1`、Node `>=24.9.0`。这份较新的元数据**不会扩展**已审阅
-的解析约定，也不表示已支持 rc.1。较新的 manifest 可能标为未识别版本，或因不支持的
-schema/结构而被拒绝。预览版变化需要重新审查；任何版本都不会开放管理操作。
+其 manifest 声明 CLI `0.2.2-rc.1`、Node `>=24.9.0`。2026-11-08 重新核对
+同一提交的 profile 初始化、manifestVersion 1 与 bundle 声明格式后，精确 rc.1 名称/版本
+现也可标为已审阅声明。解析约定没有扩大；不是 npm 发布物或真实运行时兼容验证。
+更晚版本仍未识别；任何版本都不会开放管理操作。
 
 - profile manifest 可以只包含部分字段，不一定有包版本。
 - `dsh.manifestVersion` 如存在，描述的是 manifest schema，与 runtime/包版本和已保存的会话版本相互独立。

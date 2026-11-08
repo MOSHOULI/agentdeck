@@ -10,6 +10,9 @@
 //! `packages/util/package-manifest/src/types.ts`, and `apps/cli/package.json`.
 //! Profile manifests are partial: neither name nor version is required. The CLI
 //! declares `@deepseek-ai/dsh` version `0.2.2-alpha.3`, with Node `>=24.9.0`.
+//! Re-reviewed the same profile/bundle subset and app-boot package at
+//! `fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159` (`0.2.2-rc.1`). Both exact
+//! name/version pairs are recognized; no semver range grants compatibility.
 //!
 //! This is not an OS sandbox. Components and handles are checked, but a same-user
 //! adversary can race ancestor replacement, and mounts can block reads. No content
@@ -99,8 +102,10 @@ fn inspect_with(
             if matches!(
                 metadata.name.as_deref(),
                 Some("@deepseek-ai/dsh" | "@deepseek-ai/dsh-app-boot")
-            ) && metadata.reported_version.as_deref() == Some("0.2.2-alpha.3")
-            {
+            ) && matches!(
+                metadata.reported_version.as_deref(),
+                Some("0.2.2-alpha.3" | "0.2.2-rc.1")
+            ) {
                 VersionRecognition::ReviewedManifestVersion
             } else {
                 VersionRecognition::UnrecognizedManifestVersion
