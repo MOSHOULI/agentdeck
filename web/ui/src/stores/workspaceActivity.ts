@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { create } from 'zustand';
 
-export type WorkspaceId = 'agents' | 'memory' | 'mcp' | 'vault' | 'updates' | 'dsh';
+export type WorkspaceId = 'agents' | 'memory' | 'mcp' | 'vault' | 'updates' | 'dsh' | 'qwen';
 
 type ActivityOwners = Record<WorkspaceId, readonly symbol[]>;
 
@@ -13,8 +13,8 @@ interface WorkspaceActivityState {
 
 /** Each mounted publisher owns a token, so one finishing operation cannot clear another. */
 export const useWorkspaceActivityStore = create<WorkspaceActivityState>((set) => ({
-  owners: { agents: [], memory: [], mcp: [], vault: [], updates: [], dsh: [] },
-  busy: { agents: false, memory: false, mcp: false, vault: false, updates: false, dsh: false },
+  owners: { agents: [], memory: [], mcp: [], vault: [], updates: [], dsh: [], qwen: [] },
+  busy: { agents: false, memory: false, mcp: false, vault: false, updates: false, dsh: false, qwen: false },
   setActivity: (id, owner, active) => set((state) => {
     const current = state.owners[id];
     if (current.includes(owner) === active) return state;

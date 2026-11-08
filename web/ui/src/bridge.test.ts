@@ -166,3 +166,33 @@ describe('MCP preview boundary', () => {
     expect(invoke).toHaveBeenNthCalledWith(2, 'apply_mcp_toggle_preview', { serverName: 'ragflow', agentId: 'codex', enabled: true, revision: 'revision-1' });
   });
 });
+
+describe('Qwen read-only bridge', () => {
+  it('rejects browser calls and uses labeled demo without IPC', async () => {
+    await expect(bridge.inspectQwenSettings('/settings.json', '/package.json')).rejects.toThrow('未连接桌面后端');
+    window.history.replaceState({}, '', '/?demo=1');
+    const result = await bridge.inspectQwenSettings('/PRIVATE/settings.json', '/package.json');
+    expect(result.synthetic).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('PRIVATE');
+    expect(invoke).not.toHaveBeenCalled();
+  });
+  it('dispatches only the explicit read command and projects fixed metadata', async () => {
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    vi.mocked(invoke).mockResolvedValue({
+      mode: 'explicit_settings_summary', authentication: 'unknown', effective_configuration: 'unknown',
+      version_recognition: 'unknown', runtime_manifest: { status: 'unsupported' },
+      settings: { status: 'not_read', sections: null },
+      mutation_capabilities: { configure: false, authenticate: false, install: false, restore: false, execute: false },
+    });
+    const result = await bridge.inspectQwenSettings('/selected/settings.json', '/runtime/package.json');
+    expect(result.synthetic).toBe(false);
+    expect(result.summary.reviewed).toBe(false);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('inspect_qwen_settings', { settingsPath: '/selected/settings.json', runtimeManifest: '/runtime/package.json' });
+  });
+  it.each(['', '\u0000x', 'x'.repeat(4097)])('rejects invalid paths before dispatch', async value => {
+    Object.assign(window, { __TAURI_INTERNALS__: {} });
+    await expect(bridge.inspectQwenSettings(value, '/package.json')).rejects.toThrow();
+    await expect(bridge.inspectQwenSettings('/settings.json', value)).rejects.toThrow();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
