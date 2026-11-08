@@ -8,6 +8,9 @@
 
 **下一开发版本说明：** 当前分支新增 Qwen Code 手动安装指引与被动 PATH 候选观察，尚未随正式安装包发布。找到候选也不代表安装或登录已验证；Qwen Code 的自动安装、版本/来源验证及配置写入均未开放。详见[注册表来源核验](docs/REGISTRY-SOURCES.zh-CN.md#qwen-code手动安装与仅被动-path-发现)。
 
+
+新增 Cursor、GitHub Copilot CLI、Kimi Code 与 Qoder CLI 的六个[官方手动指引条目](docs/MAINSTREAM-CATALOG.zh-CN.md)，CLI 和桌面分别列出。目录共 16 条，不代表 16 款可自动管理；新条目不执行探针、不读写配置，尚未随正式安装包发布。
+
 在一个桌面界面中管理本机 AI Agent：发现与安装、配置、可选择的对话记忆导出、加密密钥、MCP 和配置备份。
 
 **当前支持的完整桌面平台是 Windows 10/11 x64。** React + Tauri 2 + Rust 架构；Linux 可运行非密钥相关的核心/CLI，尚不提供 Linux/macOS 的受保护密钥库或完整安装包。

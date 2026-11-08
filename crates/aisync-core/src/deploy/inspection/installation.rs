@@ -8,6 +8,11 @@ const INSTALL_TIMEOUT: Duration = Duration::from_secs(300);
 const MANAGER_FILE_LIMIT: usize = 256 * 1024 * 1024;
 
 fn adapter(agent: &AgentDefinition) -> Option<KnownAgent> {
+    // Upstream deprecated npm installation. Preserved runtime registries must
+    // not re-enable this channel; read-only legacy inspection remains separate.
+    if agent.id == "claude-code" {
+        return None;
+    }
     let known = known_agent(agent)?;
     let package = known.package?;
     let recipe = if agent.id == "pi" {
@@ -936,7 +941,7 @@ mod tests {
         let registry =
             crate::registry::parse_registry(include_str!("../../../../../agents/registry-v3.json"))
                 .unwrap();
-        for id in ["codex", "claude-code", "opencode", "gemini-cli", "pi"] {
+        for id in ["codex", "opencode", "gemini-cli", "pi"] {
             let mut agent = registry.agents[id].clone();
             assert!(can_install(&agent), "bundled {id} recipe must be supported");
             agent.install.command = Some("npm install -g unexpected-package".into());

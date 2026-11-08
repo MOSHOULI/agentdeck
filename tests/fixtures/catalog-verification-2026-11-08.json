@@ -1,0 +1,193 @@
+{
+  "verification_date": "2026-11-08",
+  "evidence_kind": "upstream_document_review_and_static_catalog_expectations",
+  "runtime_verification": false,
+  "schema_version": 3,
+  "core_agent_ids": [
+    "claude-code",
+    "cline",
+    "codex",
+    "cursor",
+    "cursor-cli",
+    "gemini-cli",
+    "github-copilot-cli",
+    "hermes",
+    "kimi-code",
+    "kimi-code-desktop",
+    "openclaw",
+    "opencode",
+    "pi",
+    "qoder-cli",
+    "qwen-code",
+    "zcode"
+  ],
+  "future_agent_ids": [
+    "aider",
+    "continue",
+    "crush",
+    "goose",
+    "kilocode",
+    "oh-my-pi",
+    "plandex",
+    "roocode"
+  ],
+  "npm": {
+    "gemini-cli": {
+      "node_dependency": "node >= 20",
+      "command": "npm install -g @google/gemini-cli",
+      "uninstall_cmd": "npm uninstall -g @google/gemini-cli",
+      "verify_cmd": "gemini --version"
+    },
+    "pi": {
+      "node_dependency": "node >= 22.19.0",
+      "command": "npm install -g --ignore-scripts @earendil-works/pi-coding-agent",
+      "uninstall_cmd": "npm uninstall -g @earendil-works/pi-coding-agent",
+      "verify_cmd": "pi --version"
+    }
+  },
+  "authentication": {
+    "claude-code": {
+      "required_fragments": [
+        "claude auth login"
+      ],
+      "forbidden_fragments": [
+        "claude login"
+      ]
+    },
+    "gemini-cli": {
+      "required_fragments": [
+        "gemini",
+        "Sign in with Google"
+      ],
+      "forbidden_fragments": [
+        "gemini login"
+      ]
+    },
+    "qwen-code": {
+      "required_fragments": [
+        "qwen",
+        "/auth"
+      ],
+      "forbidden_fragments": [
+        "qwen auth",
+        "file_exists"
+      ]
+    }
+  },
+  "source_only": {
+    "crush": {
+      "github": "charmbracelet/crush",
+      "method": "manual",
+      "status": "not_integrated"
+    },
+    "oh-my-pi": {
+      "github": "can1357/oh-my-pi",
+      "method": "manual",
+      "status": "not_integrated"
+    },
+    "roocode": {
+      "github": "RooCodeInc/Roo-Code",
+      "method": "vscode_extension",
+      "status": "archived"
+    },
+    "goose": {
+      "github": "aaif-goose/goose",
+      "method": "manual",
+      "status": "not_integrated"
+    },
+    "aider": {
+      "github": "Aider-AI/aider",
+      "method": "pip",
+      "status": "not_integrated"
+    },
+    "continue": {
+      "github": "continuedev/continue",
+      "method": "vscode_extension",
+      "status": "unmaintained"
+    },
+    "kilocode": {
+      "github": "Kilo-Org/kilocode",
+      "method": "vscode_extension",
+      "status": "not_integrated"
+    },
+    "plandex": {
+      "github": "plandex-ai/plandex",
+      "method": "manual",
+      "status": "cloud_winding_down"
+    }
+  },
+  "sources": [
+    "https://geminicli.com/docs/get-started/installation/",
+    "https://geminicli.com/docs/get-started/authentication/",
+    "https://code.claude.com/docs/en/setup#install-with-npm",
+    "https://code.claude.com/docs/en/cli-reference",
+    "https://github.com/earendil-works/pi",
+    "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/package.json",
+    "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/configuration.md",
+    "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/config.ts",
+    "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md",
+    "https://github.com/RooCodeInc/Roo-Code",
+    "https://github.com/charmbracelet/crush",
+    "https://github.com/can1357/oh-my-pi",
+    "https://opencode.ai/docs/",
+    "https://opencode.ai/v2/docs",
+    "https://opencode.ai/v2/docs/migrate-v1/",
+    "https://opencode.ai/v2/docs/mcp-servers/",
+    "https://opencode.ai/v2/docs/instructions/",
+    "https://github.com/QwenLM/qwen-code",
+    "https://github.com/QwenLM/qwen-code/releases/tag/v0.26.9",
+    "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/package.json",
+    "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/scripts/prepare-package.js#L360-L434",
+    "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/users/quickstart.md",
+    "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/scripts/cli-entry.js",
+    "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/developers/tools/shell.md",
+    "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/users/configuration/auth.md",
+    "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/LICENSE",
+    "https://github.com/anthropics/claude-code",
+    "https://github.com/google-gemini/gemini-cli",
+    "https://github.com/Aider-AI/aider",
+    "https://github.com/Kilo-Org/kilocode",
+    "https://github.com/continuedev/continue",
+    "https://github.com/plandex-ai/plandex"
+  ],
+  "popularity_evidence": {
+    "verified": false,
+    "stars": null,
+    "popular": false,
+    "description_numeric_allowlist": {
+      "roocode": [
+        "2026-05-15"
+      ],
+      "opencode": [
+        "V1",
+        "V2"
+      ]
+    }
+  },
+  "opencode_version_boundary": {
+    "install_command": "npm install -g opencode-ai",
+    "uninstall_command": "npm uninstall -g opencode-ai",
+    "verify_command": "opencode --version",
+    "personalization_target": "~/.config/opencode/AGENTS.md",
+    "personalization_template": "opencode",
+    "model_config": null,
+    "mcp": null
+  },
+  "qwen_source_review": {
+    "upstream_release": "v0.26.9",
+    "source_commit": "600aff0592bcfc21668ca4aba95a5b20c6491b86",
+    "npm_package": "@qwen-code/qwen-code",
+    "documented_npm_command": "npm install -g @qwen-code/qwen-code@latest",
+    "node_dependency": "node >= 22",
+    "published_bin": "cli-entry.js",
+    "manual_install_url": "https://github.com/QwenLM/qwen-code/blob/600aff0592bcfc21668ca4aba95a5b20c6491b86/docs/users/quickstart.md",
+    "npm_registry_verified": false,
+    "runtime_verification": false,
+    "install_method": "manual",
+    "verification_marker": "qwen --version",
+    "automatic_installation": false,
+    "runtime_probe": false,
+    "source_association": false,
+    "published_release_excluded": "v1.1.1"
+  }
+}

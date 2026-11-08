@@ -10,7 +10,7 @@ use serde_json::Value;
 
 const BUNDLED: &str = include_str!("../../../agents/registry-v3.json");
 const EXPECTATIONS: &str =
-    include_str!("../../../tests/fixtures/catalog-verification-2026-11-06.json");
+    include_str!("../../../tests/fixtures/catalog-verification-2026-11-08.json");
 const SOURCES_EN: &str = include_str!("../../../docs/REGISTRY-SOURCES.md");
 const SOURCES_ZH: &str = include_str!("../../../docs/REGISTRY-SOURCES.zh-CN.md");
 
@@ -96,13 +96,6 @@ fn reviewed_npm_entries_match_documented_node_minima_and_fixed_recipes() {
             "{id}"
         );
     }
-    assert!(
-        catalog.agents["claude-code"]
-            .install
-            .dependencies
-            .iter()
-            .any(|value| value == "git")
-    );
 }
 
 #[test]
