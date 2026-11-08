@@ -469,6 +469,28 @@ mod tests {
     }
 
     #[test]
+    fn mainstream_guidance_never_resolves_or_executes_a_probe() {
+        let doc =
+            crate::registry::parse_registry(include_str!("../../../../agents/registry-v3.json"))
+                .unwrap();
+        for id in [
+            "cursor",
+            "cursor-cli",
+            "github-copilot-cli",
+            "kimi-code",
+            "kimi-code-desktop",
+            "qoder-cli",
+        ] {
+            let probe = probe_installation_with(
+                &doc.agents[id],
+                |_| panic!("Guidance must not scan PATH"),
+                |_| panic!("Guidance must not execute an agent or shell"),
+            );
+            assert_eq!(probe.status, InstallationStatus::Unsupported);
+        }
+    }
+
+    #[test]
     fn shell_recipes_cannot_bypass_safe_install_adapter() {
         let agent = fake_agent();
         assert!(!can_install(&agent));

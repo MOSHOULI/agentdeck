@@ -1,7 +1,7 @@
 {
   "version": 3,
-  "description": "AgentDeck（AI 中枢）Agent 注册表。10 款核心目录条目 + 8 款仅供参考的未接入或已归档条目。安装与配置能力以已验证适配器为准。",
-  "updated_at": "2026-11-06",
+  "description": "AgentDeck（AI 中枢）Agent 注册表。16 款核心目录条目（含同一产品的独立 CLI/桌面形态）+ 8 款仅供参考的未接入或已归档条目。目录展示不代表自动管理；安装与配置能力以已验证适配器为准。",
+  "updated_at": "2026-11-08",
   "agents": {
     "opencode": {
       "name": "OpenCode",
@@ -45,16 +45,14 @@
       "ui_type": "all",
       "category": "ai-coding",
       "popular": false,
-      "description": "Anthropic 官方编程代理，提供交互式终端会话与账号认证。此目录使用 npm 安装途径，配置能力以 AgentDeck 已验证适配器为准。",
+      "description": "Anthropic 官方编程代理。官方已弃用 npm 安装，现提供原生安装器、Homebrew 或 WinGet 手动指引；保留既有配置适配器，不代表已验证所有平台。",
       "install": {
-        "method": "npm",
-        "command": "npm install -g @anthropic-ai/claude-code",
+        "method": "manual",
+        "url": "https://code.claude.com/docs/en/setup",
+        "command": null,
         "verify_cmd": "claude --version",
-        "uninstall_cmd": "npm uninstall -g @anthropic-ai/claude-code",
-        "dependencies": [
-          "node >= 22",
-          "git"
-        ]
+        "uninstall_cmd": null,
+        "dependencies": []
       },
       "auth_type": "oauth_cli",
       "auth_guide": {
@@ -62,9 +60,7 @@
           "在终端运行 claude auth login 完成 Anthropic 账号认证",
           "也可通过 ANTHROPIC_API_KEY 环境变量使用 API Key 模式"
         ],
-        "completion_check": {
-          "file_exists": "~/.claude/credentials.json"
-        }
+        "completion_check": null
       },
       "config_inject": {
         "skills": true,
@@ -85,7 +81,7 @@
       },
       "memory_collector": "claude_sessions",
       "icon": "claude-code",
-      "homepage": "https://claude.com"
+      "homepage": "https://code.claude.com/docs/en/setup"
     },
     "codex": {
       "name": "OpenAI Codex",
@@ -277,7 +273,7 @@
       "ui_type": "cli",
       "category": "ai-coding",
       "popular": false,
-      "description": "Google 官方开源终端 AI 代理，支持交互式会话与 Google 账号登录。配置能力以 AgentDeck 已验证适配器为准。",
+      "description": "Google 企业 Code Assist 与旧版付费 API/Vertex 兼容 CLI。个人免费及 Google AI Pro/Ultra 用户已迁至 Antigravity CLI；保留既有适配器，不代表 Antigravity 管理支持。",
       "install": {
         "method": "npm",
         "command": "npm install -g @google/gemini-cli",
@@ -290,11 +286,11 @@
       "auth_type": "oauth_cli",
       "auth_guide": {
         "steps": [
-          "在终端运行 gemini，选择 Sign in with Google，并按浏览器提示完成 Google 账号认证"
+          "此 Gemini CLI 面向企业 Code Assist 与旧版付费 API/Vertex 使用；个人免费及 Google AI Pro/Ultra 用户请查阅官方 Antigravity CLI 迁移说明",
+          "符合资格的企业用户运行 gemini 并选择 Sign in with Google，按官方要求设置 Google Cloud 项目",
+          "本工具不凭凭据文件存在判断已登录，实际资格与认证由官方服务确认"
         ],
-        "completion_check": {
-          "file_exists": "~/.gemini/auth.json"
-        }
+        "completion_check": null
       },
       "config_inject": {
         "skills": false,
@@ -357,7 +353,7 @@
       "ui_type": "cli",
       "category": "ai-coding",
       "popular": false,
-      "description": "Qwen 官方开源终端编程代理。请按官方文档手动安装；AgentDeck 仅被动观察 PATH 候选，不执行版本查询或确认安装来源，不提供自动安装、认证验证或配置写入。",
+      "description": "Qwen 官方开源终端编程代理。请按官方文档手动安装；AgentDeck 仅被动观察 PATH 候选，不执行版本查询或确认安装来源，不提供自动安装、认证验证或配置写入。 上游另有 IDE、桌面与 WebUI 等形态，本条目仍仅覆盖被动 CLI 检测。",
       "install": {
         "method": "manual",
         "command": null,
@@ -387,6 +383,224 @@
       "memory_collector": null,
       "icon": "qwen-code",
       "homepage": "https://github.com/QwenLM/qwen-code"
+    },
+    "cursor": {
+      "source": "closed",
+      "stars": null,
+      "category": "ai-coding",
+      "popular": false,
+      "install": {
+        "method": "manual",
+        "command": null,
+        "url": "https://cursor.com/download",
+        "verify_cmd": null,
+        "uninstall_cmd": null,
+        "dependencies": []
+      },
+      "auth_type": "account_login",
+      "config_inject": {
+        "skills": false,
+        "mcp": null,
+        "memory": false,
+        "personalization": null,
+        "model_config": null
+      },
+      "memory_collector": null,
+      "name": "Cursor Desktop",
+      "ui_type": "desktop",
+      "description": "Cursor 桌面编辑器，官方提供 Windows、macOS 与 Linux 安装包；与 Cursor Agent CLI 分开安装。AgentDeck 仅提供官方指引，不检测安装、登录或版本，不写配置。",
+      "icon": "cursor",
+      "homepage": "https://cursor.com/download",
+      "auth_guide": {
+        "steps": [
+          "从官方页面选择系统与架构对应的桌面安装包，按官方流程安装并登录 Cursor 账号",
+          "桌面编辑器与 Agent CLI 是不同安装项，安装其中一项不代表另一项已就绪"
+        ],
+        "completion_check": null
+      }
+    },
+    "cursor-cli": {
+      "source": "closed",
+      "stars": null,
+      "category": "ai-coding",
+      "popular": false,
+      "install": {
+        "method": "manual",
+        "command": null,
+        "url": "https://cursor.com/docs/cli/installation",
+        "verify_cmd": null,
+        "uninstall_cmd": null,
+        "dependencies": []
+      },
+      "auth_type": "account_login",
+      "config_inject": {
+        "skills": false,
+        "mcp": null,
+        "memory": false,
+        "personalization": null,
+        "model_config": null
+      },
+      "memory_collector": null,
+      "name": "Cursor Agent CLI",
+      "ui_type": "cli",
+      "description": "Cursor 终端 Agent，官方支持 macOS、Linux、WSL 与原生 Windows，当前命令为 agent。AgentDeck 仅提供官方指引，不根据通用命令名推断身份，不自动探测或写配置。",
+      "icon": "cursor-cli",
+      "homepage": "https://cursor.com/docs/cli/installation",
+      "auth_guide": {
+        "steps": [
+          "按官方 CLI 安装文档选择 shell 或 PowerShell 安装方式；不要将桌面编辑器安装视为 CLI 已安装",
+          "手动运行 agent login 完成浏览器认证，或依官方文档设置 CURSOR_API_KEY；AgentDeck 不代填或检查凭据"
+        ],
+        "completion_check": null
+      }
+    },
+    "github-copilot-cli": {
+      "source": "closed",
+      "stars": null,
+      "category": "ai-coding",
+      "popular": false,
+      "install": {
+        "method": "manual",
+        "command": null,
+        "url": "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli",
+        "verify_cmd": null,
+        "uninstall_cmd": null,
+        "dependencies": []
+      },
+      "auth_type": "account_login",
+      "config_inject": {
+        "skills": false,
+        "mcp": null,
+        "memory": false,
+        "personalization": null,
+        "model_config": null
+      },
+      "memory_collector": null,
+      "name": "GitHub Copilot CLI",
+      "ui_type": "cli",
+      "description": "GitHub 官方独立终端编程代理，命令为 copilot，不是旧 gh-copilot 扩展。支持 Windows、macOS 与 Linux；AgentDeck 仅提供官方手动指引，不自动安装、探测或配置。",
+      "icon": "github-copilot-cli",
+      "homepage": "https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli",
+      "auth_guide": {
+        "steps": [
+          "按官方文档选择 WinGet、Homebrew、npm 或官方脚本；npm 途径要求 Node.js 22+，Windows 要求 PowerShell 6+",
+          "手动运行 copilot login 完成 OAuth；账号权益与组织策略以官方要求为准。BYOK 模式可不使用 GitHub 认证",
+          "AgentDeck 不执行登录或检查认证状态；此条目不表示 Copilot IDE 扩展已安装"
+        ],
+        "completion_check": null
+      },
+      "github": "github/copilot-cli",
+      "license": "GitHub Copilot CLI License"
+    },
+    "kimi-code": {
+      "source": "open",
+      "stars": null,
+      "category": "ai-coding",
+      "popular": false,
+      "install": {
+        "method": "manual",
+        "command": null,
+        "url": "https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started",
+        "verify_cmd": null,
+        "uninstall_cmd": null,
+        "dependencies": []
+      },
+      "auth_type": "account_login",
+      "config_inject": {
+        "skills": false,
+        "mcp": null,
+        "memory": false,
+        "personalization": null,
+        "model_config": null
+      },
+      "memory_collector": null,
+      "name": "Kimi Code CLI",
+      "ui_type": "cli",
+      "description": "MoonshotAI 当前 TypeScript/Node.js 终端代理；不同于已归档的 Python/uv kimi-cli。两者命令都叫 kimi，AgentDeck 不凭同名命令判定身份，仅提供官方指引，不探测、迁移或写配置。",
+      "icon": "kimi-code",
+      "homepage": "https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started",
+      "auth_guide": {
+        "steps": [
+          "按官方文档安装当前 Kimi Code CLI；npm 包为 @moonshot-ai/kimi-code，要求 Node.js 22.19.0+。独立脚本途径无需预装 Node；Windows 首次运行需要 Git for Windows",
+          "在 kimi 会话内使用 /login，选择 Kimi Code OAuth 或 Kimi Platform API key；AgentDeck 不读取认证文件",
+          "新版默认目录为 ~/.kimi-code，旧版为 ~/.kimi；迁移由用户依官方说明决定，AgentDeck 不执行迁移"
+        ],
+        "completion_check": null
+      },
+      "license": "MIT",
+      "github": "MoonshotAI/kimi-code"
+    },
+    "kimi-code-desktop": {
+      "source": "closed",
+      "stars": null,
+      "category": "ai-coding",
+      "popular": false,
+      "install": {
+        "method": "manual",
+        "command": null,
+        "url": "https://www.kimi.com/code/docs/en/kimi-code-desktop/getting-started.html",
+        "verify_cmd": null,
+        "uninstall_cmd": null,
+        "dependencies": []
+      },
+      "auth_type": "account_login",
+      "config_inject": {
+        "skills": false,
+        "mcp": null,
+        "memory": false,
+        "personalization": null,
+        "model_config": null
+      },
+      "memory_collector": null,
+      "name": "Kimi Code Desktop",
+      "ui_type": "desktop",
+      "description": "Kimi Code 桌面客户端，官方当前支持 macOS、Windows 及 Linux。与 CLI 分开列出；AgentDeck 仅提供官方指引，不检测安装、登录或版本，不读写配置。",
+      "icon": "kimi-code-desktop",
+      "homepage": "https://www.kimi.com/code/docs/en/kimi-code-desktop/getting-started.html",
+      "auth_guide": {
+        "steps": [
+          "按官方桌面文档和 FAQ 选择对应平台安装包；不要将 kimi CLI 的存在当作桌面端安装证据",
+          "在桌面账号区域按提示完成 Kimi OAuth，或按官方设置接入第三方模型；官方模型权限依账号会员而定",
+          "AgentDeck 不代填密钥，不检查认证或自动修改桌面与 CLI 共享的配置"
+        ],
+        "completion_check": null
+      }
+    },
+    "qoder-cli": {
+      "source": "closed",
+      "stars": null,
+      "category": "ai-coding",
+      "popular": false,
+      "install": {
+        "method": "manual",
+        "command": null,
+        "url": "https://docs.qoder.com/cli/installation",
+        "verify_cmd": null,
+        "uninstall_cmd": null,
+        "dependencies": []
+      },
+      "auth_type": "account_login",
+      "config_inject": {
+        "skills": false,
+        "mcp": null,
+        "memory": false,
+        "personalization": null,
+        "model_config": null
+      },
+      "memory_collector": null,
+      "name": "Qoder CLI",
+      "ui_type": "cli",
+      "description": "Qoder 终端代理。官方首选独立安装，npm 为旧兼容路线；Windows ARM 架构暂不支持。AgentDeck 仅提供官方手动指引，不执行探针、安装或登录，不读写配置。",
+      "icon": "qoder-cli",
+      "homepage": "https://docs.qoder.com/cli/installation",
+      "auth_guide": {
+        "steps": [
+          "按官方文档安装原生独立 CLI（命令 qoder）；npm @qoder-ai/qodercli 是旧兼容路线，需 Node.js >=20",
+          "认证与账号资格按官方当前说明由用户完成；自定义模型使用 /model 向导，AgentDeck 不注入密钥",
+          "Windows ARM64 暂不支持；选择与操作系统和架构匹配的官方包"
+        ],
+        "completion_check": null
+      }
     }
   },
   "future_registry": {
@@ -405,13 +619,13 @@
           "method": "manual"
         },
         "auth_type": "api_key",
-        "status": "v0.2_pending"
+        "status": "not_integrated"
       },
       "aider": {
         "name": "Aider",
         "source": "open",
         "license": "Apache-2.0",
-        "github": "paul-gauthier/aider",
+        "github": "Aider-AI/aider",
         "stars": null,
         "ui_type": "cli",
         "category": "ai-coding",
@@ -420,7 +634,7 @@
           "method": "pip"
         },
         "auth_type": "api_key",
-        "status": "v0.2_pending"
+        "status": "not_integrated"
       },
       "continue": {
         "name": "Continue.dev",
@@ -435,13 +649,14 @@
           "method": "vscode_extension"
         },
         "auth_type": "api_key",
-        "status": "v0.2_pending"
+        "status": "unmaintained",
+        "description": "官方仓库已只读且不再积极维护，保留历史参考，不作为当前默认推荐。"
       },
       "kilocode": {
         "name": "Kilo Code",
         "source": "open",
         "license": "MIT",
-        "github": "kilocode/kilocode",
+        "github": "Kilo-Org/kilocode",
         "stars": null,
         "ui_type": "vscode-extension",
         "category": "ai-coding",
@@ -450,7 +665,7 @@
           "method": "vscode_extension"
         },
         "auth_type": "api_key",
-        "status": "v0.2_pending"
+        "status": "not_integrated"
       },
       "crush": {
         "name": "Crush",
@@ -465,7 +680,7 @@
           "method": "manual"
         },
         "auth_type": "api_key",
-        "status": "v0.2_pending"
+        "status": "not_integrated"
       },
       "roocode": {
         "name": "Roo Code",
@@ -496,7 +711,8 @@
           "method": "manual"
         },
         "auth_type": "api_key",
-        "status": "v0.3_pending"
+        "status": "cloud_winding_down",
+        "description": "官方云服务正在收尾且不接收新用户，自托管/本地路线仍有说明；仅保留来源参考，未提供管理适配。"
       },
       "oh-my-pi": {
         "name": "Oh-My-Pi",
@@ -510,7 +726,7 @@
           "method": "manual"
         },
         "auth_type": "api_key",
-        "status": "v0.3_pending"
+        "status": "not_integrated"
       }
     }
   }

@@ -1,5 +1,7 @@
 # 注册表来源核验
 
+**2026-11-08 更新优先：** [最新目录复核](MAINSTREAM-CATALOG.zh-CN.md) 替代下文历史 Claude npm 安装与 Gemini 认证/受众说明。Claude 改手动安装指引，两者凭据文件登录提示已移除。当前测试快照为 `catalog-verification-2026-11-08.json`（16 条核心目录）。保留旧日期记录用于溯源，不作为当前安装建议。
+
 [English](REGISTRY-SOURCES.md) | 简体中文
 
 最近一次定向复核：**2026-11-06**。本次覆盖 Gemini CLI 和 Claude Code 的 Node 要求与登录说明、Pi 的运行时和配置布局，Roo Code、Crush、Oh-My-Pi 的来源条目，OpenCode V1/V2 的安装与配置边界，以及 Qwen Code 手动目录和被动发现的边界。Hermes 的结论仍标注为 **2026-11-02** 核验，不代表本次重新核验。以下不是对全部目录字段或 Agent 的认证。
@@ -31,7 +33,7 @@
 
 这是特定时点的上游源码复核，不是本机已安装版本。复核的发布版为 **v0.26.9**；本次无法独立读取 npm 注册服务，因此没有验证 npm dist-tag、tarball 完整性或 npm 发布状态。源码生成的发布清单将 `@qwen-code/qwen-code` 映射到命令 `qwen`，发布包的 bin 为 `cli-entry.js`；仓库中的 `scripts/cli-entry.js` 或工作区入口路径不能代替发布包 bin 路径。
 
-官方 npm 替代途径为 `npm install -g @qwen-code/qwen-code@latest`，要求 **Node.js >=22.0.0**。目录中的 `node >= 22` 仅记录这条 npm 途径的前提，不表示独立安装必须另装 Node 运行时。上游目前推荐独立的 shell/PowerShell 安装器。npm 命令与独立安装器都仅是**用户自行执行的说明**：AgentDeck 保持 `install.method: manual`、`install.command: null`、`uninstall_cmd: null`，不会把 Qwen 加入现有五个固定 npm 安装适配器。`@latest` 会变化，不是固定版本。本次未运行安装器或依赖生命周期脚本。
+官方 npm 替代途径为 `npm install -g @qwen-code/qwen-code@latest`，要求 **Node.js >=22.0.0**。目录中的 `node >= 22` 仅记录这条 npm 途径的前提，不表示独立安装必须另装 Node 运行时。上游目前推荐独立的 shell/PowerShell 安装器。npm 命令与独立安装器都仅是**用户自行执行的说明**：AgentDeck 保持 `install.method: manual`、`install.command: null`、`uninstall_cmd: null`，不会把 Qwen 加入现有六个固定 npm 安装适配器。`@latest` 会变化，不是固定版本。本次未运行安装器或依赖生命周期脚本。
 
 上游支持原生 Windows，不仅是 WSL。shell 文档描述了 `cmd.exe /c`，以及 Windows build `<=19041` 时的 PTY 回退；这不是一份覆盖全部平台的最低操作系统要求表。本次未核实 macOS/Linux 的精确最低版本。这些上游平台说明不证明 AgentDeck 的 Windows GUI 或真实 Agent 往返流程已通过。
 
@@ -125,3 +127,15 @@ python scripts/run-isolated.py cargo test --locked -p aisync-core --test catalog
 ```
 
 这些测试只能发现目录回归，不会重新抓取上游资料，也不能证明真实安装、登录或配置往返成功。
+
+## 2026-11-08 catalog expansion
+
+[主流产品官方指引](MAINSTREAM-CATALOG.zh-CN.md)
+
+- https://github.com/anthropics/claude-code
+- https://github.com/google-gemini/gemini-cli
+
+- https://github.com/Aider-AI/aider
+- https://github.com/Kilo-Org/kilocode
+- https://github.com/continuedev/continue
+- https://github.com/plandex-ai/plandex

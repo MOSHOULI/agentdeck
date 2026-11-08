@@ -1,5 +1,7 @@
 # Registry source verification
 
+**2026-11-08 superseding review:** [Current catalog review](MAINSTREAM-CATALOG.md) supersedes the historical Claude npm-install and Gemini authentication/audience statements below. Claude now uses manual setup guidance; both credentials-file login hints are removed. The active fixture is `catalog-verification-2026-11-08.json` (16 core entries). Older dated findings remain provenance, not current installation advice.
+
 English | [简体中文](REGISTRY-SOURCES.zh-CN.md)
 
 Last focused review: **2026-11-06**. This review covers the Node requirements and authentication guidance for Gemini CLI and Claude Code, Pi's runtime/configuration layout, the source-only entries for Roo Code, Crush, and Oh-My-Pi, the OpenCode V1/V2 installation/configuration boundary, and the Qwen Code manual catalog/passive-discovery boundary. The Hermes findings below retain their **2026-11-02** verification date. This is not certification of every catalog field or agent.
@@ -126,3 +128,15 @@ python scripts/run-isolated.py cargo test --locked -p aisync-core --test catalog
 ```
 
 These tests detect catalog regressions. They do not re-fetch upstream sources or demonstrate a real installation, login, or configuration round trip.
+
+## 2026-11-08 catalog expansion
+
+[Mainstream product guidance](MAINSTREAM-CATALOG.md)
+
+- https://github.com/anthropics/claude-code
+- https://github.com/google-gemini/gemini-cli
+
+- https://github.com/Aider-AI/aider
+- https://github.com/Kilo-Org/kilocode
+- https://github.com/continuedev/continue
+- https://github.com/plandex-ai/plandex
