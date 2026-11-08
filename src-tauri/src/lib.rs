@@ -13,6 +13,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::health_check,
             commands::dsh::inspect_dsh_profile,
+            commands::qwen::inspect_qwen_settings,
             commands::deploy::get_agents,
             commands::deploy::install_agent,
             commands::deploy::configure_agent,

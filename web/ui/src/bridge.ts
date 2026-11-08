@@ -1,3 +1,5 @@
+import { qwenDemoSummary, validateQwenReport } from './qwenContract';
+import type { QwenSummary } from './qwenContract';
 /**
  * Tauri 命令调用桥接层。
  * 前端所有与 Rust 后端的通信都走这里，不从组件直接 invoke()。
@@ -8,6 +10,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { dshDemoReport, dshLimits, validateDshReport } from './dshContract';
 import type { DshInspectionResult } from './dshContract';
 export type { DshInventoryReport, DshInspectionResult } from './dshContract';
+
+export async function inspectQwenSettings(settingsPath: string, runtimeManifest: string): Promise<{ summary: QwenSummary; synthetic: boolean }> {
+  const demo = useDemo();
+  for (const path of [settingsPath, runtimeManifest]) {
+    if (typeof path !== 'string' || !path.trim() || new TextEncoder().encode(path).length > 4096 || /[\x00-\x1f\x7f]/.test(path)) throw new Error('请选择有效且长度受限的明确路径。');
+  }
+  if (demo) return { summary: qwenDemoSummary(), synthetic: true };
+  const summary = validateQwenReport(await invoke<unknown>('inspect_qwen_settings', { settingsPath, runtimeManifest }));
+  return { summary, synthetic: false };
+}
 
 /** Independent of deployment: no registry read, discovery, or lifecycle command. */
 export async function inspectDshProfile(profileDir: string, runtimeManifest: string | null): Promise<DshInspectionResult> {
