@@ -1,6 +1,6 @@
 # 注册表来源核验
 
-**2026-11-08 更新优先：** [最新目录复核](MAINSTREAM-CATALOG.zh-CN.md) 替代下文历史 Claude npm 安装与 Gemini 认证/受众说明。Claude 改手动安装指引，两者凭据文件登录提示已移除。当前测试快照为 `catalog-verification-2026-11-08.json`（16 条核心目录）。保留旧日期记录用于溯源，不作为当前安装建议。
+**2026-11-08 更新优先：** [最新目录复核](MAINSTREAM-CATALOG.zh-CN.md) 替代下文历史 Claude npm 安装与 Gemini 认证/受众说明。Claude 改手动安装指引，两者凭据文件登录提示已移除。当前测试快照为 `catalog-verification-2026-11-08.json`（17 条核心目录）。保留旧日期记录用于溯源，不作为当前安装建议。
 
 [English](REGISTRY-SOURCES.md) | 简体中文
 
@@ -139,3 +139,12 @@ python scripts/run-isolated.py cargo test --locked -p aisync-core --test catalog
 - https://github.com/Kilo-Org/kilocode
 - https://github.com/continuedev/continue
 - https://github.com/plandex-ai/plandex
+
+
+### DSH 目录集成（2026-11-08）
+
+DSH 目录卡片直达已有显式被动盘点，不增加 PATH 探针、安装、配置或插件管理。
+固定来源：[桌面运行时归属](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/desktop/README.md)、
+[manifest 类型](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/util/package-manifest/src/types.ts)、
+[profile 初始化](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/boot/app-boot/src/profile.ts)。
+精确 rc.1 声明识别不代表 npm 发布物或真实运行时验证。

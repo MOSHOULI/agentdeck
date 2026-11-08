@@ -178,7 +178,7 @@ export default function App() {
               tabIndex={0}
               className="app-workspace"
             >
-              <Workspace />
+              {id === 'agents' ? <AgentSquare onOpenDshInventory={() => { setWorkspace('dsh'); navRefs.current[workspaces.findIndex((item) => item.id === 'dsh')]?.focus(); }} /> : <Workspace />}
             </section>
           ))}
         </main>

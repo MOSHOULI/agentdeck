@@ -1,6 +1,6 @@
 # Registry source verification
 
-**2026-11-08 superseding review:** [Current catalog review](MAINSTREAM-CATALOG.md) supersedes the historical Claude npm-install and Gemini authentication/audience statements below. Claude now uses manual setup guidance; both credentials-file login hints are removed. The active fixture is `catalog-verification-2026-11-08.json` (16 core entries). Older dated findings remain provenance, not current installation advice.
+**2026-11-08 superseding review:** [Current catalog review](MAINSTREAM-CATALOG.md) supersedes the historical Claude npm-install and Gemini authentication/audience statements below. Claude now uses manual setup guidance; both credentials-file login hints are removed. The active fixture is `catalog-verification-2026-11-08.json` (17 core entries). Older dated findings remain provenance, not current installation advice.
 
 English | [简体中文](REGISTRY-SOURCES.zh-CN.md)
 
@@ -140,3 +140,12 @@ These tests detect catalog regressions. They do not re-fetch upstream sources or
 - https://github.com/Kilo-Org/kilocode
 - https://github.com/continuedev/continue
 - https://github.com/plandex-ai/plandex
+
+
+### DSH catalog integration (2026-11-08)
+
+DSH now links to its existing explicit passive inventory. No PATH probe, install,
+configuration or plugin action is enabled. Reviewed source: [desktop ownership](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/apps/desktop/README.md),
+[manifest types](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/util/package-manifest/src/types.ts),
+[profile initialization](https://github.com/deepseek-ai/deepseek-harness/blob/fcc0ad462172522aaf5c93a7b2e01f6b9f0b0159/packages/boot/app-boot/src/profile.ts).
+Exact rc.1 manifest recognition is not npm publication or runtime verification.
