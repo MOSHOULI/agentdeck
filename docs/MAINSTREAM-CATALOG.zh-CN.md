@@ -2,7 +2,7 @@
 
 [English](MAINSTREAM-CATALOG.md)
 
-内置目录新增四个产品家族的六个**手动指引条目**：Cursor Desktop、Cursor Agent CLI、GitHub Copilot CLI、Kimi Code CLI、Kimi Code Desktop 与 Qoder CLI。目录合计 16 条，不等于 16 款已经端到端接入的应用。CLI 与桌面是独立安装形态，不能从一个的状态推断另一个。
+内置目录新增四个产品家族的六个**手动指引条目**：Cursor Desktop、Cursor Agent CLI、GitHub Copilot CLI、Kimi Code CLI、Kimi Code Desktop 与 Qoder CLI。目录合计 17 条，不等于 17 款已经端到端接入的应用。CLI 与桌面是独立安装形态，不能从一个的状态推断另一个。
 
 六项的安装、验证、卸载命令与认证检查均为空；技能、MCP/配置写入、记忆导出与采集全部关闭。不扫描 PATH，不执行 Agent、npm、安装器、迁移或登录。安装、版本、来源与认证保持未知。界面可在“仅手动安装”和“待确认状态”中找到，不能进入“已安装”或“当前可自动安装”。本次只更新内置目录，不覆盖用户保留的自定义运行时注册表，也不发布新的注册表更新源。
 
@@ -66,6 +66,6 @@ Claude 保留既有只读安装检查及配置适配器，未新增验证原生�
 
 ## DSH 沿用现有独立盘点工作区
 
-DSH 已有单独的[桌面/CLI 被动声明盘点](DSH-PASSIVE-INVENTORY.zh-CN.md)，不属于通用部署目录。它读取明确选择的 profile/runtime 声明文件，不启动 DSH。保存的依赖与 bundle 选择不代表已验证安装、认证或实际启用插件。继续关闭安装、更新、激活与配置，不另造一个看似可管理的目录适配器。
+DSH 已有单独的[桌面/CLI 被动声明盘点](DSH-PASSIVE-INVENTORY.zh-CN.md)，现已纳入主目录并可从卡片直达该工作区。它读取明确选择的 profile/runtime 声明文件，不启动 DSH。保存的依赖与 bundle 选择不代表已验证安装、认证或实际启用插件。继续关闭安装、更新、激活与配置，目录卡片不表示新增自动管理能力。
 
 参考条目保留原 ID：Continue 为 `unmaintained`，Plandex 为 `cloud_winding_down`，Roo Code 为 `archived`，其余为 `not_integrated`。这些状态不承诺交付版本。Kilo 与 Aider 指向当前组织。

@@ -55,9 +55,9 @@ it('omits the demo banner for a native runtime', async () => {
   expect(screen.queryByText(/未连接桌面后端 · 请在/)).not.toBeInTheDocument();
 });
 
-it('keeps all six workspace trees mounted and retains local search state', async () => {
+it('keeps all seven workspace trees mounted and retains local search state', async () => {
   const view = await renderReadyApp(true);
-  expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(6);
+  expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(7);
   const agents = screen.getByRole('tabpanel', { name: /^Agent 管理/ });
   const search = within(agents).getByRole('searchbox', { name: '搜索 Agent' });
   fireEvent.change(search, { target: { value: 'OpenCode' } });
@@ -138,8 +138,9 @@ it('retains a DSH inspection and its input across navigation without scanning ag
   const pending = new Promise<bridge.DshInspectionResult>((resolve) => { finish = resolve; });
   const inspect = vi.spyOn(bridge, 'inspectDshProfile').mockReturnValue(pending);
   await renderReadyApp(true);
+  act(() => useAgentStore.setState({ agents: [{ ...notDetectedAgent, id: 'dsh', name: 'DeepSeek Harness (DSH)', canInstall: false, canConfigure: false, canVerifyInstall: false, installationStatus: 'unsupported' }] }));
   expect(inspect).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('tab', { name: /^DSH 声明盘点/ }));
+  fireEvent.click(screen.getByRole('button', { name: '打开 DSH 声明盘点' }));
   const dsh = screen.getByRole('tabpanel', { name: /^DSH 声明盘点/ });
   const input = within(dsh).getByLabelText('Profile 目录（绝对路径）');
   fireEvent.change(input, { target: { value: '/synthetic/explicit-selection' } });
@@ -147,7 +148,7 @@ it('retains a DSH inspection and its input across navigation without scanning ag
   expect(inspect).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole('tab', { name: /^Agent 管理/ }));
   expect(screen.getByText(/进行中：.*DSH 声明盘点/)).toBeVisible();
-  fireEvent.click(screen.getByRole('tab', { name: /^DSH 声明盘点/ }));
+  fireEvent.click(screen.getByRole('button', { name: '打开 DSH 声明盘点' }));
   expect(within(dsh).getByLabelText('Profile 目录（绝对路径）')).toBe(input);
   expect(input).toHaveValue('/synthetic/explicit-selection');
   expect(within(dsh).getByRole('button', { name: '盘点中…' })).toBeDisabled();
@@ -231,4 +232,20 @@ it('ignores invalid stored themes and keeps controls working if storage is block
   expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
   fireEvent.click(screen.getByRole('button', { name: '收起侧栏' }));
   expect(view.container.querySelector('.app')).toHaveClass('app-sidebar-collapsed');
+});
+
+it('opens DSH inventory from its catalog card without inspecting or mutating, and preserves selections', async () => {
+  const inspect = vi.spyOn(bridge, 'inspectDshProfile');
+  await renderReadyApp();
+  act(() => useAgentStore.setState({ agents: [{ ...notDetectedAgent, id: 'dsh', name: 'DeepSeek Harness (DSH)', canInstall: false, canConfigure: false, canVerifyInstall: false, installationStatus: 'unsupported' }] }));
+  fireEvent.click(screen.getByRole('button', { name: '打开 DSH 声明盘点' }));
+  expect(screen.getByRole('tab', { name: /^DSH 声明盘点/ })).toHaveFocus();
+  expect(screen.getByRole('tabpanel', { name: /^DSH 声明盘点/ })).toBeVisible();
+  expect(inspect).not.toHaveBeenCalled();
+  const input = screen.getByRole('textbox', { name: 'Profile 目录（绝对路径）' });
+  fireEvent.change(input, { target: { value: '/explicit/selected-profile' } });
+  fireEvent.click(screen.getByRole('tab', { name: /^Agent 管理/ }));
+  fireEvent.click(screen.getByRole('button', { name: '打开 DSH 声明盘点' }));
+  expect(input).toHaveValue('/explicit/selected-profile');
+  expect(inspect).not.toHaveBeenCalled();
 });

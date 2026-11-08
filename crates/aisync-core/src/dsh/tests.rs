@@ -171,6 +171,26 @@ fn unknown_or_missing_runtime_version_never_enables_mutations() {
         ),
         ("@deepseek-ai/dsh", None, VersionRecognition::Unknown),
         (
+            "@deepseek-ai/dsh",
+            Some("0.2.2-rc.1"),
+            VersionRecognition::ReviewedManifestVersion,
+        ),
+        (
+            "@deepseek-ai/dsh-app-boot",
+            Some("0.2.2-rc.1"),
+            VersionRecognition::ReviewedManifestVersion,
+        ),
+        (
+            "unrelated",
+            Some("0.2.2-rc.1"),
+            VersionRecognition::UnrecognizedManifestVersion,
+        ),
+        (
+            "@deepseek-ai/dsh",
+            Some("0.2.2-rc.2"),
+            VersionRecognition::UnrecognizedManifestVersion,
+        ),
+        (
             "@deepseek-ai/dsh-app-boot",
             Some("0.2.2-alpha.3"),
             VersionRecognition::ReviewedManifestVersion,

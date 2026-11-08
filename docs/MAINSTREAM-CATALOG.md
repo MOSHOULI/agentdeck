@@ -2,7 +2,7 @@
 
 [简体中文](MAINSTREAM-CATALOG.zh-CN.md)
 
-The bundled catalog adds six **manual-guidance surfaces** from four product families: Cursor Desktop, Cursor Agent CLI, GitHub Copilot CLI, Kimi Code CLI, Kimi Code Desktop and Qoder CLI. The total is 16 catalog entries, not 16 end-to-end integrations. CLI and desktop installations are separate; finding one would not establish the other.
+The bundled catalog adds six **manual-guidance surfaces** from four product families: Cursor Desktop, Cursor Agent CLI, GitHub Copilot CLI, Kimi Code CLI, Kimi Code Desktop and Qoder CLI. The total is 17 catalog entries, not 17 end-to-end integrations. CLI and desktop installations are separate; finding one would not establish the other.
 
 All six entries have null install/verify/uninstall commands and authentication checks. Skills, MCP/configuration writes, memory export and memory collectors are disabled. They neither scan PATH nor execute an agent, npm, installer, migration or login. Their installation, version, source and authentication remain unknown. The UI includes them under manual installation and uncertain status, never the installed or automatic-install lists. This changes bundled metadata only; it does not overwrite a preserved custom runtime registry or publish a new registry feed.
 
@@ -66,6 +66,6 @@ These are upstream release/source observations on 2026-11-08, not installed-vers
 
 ## DSH belongs to its existing inventory workspace
 
-DSH already has a separate [desktop/CLI passive declaration inventory](DSH-PASSIVE-INVENTORY.md), not a generic deployment-catalog entry. It reads explicitly selected profile/runtime manifests without starting DSH. Saved dependencies and selected bundles are declarations, not verified installation, authentication or active-plugin state. Keep installation, updates, activation and configuration disabled; do not duplicate it as an apparently managed catalog adapter.
+DSH already has a separate [desktop/CLI passive declaration inventory](DSH-PASSIVE-INVENTORY.md); its catalog card now links directly to that workspace. It reads explicitly selected profile/runtime manifests without starting DSH. Saved dependencies and selected bundles are declarations, not verified installation, authentication or active-plugin state. Keep installation, updates, activation and configuration disabled; the catalog card is not an automatic management adapter.
 
 Reference-only entries keep their IDs: Continue is `unmaintained`, Plandex is `cloud_winding_down`, Roo Code is `archived`, and the others are `not_integrated`. These statuses do not promise a release version. Kilo and Aider point to their current organizations.

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { AgentSquare } from './pages/AgentSquare';
+import { QwenSettings } from './pages/QwenSettings';
 import { DshInventory } from './pages/DshInventory';
 import { MemoryPanel } from './components/MemoryPanel';
 import { McpPanel } from './components/McpPanel';
@@ -20,6 +21,7 @@ const workspaces: { id: WorkspaceId; label: string; component: typeof AgentSquar
   { id: 'memory', label: '记忆管理', component: MemoryPanel },
   { id: 'mcp', label: 'MCP 服务', component: McpPanel },
   { id: 'vault', label: '密钥与备份', component: VaultPanel },
+  { id: 'qwen', label: 'Qwen 配置检查', component: QwenSettings },
   { id: 'dsh', label: 'DSH 声明盘点', component: DshInventory },
   { id: 'updates', label: '注册表更新', component: UpdatePanel },
 ];
@@ -116,7 +118,7 @@ export default function App() {
               onClick={() => setWorkspace(item.id)}
               onKeyDown={(event) => navigateWithKeyboard(event, index)}
             >
-              <Icon name={item.id === 'dsh' ? 'search' : item.id} size={19} />
+              <Icon name={(item.id === 'dsh' || item.id === 'qwen') ? 'search' : item.id} size={19} />
               <span className="app-nav-label">{item.label}</span>
               {busy[item.id] && <span className="app-nav-activity" aria-hidden="true"><Icon name="refresh" size={13} className="activity-spinner" /></span>}
             </button>
@@ -178,7 +180,7 @@ export default function App() {
               tabIndex={0}
               className="app-workspace"
             >
-              <Workspace />
+              {id === 'agents' ? <AgentSquare onOpenDshInventory={() => { setWorkspace('dsh'); navRefs.current[workspaces.findIndex((item) => item.id === 'dsh')]?.focus(); }} /> : <Workspace />}
             </section>
           ))}
         </main>

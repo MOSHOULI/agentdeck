@@ -34,3 +34,13 @@ All sources pinned to Qwen commit `6c3d5355de2be05b8d1ab61f4699f52c02c42068`, re
 - [Settings loading and migrations](https://github.com/QwenLM/qwen-code/blob/6c3d5355de2be05b8d1ab61f4699f52c02c42068/packages/cli/src/config/settings.ts)
 - [Settings schema](https://github.com/QwenLM/qwen-code/blob/6c3d5355de2be05b8d1ab61f4699f52c02c42068/packages/cli/src/config/settingsSchema.ts)
 - [Settings layers](https://github.com/QwenLM/qwen-code/blob/6c3d5355de2be05b8d1ab61f4699f52c02c42068/docs/users/configuration/settings.md)
+
+## Desktop workspace / 桌面工作区
+
+The **Qwen 配置检查** workspace exposes the same narrow inspector without a shell. Enter explicit absolute `settings.json` and runtime `package.json` paths, then inspect. Both paths are required. Editing or clearing either selection invalidates pending results; repeated submissions cannot start another concurrent read. Clear discards results, not an already-running filesystem read. Paths are held only in component memory, including while switching workspaces, and are cleared on unmount or by the clear button. No path is persisted to storage.
+
+Only fixed section labels/statuses reach the view. Raw backend errors, configuration values, arbitrary keys and backend-provided explanatory text are not displayed. Browser-only use is unavailable unless `?demo=1` is explicitly selected; that mode returns labeled synthetic data and never invokes the native reader. This workspace does not add editing, backup or recovery. The application outside this operation may still maintain its own data.
+
+桌面左侧的 **Qwen 配置检查** 使用同一只读检查器，无需终端。填写明确的 settings.json 和运行时 package.json 绝对路径后点击检查；两项均必填。修改或清除路径会作废尚未完成的结果；重复提交不会并发读取。清除不取消已发起的文件读取，只丢弃其结果。路径仅保存在组件内存中（切换工作区时仍保留），清除按钮或组件卸载后移除，不写入持久存储。
+
+界面只显示固定分区标签和状态，不显示后端原始错误、配置值、动态键或任意说明文本。普通浏览器无法读取文件；显式 `?demo=1` 仅返回标注清楚的合成数据。此工作区未增加编辑、备份或恢复功能；应用的其他操作仍可能维护自身数据。
