@@ -119,3 +119,7 @@ Installer releases and signed registry updates are separate. Registry checks cur
 On upgrade, the application switches to its newer bundled registries only if both local registry files exactly match the SHA256 fingerprints of the official signed v1.0.0 assets and the version marker is v1.0.0 or absent. The original files and version marker are left unchanged. Modified, unknown-source, or newer local registries are retained and remain in use. The core package version also sets the bundled registry floor, now 1.2.0; this does not mean a signed registry with that version has been published. An online update must be newer than both the effective current version and the 1.2.0 floor. Older or equal-version updates cannot overwrite the bundled fixes. The signing public key and external update feed are unchanged.
 
 Publisher registry signing uses the existing protected private key. That key is not included in this repository and is not needed to build an installer. **Without the private key, a new trusted registry update cannot be published.** Do not generate a new key and present it as part of the existing trust chain. See the [bilingual release notes](docs/RELEASE-1.2.0.md) for the detailed validation scope.
+
+### Qwen settings inspection
+
+Explicit, version-gated read-only CLI inspection is documented in [Qwen configuration inspection](docs/QWEN-CONFIG-INSPECTION.md). It is not configuration switching or restoration.
