@@ -3,6 +3,7 @@ import { installationEvidenceProblem, runtimeMode, type AgentInfo, type Installa
 import { Icon } from './Icon';
 
 interface AgentCardProps {
+  onOpenDshInventory?: () => void;
   agent: AgentInfo;
   onInstall: (id: string) => void | Promise<void>;
   onUninstall: (id: string) => void | Promise<void>;
@@ -109,6 +110,7 @@ function SourceFacts({ source }: { source: InstallationSource }) {
 /** A compact row with separate native controls for selection, details and actions. */
 export const AgentCard: React.FC<AgentCardProps> = ({
   agent,
+  onOpenDshInventory,
   onInstall,
   onConfigure,
   onSelect,
@@ -222,6 +224,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         </div>
 
         <div className="agent-row-actions">
+          {agent.id === 'dsh' && onOpenDshInventory && <button type="button" className="button" onClick={onOpenDshInventory}>打开 DSH 声明盘点</button>}
           <button
             type="button"
             className="button agent-detail-button"

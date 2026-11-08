@@ -9,7 +9,7 @@
 **下一开发版本说明：** 当前分支新增 Qwen Code 手动安装指引与被动 PATH 候选观察，尚未随正式安装包发布。找到候选也不代表安装或登录已验证；Qwen Code 的自动安装、版本/来源验证及配置写入均未开放。详见[注册表来源核验](docs/REGISTRY-SOURCES.zh-CN.md#qwen-code手动安装与仅被动-path-发现)。
 
 
-新增 Cursor、GitHub Copilot CLI、Kimi Code 与 Qoder CLI 的六个[官方手动指引条目](docs/MAINSTREAM-CATALOG.zh-CN.md)，CLI 和桌面分别列出。目录共 16 条，不代表 16 款可自动管理；新条目不执行探针、不读写配置，尚未随正式安装包发布。
+新增 Cursor、GitHub Copilot CLI、Kimi Code 与 Qoder CLI 的六个[官方手动指引条目](docs/MAINSTREAM-CATALOG.zh-CN.md)，CLI 和桌面分别列出。目录共 17 条，不代表 17 款可自动管理；新条目不执行探针、不读写配置，尚未随正式安装包发布。
 
 在一个桌面界面中管理本机 AI Agent：发现与安装、配置、可选择的对话记忆导出、加密密钥、MCP 和配置备份。
 
@@ -89,7 +89,7 @@ cargo run --locked -p aisync-cli -- restore <timestamp> --full --yes
 
 安装、配置、同步、恢复需要 `--yes`；安装不会隐式写配置，只执行通过目标核验的固定 npm 计划。`deploy --action verify` 输出实例与来源观察。配置及个性化同步在准备 profile 或备份前检查安装资格，并在写入前复查；CLI `sync` 先检查全部个性化目标，任一不合格都不会开始备份或写入。仅记忆导出不要求安装。自动卸载与 Agent 软件升级仍未开放，`--yes` 不会解除限制。受保护密钥/备份相关命令仅 Windows 可用，纯软件安装不依赖该备份流程。
 
-`dsh inspect` 与桌面 DSH 工作区使用相同的被动读取器；它仅返回 JSON，不进入上述部署流程。它只读取明确选择的 profile 的 `package.json`，可通过 `--runtime-manifest` 另外选择一个 runtime 包的 `package.json`。不扫描 HOME，不调用 DSH/npm/pnpm，不读取凭据、`cordis.yml` 或插件代码。包依赖和 bundle selection 仅是保存的声明，版本仅是 manifest 报告值，不代表软件已安装、插件正在运行或已经认证。退出码 0 只表示成功产生报告；缺失、不支持或未知状态需检查 JSON。解析约定仅依据 `0.2.2-alpha.3` 快照审查；2026-11-06 固定核验的上游默认分支已声明 `0.2.2-rc.1`，不表示本分支新支持 rc.1。所有版本的管理写操作均未开放。详见 [DSH 被动盘点边界](docs/DSH-PASSIVE-INVENTORY.zh-CN.md)。
+`dsh inspect` 与桌面 DSH 工作区使用相同的被动读取器；它仅返回 JSON，不进入上述部署流程。它只读取明确选择的 profile 的 `package.json`，可通过 `--runtime-manifest` 另外选择一个 runtime 包的 `package.json`。不扫描 HOME，不调用 DSH/npm/pnpm，不读取凭据、`cordis.yml` 或插件代码。包依赖和 bundle selection 仅是保存的声明，版本仅是 manifest 报告值，不代表软件已安装、插件正在运行或已经认证。退出码 0 只表示成功产生报告；缺失、不支持或未知状态需检查 JSON。解析约定依据固定 `0.2.2-alpha.3` 与 `0.2.2-rc.1` 快照审查；精确包名/版本识别不代表真实运行时兼容或 npm 发布验证。所有版本的管理写操作均未开放。详见 [DSH 被动盘点边界](docs/DSH-PASSIVE-INVENTORY.zh-CN.md)。
 
 CLI 支持[只读同步计划](docs/SYNC-DRY-RUN.zh-CN.md)：`sync --tools codex,claude-code --dry-run` 输出目标与动作元数据，不执行探测、不初始化或修改文件；不是完整 diff，也不代表安装资格或应用已验证。
 
