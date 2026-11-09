@@ -333,6 +333,33 @@ class Tests(unittest.TestCase):
         self.assertEqual(driver.command.call_args.args,('DELETE','/actions'))
         self.assertEqual(driver.last_response,{'operation':'actions','status':400})
 
+    def test_wheel_diagnostic_records_fractional_stall_without_retry(self):
+        driver=subject.Driver();driver.one=Mock(return_value='main')
+        def wait(predicate,seconds=20):
+            for _ in range(3):
+                if predicate():return
+            raise subject.Failure('ui_wait_expired')
+        driver.wait=wait
+        driver.command=Mock(side_effect=[600.5,None,0.5,None,0.5,0.5,0.5,None])
+        with self.assertRaisesRegex(subject.Failure,'ui_wait_expired'):driver.wheel_scroll_workspace_top()
+        self.assertEqual(driver.wheel_diagnostic,{'initial':600.5,'steps':[
+            {'index':1,'before':600.5,'last':0.5,'polls':1,'posted':True,'progressed':True},
+            {'index':2,'before':0.5,'last':0.5,'polls':3,'posted':True,'progressed':False}]})
+        self.assertEqual(sum(call.args[0]=='POST' for call in driver.command.call_args_list),2)
+        self.assertEqual(driver.command.call_args.args,('DELETE','/actions'))
+
+    def test_scroll_facts_are_bounded_read_only_numbers(self):
+        driver=Mock();driver.one.return_value='element';driver.command.side_effect=[0.5,1500,600]*5
+        facts=subject.capture_scroll_facts(driver)
+        self.assertEqual(len(facts),5)
+        self.assertTrue(all(value=={'scrollTop':0.5,'scrollHeight':1500,'clientHeight':600} for value in facts.values()))
+        self.assertTrue(all(call.args[0]=='GET' for call in driver.command.call_args_list))
+        for value in ['SECRET',True,None,-1,1000001,float('nan'),float('inf')]:
+            driver.command=Mock(return_value=value)
+            facts=subject.capture_scroll_facts(driver)
+            self.assertTrue(all(item['state']=='unavailable' for item in facts.values()))
+            self.assertNotIn('SECRET',json.dumps(facts))
+
     def test_actions_endpoint_is_exact_and_session_bound(self):
         driver=subject.Driver();driver.session='known';driver.connection=Mock()
         for method,path in [('GET','/session/known/actions'),('POST','/session/other/actions'),

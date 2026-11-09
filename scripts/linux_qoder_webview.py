@@ -35,6 +35,7 @@ class Driver:
         self.expected_input = None
         self.input_stage = None
         self.last_response = None
+        self.wheel_diagnostic = None
 
     def close(self):
         self.connection.close()
@@ -107,7 +108,9 @@ class Driver:
             if type(value) not in (int, float) or not 0 <= value <= 1_000_000:
                 raise Failure('workspace_scroll_invalid')
             return value
+        self.wheel_diagnostic = {'initial': None, 'steps': []}
         current = position()
+        self.wheel_diagnostic['initial'] = current
         if current == 0:
             return
         action = {'actions': [{'type': 'wheel', 'id': 'workspace-wheel', 'actions': [{
@@ -116,15 +119,22 @@ class Driver:
         try:
             for _ in range(12):
                 previous = current
+                step = {'index': len(self.wheel_diagnostic['steps']) + 1, 'before': previous,
+                        'last': previous, 'polls': 0, 'posted': False, 'progressed': False}
+                self.wheel_diagnostic['steps'].append(step)
                 # Element-center origin, not a guessed viewport coordinate. Each
                 # successful step must make observed progress before another.
                 self.command('POST', '/actions', action)
+                step['posted'] = True
                 def progressed():
                     nonlocal current
                     current = position()
+                    step['last'] = current
+                    step['polls'] = min(step['polls'] + 1, 1000)
                     if current > previous: raise Failure('workspace_scroll_invalid')
                     return current < previous
                 self.wait(progressed, seconds=3)
+                step['progressed'] = True
                 if current == 0:
                     break
             else:
@@ -489,6 +499,28 @@ def capture_clear_geometry(driver):
     return report
 
 
+def capture_scroll_facts(driver):
+    # Fixed known elements/properties only, no IDs, source text or DOM dumps.
+    report = {}
+    for name, xpath in [('workspace', "//main[@id='workspace-content']"), ('body', '//body'),
+                        ('write_source', "//*[@id='qoder-write-source']"),
+                        ('write_destination', "//*[@id='qoder-write-destination']"),
+                        ('cache_input', "//*[@id='qoder-cache']")]:
+        try:
+            element = driver.one(xpath)
+            if not isinstance(element, str): raise Failure('harness_failure')
+            facts = {}
+            for prop in ('scrollTop', 'scrollHeight', 'clientHeight'):
+                value = driver.command('GET', '/element/' + element + '/property/' + prop)
+                if type(value) not in (int, float) or not 0 <= value <= 1_000_000:
+                    raise Failure('workspace_scroll_invalid')
+                facts[prop] = value
+            report[name] = facts
+        except Exception as error:
+            report[name] = {'state': 'unavailable', 'code': failure_code(error)}
+    return report
+
+
 def capture_failure_dom(driver, evidence):
     # Read-only standard WebDriver endpoints, never executeScript. Inspect the
     # full bounded response for the canary BEFORE truncating retained evidence.
@@ -496,6 +528,7 @@ def capture_failure_dom(driver, evidence):
     if not driver.session:
         report['session'] = 'unavailable'
     else:
+        report['scroll_facts'] = capture_scroll_facts(driver)
         report['clear_geometry'] = capture_clear_geometry(driver)
         # Retain only agreement/length/boolean facts, never an untrusted input value.
         try:
@@ -594,6 +627,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         diagnostic['exception_class'] = exception_class(error)
         diagnostic['input_stage'] = client.input_stage
         diagnostic['last_response'] = client.last_response
+        diagnostic['wheel_scroll'] = client.wheel_diagnostic
         capture_failure_dom(client, evidence)
         raise
     finally:
