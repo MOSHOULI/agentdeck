@@ -7,6 +7,10 @@ aisync dsh distribution-plan
 aisync dsh verify-package --archive /absolute/dsh-0.2.2-rc.1.tgz
 ```
 
+For the fixed offline root dependency declarations and illustrative exact metadata
+snapshots, see [`aisync dsh dependency-evidence`](DSH-DEPENDENCY-EVIDENCE.md).
+That report does not resolve dependencies or make this archive installable.
+
 This **offline root-archive-only** capability pins `@deepseek-ai/dsh` **0.2.2-rc.1**, a prerelease. npm `latest` and `next` pointed to it when reviewed on 2026-11-09; tags can move, and this is not a promise to follow latest. No caller-supplied version, URL, checksum or target override exists. The plan is not a download or installation command.
 
 - Official tarball: https://registry.npmjs.org/@deepseek-ai/dsh/-/dsh-0.2.2-rc.1.tgz
