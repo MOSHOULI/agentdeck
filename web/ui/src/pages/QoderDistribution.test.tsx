@@ -89,3 +89,74 @@ it.each(['demo', 'unavailable'] as const)('disables all radios in %s', mode => {
   vi.mocked(bridge.runtimeMode).mockReturnValue(mode); render(<QoderDistribution />);
   for (const radio of screen.getAllByRole('radio')) { expect(radio).toBeDisabled(); expect(radio).not.toBeChecked(); }
 });
+
+const cacheResult = { state: 'incomplete' as const, recoveryPlan: 'preserve_and_review' as const, deletionAuthorized: false as const, manualReviewRequired: true as const, installed: false as const };
+function fillCache() { fireEvent.change(screen.getByLabelText('Qoder 缓存绝对目录'), { target: { value: '/selected/cache' } }); }
+function inspectCache() { fireEvent.click(screen.getByRole('button', { name: '只读诊断 Qoder 缓存' })); }
+it('renders fixed preservation advice, no deletion action, and clears completed cache results', async () => {
+  vi.spyOn(bridge, 'inspectQoderCache').mockResolvedValue(cacheResult);
+  render(<QoderDistribution />); fillCache(); inspectCache();
+  expect(await screen.findByRole('region', { name: 'Qoder 缓存诊断结果' })).toHaveTextContent('本报告不授权删除');
+  expect(bridge.inspectQoderCache).toHaveBeenCalledExactlyOnceWith('/selected/cache');
+  fill(); expect(screen.queryByRole('region', { name: 'Qoder 缓存诊断结果' })).not.toBeInTheDocument();
+});
+it.each(['path', 'target', 'clear', 'cancel', 'unmount'])('discards pending cache observation after %s', async action => {
+  const work = defer<typeof cacheResult>(); vi.spyOn(bridge, 'inspectQoderCache').mockReturnValue(work.promise);
+  const view = render(<QoderDistribution />); fill(); fillCache(); inspectCache(); inspectCache();
+  expect(bridge.inspectQoderCache).toHaveBeenCalledTimes(1);
+  expect(useWorkspaceActivityStore.getState().busy.qoder).toBe(true);
+  expect(screen.getByRole('button', { name: '查看 Qoder 分发计划' })).toBeDisabled();
+  if (action === 'path') fireEvent.change(screen.getByLabelText('Qoder 缓存绝对目录'), { target: { value: '/changed' } });
+  if (action === 'target') fireEvent.click(screen.getByRole('radio', { name: 'windows-amd64-standard' }));
+  if (action === 'clear') fireEvent.click(screen.getByRole('button', { name: '清除 Qoder 选择与结果' }));
+  if (action === 'cancel') fireEvent.click(screen.getByRole('button', { name: '取消 Qoder 结果' }));
+  if (action === 'unmount') view.unmount();
+  await act(async () => { work.resolve(cacheResult); });
+  expect(screen.queryByRole('region', { name: 'Qoder 缓存诊断结果' })).not.toBeInTheDocument();
+  expect(useWorkspaceActivityStore.getState().busy.qoder).toBe(false);
+});
+it('reports unsupported hosts distinctly and never renders raw errors', async () => {
+  vi.spyOn(bridge, 'inspectQoderCache').mockRejectedValueOnce('QODER_CACHE_UNSUPPORTED_HOST').mockRejectedValueOnce('SECRET');
+  render(<QoderDistribution />); fillCache(); inspectCache();
+  expect(await screen.findByRole('alert')).toHaveTextContent('当前主机不支持');
+  inspectCache(); expect(await screen.findByRole('alert')).toHaveTextContent('没有获得完整性或清理授权');
+  expect(screen.getByRole('alert')).not.toHaveTextContent('SECRET');
+  expect(screen.queryByRole('region', { name: 'Qoder 缓存诊断结果' })).not.toBeInTheDocument();
+});
+it('coordinates cache action with other workspaces and with a pending package read', async () => {
+  vi.spyOn(bridge, 'inspectQoderCache').mockResolvedValue(cacheResult);
+  const owner = Symbol(); useWorkspaceActivityStore.getState().setActivity('qwen', owner, true);
+  const work = defer<typeof result>(); vi.mocked(bridge.verifyQoderPackage).mockReturnValue(work.promise);
+  render(<QoderDistribution />); fillCache(); inspectCache(); expect(bridge.inspectQoderCache).not.toHaveBeenCalled();
+  act(() => useWorkspaceActivityStore.getState().setActivity('qwen', owner, false));
+  fill(); verify(); expect(screen.getByRole('button', { name: '只读诊断 Qoder 缓存' })).toBeDisabled(); inspectCache();
+  expect(bridge.inspectQoderCache).not.toHaveBeenCalled();
+  await act(async () => { work.resolve(result); });
+  inspectCache(); await screen.findByRole('region', { name: 'Qoder 缓存诊断结果' });
+  expect(screen.queryByRole('region', { name: 'Qoder 归档校验结果' })).not.toBeInTheDocument();
+});
+it.each(['staged_archive_verified', 'unpacked_payload_verified', 'incomplete', 'conflict', 'unknown_ownership'] as const)('shows fixed safe cache state %s', async state => {
+  vi.spyOn(bridge, 'inspectQoderCache').mockResolvedValue({ ...cacheResult, state, recoveryPlan: state.endsWith('_verified') ? 'retain_cache_no_action' : 'preserve_and_review' });
+  render(<QoderDistribution />); fillCache(); inspectCache();
+  expect(await screen.findByRole('region', { name: 'Qoder 缓存诊断结果' })).toHaveTextContent('任何清理均须独立人工复核');
+  fireEvent.click(screen.getByRole('button', { name: '清除 Qoder 选择与结果' }));
+  expect(screen.getByLabelText('Qoder 缓存绝对目录')).toHaveValue('');
+  expect(screen.queryByRole('region', { name: 'Qoder 缓存诊断结果' })).not.toBeInTheDocument();
+});
+it('suppresses late cache failure after cancel and keeps busy until the reader finishes', async () => {
+  const work = defer<typeof cacheResult>(); vi.spyOn(bridge, 'inspectQoderCache').mockReturnValue(work.promise);
+  render(<QoderDistribution />); fillCache(); inspectCache();
+  fireEvent.click(screen.getByRole('button', { name: '取消 Qoder 结果' }));
+  expect(useWorkspaceActivityStore.getState().busy.qoder).toBe(true);
+  expect(screen.getByRole('button', { name: '只读诊断 Qoder 缓存' })).toBeDisabled();
+  await act(async () => { work.reject(new Error('SECRET')); });
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(useWorkspaceActivityStore.getState().busy.qoder).toBe(false);
+});
+it.each(['demo', 'unavailable'] as const)('does not dispatch cache inspection in %s UI', mode => {
+  vi.mocked(bridge.runtimeMode).mockReturnValue(mode); vi.spyOn(bridge, 'inspectQoderCache');
+  render(<QoderDistribution />);
+  expect(screen.getByLabelText('Qoder 缓存绝对目录')).toBeDisabled();
+  expect(screen.getByRole('button', { name: '只读诊断 Qoder 缓存' })).toBeDisabled();
+  inspectCache(); expect(bridge.inspectQoderCache).not.toHaveBeenCalled();
+});
