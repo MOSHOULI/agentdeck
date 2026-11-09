@@ -62,8 +62,15 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked -p aisync-core -p aisync-cli --all-targets -- -D warnings
       - run: python scripts/run-isolated.py cargo test --locked -p aisync-core -p aisync-cli
+      - name: Qwen owned setting rejects extended POSIX ACLs
+        run: python scripts/run-isolated.py cargo test --locked -p aisync-core extended_posix_acl_is_not_silently_lost -- --ignored
       - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- health
       - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- agents
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Qwen owned field compatibility (synthetic, pinned offline source)
+        run: python scripts/run-isolated.py node scripts/test-qwen-owned-setting.mjs
       - name: Install official runner GLib development dependencies
         run: |
           sudo apt-get update
@@ -144,6 +151,8 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: python scripts/run-isolated.py cargo test --locked --workspace
       - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- health
+      - name: Qwen owned field compatibility (synthetic, pinned offline source)
+        run: python scripts/run-isolated.py node scripts/test-qwen-owned-setting.mjs
       - name: Build NSIS installer
         run: npm exec --prefix web/ui -- tauri build --bundles nsis --ci -- --locked
       - name: Record installer integrity

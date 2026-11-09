@@ -8,6 +8,7 @@
 //! Native I/O follows the DSH reader's no-follow, bounded regular-file checks.
 //! These narrow but do not eliminate same-privilege ancestor replacement races;
 //! filesystem reads can block on mounts or update atime. This is not a sandbox.
+pub mod owned;
 mod parse;
 mod reader;
 mod types;

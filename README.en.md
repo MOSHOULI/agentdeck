@@ -6,7 +6,7 @@ This document describes the ongoing development source: installation-instance an
 
 This development branch also includes the [MCP toggle preflight and backup-order fix](docs/MCP-SAFETY.md), which has not shipped in a public installer. Validation uses synthetic fixtures only, not real agents or the desktop GUI.
 
-**Next-development-version note:** This branch adds Qwen Code manual-install guidance and passive PATH candidate observation, not yet shipped in a public installer. A candidate does not establish a verified installation or login; Qwen Code automatic installation, runtime/source verification and configuration writes remain unavailable. See the [catalog source review](docs/REGISTRY-SOURCES.md#qwen-code-manual-installation-and-passive-path-discovery-only).
+**Next-development-version note:** This branch adds Qwen Code manual-install guidance and passive PATH candidate observation, not yet shipped in a public installer. A candidate does not establish a verified installation or login; Qwen Code automatic installation, runtime/source verification and general configuration writes remain unavailable; only the experimental CLI Vim preference apply/restore described below is available. See the [catalog source review](docs/REGISTRY-SOURCES.md#qwen-code-manual-installation-and-passive-path-discovery-only).
 
 The catalog adds six [official manual-guidance entries](docs/MAINSTREAM-CATALOG.md) for Cursor, GitHub Copilot CLI, Kimi Code and Qoder CLI, separating CLI and desktop surfaces. Its 16 entries do not imply 16 managed integrations. New entries execute no probes and write no configuration; they have not shipped in a public installer.
 
@@ -122,4 +122,4 @@ Publisher registry signing uses the existing protected private key. That key is 
 
 ### Qwen settings inspection
 
-Explicit, version-gated read-only CLI inspection is documented in [Qwen configuration inspection](docs/QWEN-CONFIG-INSPECTION.md). It is not configuration switching or restoration.
+Explicit, version-gated read-only CLI inspection is documented in [Qwen configuration inspection](docs/QWEN-CONFIG-INSPECTION.md). It is not configuration switching or restoration. A separate [experimental owned Vim preference](docs/QWEN-OWNED-SETTING.md) supports one field with explicit paths and an exact version; full runtime effectiveness is not verified.
