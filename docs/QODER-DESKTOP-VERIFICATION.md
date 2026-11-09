@@ -136,3 +136,46 @@ claim about the exact runner binary):
 键盘方案已真实失败：焦点与发送协议通过，但滚动未归零。改为官方协议滚轮，
 元素中心零偏移不是猜测屏幕坐标；每步必须下降、最多 12 步，异常不重放。
 上游源码支持不等于当前 runner 成功，仍需完整真实 GUI 验收。
+
+### Recovery-guidance scroll diagnostics / 恢复指引验收滚动诊断
+
+The first #39 Linux run (42654567086) completed the new immutable-attempt,
+recovery-guidance, and zero-write checks for both staged and unpacked caches.
+Final Clear was not reached: a successful numeric scrollTop read failed the
+bounded wheel-progress wait. The retained evidence does not reveal the numeric
+value, step, or nested scroll state; it cannot establish fractional residue or
+nested scrolling as the cause. The whole acceptance remains failed.
+
+Diagnostic-only additions retain the initial scrollTop and at most 12 wheel
+steps (index, before/last bounded numeric values, bounded poll count, posted and
+progressed booleans). Failure-only reads capture scrollTop/scrollHeight/clientHeight
+for five fixed known elements: workspace, body, and the three path inputs.
+Values outside [0, 1,000,000], non-numbers, booleans, NaN and infinities are
+rejected; no arbitrary property strings, paths, or backend messages are retained.
+These observations cannot by themselves identify which descendant received a
+wheel event. No scroll/click is replayed, no zero/progress tolerance is added,
+and all original gates remain unchanged pending fresh diagnostic evidence.
+
+首轮 #39 新增恢复检查已通过，但最终清除前滚轮进度等待失败；未记录数值，
+不能断言是小数残留或嵌套滚动。此次仅增加有界数值和固定元素只读诊断，
+不放宽归零或进度门禁，不重放输入，整体真实验收仍待通过。
+
+### Single observed-distance wheel candidate / 单次实测距离滚轮候选
+
+The next artifact measured initial scrollTop=708, first wheel reaching 108,
+and the second acknowledged wheel followed by 30 unchanged reads at 108.
+This is not fractional residue; the cause of the second gesture's lack of
+progress remains unknown. The compatibility candidate replaces the multistep
+sequence with exactly one wheel gesture, deltaY=-ceil(initial scrollTop), after
+validating a finite numeric initial value in [0, 1,000,000]. Already-zero needs
+no gesture. The real main element remains the origin with zero center offsets.
+The measured distance is not a guessed viewport coordinate or a DOM write.
+
+The three-second read-only wait still requires exact zero, rejects increasing
+or invalid scroll positions, and never issues another gesture on partial
+progress, stall, or HTTP failure. Cleanup and bounded numeric evidence remain.
+This is pending real-run validation, not a claim that the root cause is fixed.
+
+新证据是 708→108 后第二次滚轮无进度，不是小数残留，原因仍未知。候选改成一次
+基于严格校验实测 scrollTop 的滚轮距离，仍要求精确归零；部分进度/超时/请求失败
+均不再发送滚轮，不放宽清除门禁，真实运行结果待验证。

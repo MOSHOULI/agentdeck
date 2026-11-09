@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as bridge from '../bridge';
-import { qoderTargets, qoderCacheLabels } from '../qoderContract';
+import { qoderTargets, qoderCacheLabels, qoderCacheRecoveryGuidance } from '../qoderContract';
 import type { QoderPlan, QoderVerification, QoderCacheObservation, QoderWriteOperation, QoderWriteResult } from '../qoderContract';
 import { useWorkspaceActivity, useWorkspaceActivityStore } from '../stores/workspaceActivity';
 import './DshInventory.css';
@@ -10,6 +10,8 @@ export function QoderDistribution() {
   const [source, setSource] = useState('');
   const [destination, setDestination] = useState('');
   const [confirmation, setConfirmation] = useState<{ operation: QoderWriteOperation; source: string; destination: string } | null>(null);
+  const [attempt, setAttempt] = useState<{ operation: QoderWriteOperation; source: string; destination: string; outcome: 'pending' | 'complete' | 'unconfirmed' } | null>(null);
+  const [diagnosedPath, setDiagnosedPath] = useState<string | null>(null);
   const [writing, setWriting] = useState(false);
   const [written, setWritten] = useState<QoderWriteResult | null>(null);
   const [writeError, setWriteError] = useState(false);
@@ -27,7 +29,7 @@ export function QoderDistribution() {
   const native = bridge.runtimeMode() === 'native';
   useWorkspaceActivity('qoder', busy);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; epoch.current++; }; }, []);
-  const clearResult = () => { epoch.current++; setConfirmation(null); setWritten(null); setWriteError(false); setPlan(null); setVerified(null); setError(false); setCacheReport(null); setCacheError(false); };
+  const clearResult = () => { epoch.current++; setConfirmation(null); setWritten(null); setWriteError(false); setPlan(null); setVerified(null); setError(false); setCacheReport(null); setCacheError(false); setDiagnosedPath(null); };
   const run = async (verify: boolean) => {
     if (!native || running.current || Object.values(useWorkspaceActivityStore.getState().busy).some(Boolean) || !target || (verify && !path.trim())) return;
     clearResult(); const request = epoch.current; running.current = true; setBusy(true);
@@ -39,22 +41,24 @@ export function QoderDistribution() {
   };
   const inspectCache = async () => {
     if (!native || running.current || !cachePath.trim() || Object.values(useWorkspaceActivityStore.getState().busy).some(Boolean)) return;
+    const requestedPath = cachePath;
     clearResult(); const request = epoch.current; running.current = true; setBusy(true);
-    try { const value = await bridge.inspectQoderCache(cachePath); if (mounted.current && epoch.current === request) setCacheReport(value); }
-    catch (error) { if (mounted.current && epoch.current === request) setCacheError(error === 'QODER_CACHE_UNSUPPORTED_HOST' ? 'unsupported' : 'failed'); }
+    try { const value = await bridge.inspectQoderCache(requestedPath); if (mounted.current && epoch.current === request) { setCacheReport(value); setDiagnosedPath(requestedPath); } }
+    catch (error) { if (mounted.current && epoch.current === request) { setCacheError(error === 'QODER_CACHE_UNSUPPORTED_HOST' ? 'unsupported' : 'failed'); setDiagnosedPath(requestedPath); } }
     finally { running.current = false; if (mounted.current) setBusy(false); }
   };
   const writeCache = async () => {
     if (!native || running.current || !confirmation || Object.values(useWorkspaceActivityStore.getState().busy).some(Boolean)) return;
-    const approved = confirmation;
+    const approved = { ...confirmation };
+    setAttempt({ ...approved, outcome: 'pending' });
     clearResult(); const request = epoch.current; running.current = true; setBusy(true); setWriting(true);
     const owner = Symbol('qoder-cache-write');
     // This publisher outlives component unmount and is released only when IPC settles.
     useWorkspaceActivityStore.getState().setActivity('qoder', owner, true);
     try {
       const value = await bridge.writeQoderCache(approved.operation, approved.source, approved.destination, true);
-      if (mounted.current && epoch.current === request) setWritten(value);
-    } catch { if (mounted.current && epoch.current === request) setWriteError(true); }
+      if (mounted.current && epoch.current === request) { setWritten(value); setAttempt({ ...approved, outcome: 'complete' }); }
+    } catch { if (mounted.current && epoch.current === request) { setWriteError(true); setAttempt({ ...approved, outcome: 'unconfirmed' }); } }
     finally {
       running.current = false;
       useWorkspaceActivityStore.getState().setActivity('qoder', owner, false);
@@ -82,7 +86,7 @@ export function QoderDistribution() {
       <div className="dsh-form-actions">
         <button type="button" className="button" disabled={!native || busy || otherBusy || !target} onClick={() => { void run(false); }}>查看 Qoder 分发计划</button>
         <button type="button" className="button" disabled={!native || busy || otherBusy || !target || !path.trim()} onClick={() => { void run(true); }}>只读校验 Qoder 归档</button>
-        <button type="button" className="button" disabled={writing} onClick={() => { clearResult(); setTarget(''); setPath(''); setCachePath(''); }}>清除 Qoder 选择与结果</button>
+        <button type="button" className="button" disabled={writing} onClick={() => { clearResult(); setTarget(''); setPath(''); setCachePath(''); setAttempt(null); }}>清除 Qoder 选择与结果</button>
         {busy && !writing && <button type="button" className="button" onClick={clearResult}>取消 Qoder 结果</button>}
       </div>
     </section>
@@ -94,9 +98,12 @@ export function QoderDistribution() {
       <button type="button" className="button" disabled={!native || busy || otherBusy || !cachePath.trim()} onClick={() => { void inspectCache(); }}>只读诊断 Qoder 缓存</button>
       <p>不创建锁、不删除、不修复、不激活、不执行。读取可能更新访问时间；缓存契约匹配不是历史所有权证明或清理授权。</p>
     </section>
-    {cacheError && <p role="alert">{cacheError === 'unsupported' ? '当前主机不支持 Qoder 缓存诊断；仅支持 Linux x86_64，没有读取缓存或获得清理授权。' : 'Qoder 缓存诊断未完成；没有获得完整性或清理授权，请检查明确目录与读取边界。'}</p>}
+    {cacheError && <p>{`未获得诊断结论的目录：${diagnosedPath}`}</p>}
+    {cacheError && <p role="alert">{cacheError === 'unsupported' ? '当前主机不支持 Qoder 缓存诊断；仅支持 Linux x86_64，没有读取缓存或获得清理授权。' : 'Qoder 缓存诊断未完成；没有获得完整性或清理授权，请检查明确目录与读取边界；目录可能缺失或不可读，不能推断为空、安全或可删除。'}</p>}
     {cacheReport && <section className="panel" aria-label="Qoder 缓存诊断结果">
+      <p>{`本次只读诊断目录：${diagnosedPath}`}</p>
       <p role="status">{qoderCacheLabels[cacheReport.state]}</p>
+      <p>{qoderCacheRecoveryGuidance[cacheReport.state]}</p>
       <p>{cacheReport.recoveryPlan === 'retain_cache_no_action' ? '保留缓存，不执行操作。' : '保留现场，人工检查。'}</p>
       <p>任何清理均须独立人工复核。本报告不授权删除、不表示安装或运行成功，也不是原子快照。</p>
     </section>}
@@ -130,6 +137,14 @@ export function QoderDistribution() {
         <p>{`来源：${confirmation.source}`}</p><p>{`全新目录：${confirmation.destination}`}</p>
         <button type="button" disabled={busy || otherBusy} onClick={() => { void writeCache(); }}>确认创建 Qoder 缓存</button>
         <button type="button" onClick={() => setConfirmation(null)}>取消 Qoder 写入确认</button>
+      </section>}
+      {attempt && <section aria-label="Qoder 上次提交记录">
+        <h3>上次实际提交（仅当前会话记录）</h3>
+        <p>{`已提交操作：${attempt.operation === 'stage' ? '暂存归档' : '解包缓存'}`}</p>
+        <p>{`已提交来源：${attempt.source}`}</p><p>{`已提交目标：${attempt.destination}`}</p>
+        <p>{attempt.outcome === 'pending' ? '仍在等待真实结算。' : attempt.outcome === 'complete' ? '写入曾报告完成；这不是当前目录状态或执行授权。' : '写入未确认完成；目标可能不存在或留下部分文件，不原地重试。'}</p>
+        <button type="button" disabled={!native || busy || otherBusy || attempt.outcome === 'pending'} onClick={() => { clearResult(); setCachePath(attempt.destination); }}>将上次提交目标填入只读诊断</button>
+        <p>此按钮仅填写上次实际提交的目标，不读取或修改文件。请再明确点击只读诊断；后续编辑写入表单不会改写这条记录，清除选择与结果会移除它。</p>
       </section>}
       {writing && <p role="status">正在写入受控缓存；不可取消或修改输入，隐藏工作区不会停止操作。等待真实结算，失败可能残留部分文件。</p>}
       {writeError && <p role="alert">Qoder 缓存写入未确认完成。仅支持 Linux x86_64；目标不可存在，不安全来源会被拒绝。可能留下部分私有目录，请保留现场，不原地重试。</p>}

@@ -35,6 +35,7 @@ class Driver:
         self.expected_input = None
         self.input_stage = None
         self.last_response = None
+        self.wheel_diagnostic = None
 
     def close(self):
         self.connection.close()
@@ -107,28 +108,34 @@ class Driver:
             if type(value) not in (int, float) or not 0 <= value <= 1_000_000:
                 raise Failure('workspace_scroll_invalid')
             return value
+        self.wheel_diagnostic = {'initial': None, 'steps': []}
         current = position()
+        self.wheel_diagnostic['initial'] = current
         if current == 0:
             return
+        delta = -math.ceil(current)
         action = {'actions': [{'type': 'wheel', 'id': 'workspace-wheel', 'actions': [{
             'type': 'scroll', 'origin': {ELEMENT: element}, 'x': 0, 'y': 0,
-            'deltaX': 0, 'deltaY': -600, 'duration': 200}]}]}
+            'deltaX': 0, 'deltaY': delta, 'duration': 200}]}]}
+        step = {'index': 1, 'before': current, 'last': current, 'delta_y': delta,
+                'polls': 0, 'posted': False, 'progressed': False, 'reached_zero': False}
+        self.wheel_diagnostic['steps'].append(step)
         try:
-            for _ in range(12):
-                previous = current
-                # Element-center origin, not a guessed viewport coordinate. Each
-                # successful step must make observed progress before another.
-                self.command('POST', '/actions', action)
-                def progressed():
-                    nonlocal current
-                    current = position()
-                    if current > previous: raise Failure('workspace_scroll_invalid')
-                    return current < previous
-                self.wait(progressed, seconds=3)
-                if current == 0:
-                    break
-            else:
-                raise Failure('workspace_scroll_limit')
+            # A single real wheel gesture sized from observed bounded scrollTop.
+            # No second gesture is issued, even if the first only partly scrolls.
+            self.command('POST', '/actions', action)
+            step['posted'] = True
+            def at_top():
+                nonlocal current
+                observed = position()
+                step['last'] = observed
+                step['polls'] = min(step['polls'] + 1, 1000)
+                if observed > current: raise Failure('workspace_scroll_invalid')
+                current = observed
+                step['progressed'] = current < step['before']
+                step['reached_zero'] = current == 0
+                return current == 0
+            self.wait(at_top, seconds=3)
         except Exception:
             failed_response = self.last_response
             try:
@@ -399,7 +406,29 @@ def exercise_cache_writes(driver, archive, root, records, phase=lambda value: No
         driver.wait(lambda: driver.enabled(source_input))
         if snapshot(root, exact) != before or snapshot(archive.parent, source_contract) != original_source:
             raise Failure('desktop_existing_destination_changed')
-        records.append({'operation': operation + '_existing', 'rejected_without_overwrite': True})
+        phase('desktop_' + operation + '_recover_attempt_diagnosis')
+        history = "//section[@aria-label='Qoder 上次提交记录']"
+        fill = "//button[text()='将上次提交目标填入只读诊断']"
+        # Editing a draft must not retarget the immutable last actual request.
+        driver.type(destination_input, str(unused))
+        driver.wait(lambda: driver.value(destination_input) == str(unused))
+        if '已提交目标：' + str(destination) not in driver.text(history):
+            raise Failure('desktop_attempt_target_changed')
+        driver.wait(lambda: driver.enabled(fill))
+        driver.click(fill)
+        driver.wait(lambda: driver.value("//*[@id='qoder-cache']") == str(destination))
+        if driver.elements(read_result) or snapshot(root, exact) != before:
+            raise Failure('desktop_attempt_fill_not_readonly')
+        driver.wait(lambda: driver.enabled("//button[text()='只读诊断 Qoder 缓存']"))
+        driver.click("//button[text()='只读诊断 Qoder 缓存']")
+        driver.wait(lambda: len(driver.elements(read_result)) == 1, seconds=90)
+        recovery = '可将这个暂存目录作为后续解包来源' if operation == 'stage' else '仅保留此解包缓存，不激活或执行'
+        expected = (LABELS[kind], '本次只读诊断目录：' + str(destination), recovery, '本报告不授权删除')
+        if any(value not in driver.text(read_result) for value in expected) or snapshot(root, exact) != before or snapshot(archive.parent, source_contract) != original_source:
+            raise Failure('desktop_attempt_recovery_invalid')
+        records.append({'operation': operation + '_existing', 'rejected_without_overwrite': True,
+                        'immutable_attempt_target_diagnosed': True, 'recovery_guidance_verified': True,
+                        'recovery_diagnosis_zero_write': True})
     phase('desktop_clear_and_final_zero_write')
     before = snapshot(root, exact)
     retained_inputs = [driver.value(path) for path in (source_input, destination_input, "//*[@id='qoder-cache']")]
@@ -408,7 +437,7 @@ def exercise_cache_writes(driver, archive, root, records, phase=lambda value: No
         raise Failure('workspace_scroll_changed_inputs')
     driver.wait(lambda: driver.enabled("//button[text()='清除 Qoder 选择与结果']"))
     driver.click("//button[text()='清除 Qoder 选择与结果']")
-    driver.wait(lambda: not driver.elements(result) and not driver.elements(alert) and not driver.elements(read_result) and not driver.elements(dialog))
+    driver.wait(lambda: not driver.elements(result) and not driver.elements(alert) and not driver.elements(read_result) and not driver.elements(dialog) and not driver.elements("//section[@aria-label='Qoder 上次提交记录']"))
     if snapshot(root, exact) != before or snapshot(archive.parent, source_contract) != original_source or unused.exists():
         raise Failure('desktop_final_zero_write_failed')
     if CANARY in driver.text('//body'):
@@ -425,7 +454,7 @@ def failure_code(error):
                    'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready', 'startup_registry_not_idle', 'incomplete_gui_coverage', 'desktop_write_output_invalid', 'desktop_destination_not_new',
                    'desktop_confirmation_not_invalidated', 'desktop_confirmation_details_mismatch', 'desktop_unconfirmed_write',
                    'desktop_write_not_confirmed', 'desktop_write_modified_source', 'desktop_diagnosis_or_zero_write_failed',
-                   'desktop_existing_destination_not_rejected', 'desktop_existing_destination_changed', 'desktop_final_zero_write_failed', 'workspace_scroll_limit', 'workspace_scroll_invalid', 'workspace_scroll_changed_inputs'}
+                   'desktop_existing_destination_not_rejected', 'desktop_existing_destination_changed', 'desktop_final_zero_write_failed', 'desktop_attempt_target_changed', 'desktop_attempt_fill_not_readonly', 'desktop_attempt_recovery_invalid', 'workspace_scroll_limit', 'workspace_scroll_invalid', 'workspace_scroll_changed_inputs'}
         return str(error) if str(error) in allowed else 'harness_failure'
     if isinstance(error, (ConnectionError, http.client.HTTPException)): return 'webdriver_transport_error'
     if isinstance(error, TimeoutError): return 'webdriver_timeout'
@@ -467,6 +496,28 @@ def capture_clear_geometry(driver):
     return report
 
 
+def capture_scroll_facts(driver):
+    # Fixed known elements/properties only, no IDs, source text or DOM dumps.
+    report = {}
+    for name, xpath in [('workspace', "//main[@id='workspace-content']"), ('body', '//body'),
+                        ('write_source', "//*[@id='qoder-write-source']"),
+                        ('write_destination', "//*[@id='qoder-write-destination']"),
+                        ('cache_input', "//*[@id='qoder-cache']")]:
+        try:
+            element = driver.one(xpath)
+            if not isinstance(element, str): raise Failure('harness_failure')
+            facts = {}
+            for prop in ('scrollTop', 'scrollHeight', 'clientHeight'):
+                value = driver.command('GET', '/element/' + element + '/property/' + prop)
+                if type(value) not in (int, float) or not 0 <= value <= 1_000_000:
+                    raise Failure('workspace_scroll_invalid')
+                facts[prop] = value
+            report[name] = facts
+        except Exception as error:
+            report[name] = {'state': 'unavailable', 'code': failure_code(error)}
+    return report
+
+
 def capture_failure_dom(driver, evidence):
     # Read-only standard WebDriver endpoints, never executeScript. Inspect the
     # full bounded response for the canary BEFORE truncating retained evidence.
@@ -474,6 +525,7 @@ def capture_failure_dom(driver, evidence):
     if not driver.session:
         report['session'] = 'unavailable'
     else:
+        report['scroll_facts'] = capture_scroll_facts(driver)
         report['clear_geometry'] = capture_clear_geometry(driver)
         # Retain only agreement/length/boolean facts, never an untrusted input value.
         try:
@@ -572,6 +624,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         diagnostic['exception_class'] = exception_class(error)
         diagnostic['input_stage'] = client.input_stage
         diagnostic['last_response'] = client.last_response
+        diagnostic['wheel_scroll'] = client.wheel_diagnostic
         capture_failure_dom(client, evidence)
         raise
     finally:

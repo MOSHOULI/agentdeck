@@ -206,3 +206,45 @@ it('renders fixed successful cache result and invalidates confirmation when oper
   expect(write).toHaveBeenCalledExactlyOnceWith('unpack','/selected/source','/selected/new-cache',true);
   expect(screen.getByLabelText('Qoder 全新缓存绝对目录')).not.toBeDisabled();
 });
+
+it.each(['complete','unconfirmed'] as const)('keeps immutable %s submission after edits and only fills diagnosis on explicit request', async outcome => {
+  const write=vi.spyOn(bridge,'writeQoderCache');
+  if (outcome === 'complete') write.mockResolvedValue({operation:'stage',state:'staged_archive_verified'});
+  else write.mockRejectedValue(new Error('SECRET'));
+  const inspect=vi.spyOn(bridge,'inspectQoderCache').mockResolvedValue({state:'staged_archive_verified',recoveryPlan:'retain_cache_no_action',deletionAuthorized:false,manualReviewRequired:true,installed:false});
+  render(<QoderDistribution />);writeForm();fireEvent.click(screen.getByRole('button',{name:'确认创建 Qoder 缓存'}));
+  if (outcome === 'complete') await screen.findByRole('region',{name:'Qoder 缓存写入结果'});else await screen.findByRole('alert');
+  fireEvent.change(screen.getByLabelText('Qoder 全新缓存绝对目录'),{target:{value:'/edited/not-submitted'}});
+  fireEvent.change(screen.getByLabelText('Qoder 缓存写入来源绝对路径'),{target:{value:'/edited/source'}});
+  fireEvent.click(screen.getByRole('button',{name:'选择解包缓存'}));
+  const history=screen.getByRole('region',{name:'Qoder 上次提交记录'});
+  expect(history).toHaveTextContent('已提交目标：/selected/new-cache');expect(history).toHaveTextContent('已提交来源：/selected/source');expect(history).toHaveTextContent('已提交操作：暂存归档');
+  expect(history).not.toHaveTextContent('/edited');
+  fireEvent.click(screen.getByRole('button',{name:'将上次提交目标填入只读诊断'}));
+  expect(screen.getByLabelText('Qoder 缓存绝对目录')).toHaveValue('/selected/new-cache');expect(inspect).not.toHaveBeenCalled();expect(write).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button',{name:'只读诊断 Qoder 缓存'}));
+  expect(await screen.findByRole('region',{name:'Qoder 缓存诊断结果'})).toHaveTextContent('本次只读诊断目录：/selected/new-cache');
+  expect(inspect).toHaveBeenCalledExactlyOnceWith('/selected/new-cache');
+  fireEvent.click(screen.getByRole('button',{name:'清除 Qoder 选择与结果'}));
+  expect(screen.queryByRole('region',{name:'Qoder 上次提交记录'})).not.toBeInTheDocument();expect(screen.queryByRole('region',{name:'Qoder 缓存诊断结果'})).not.toBeInTheDocument();
+});
+it.each([
+  ['staged_archive_verified','可将这个暂存目录作为后续解包来源'],
+  ['unpacked_payload_verified','它不能作为暂存归档或受控暂存目录来源再次解包'],
+  ['incomplete','不要复用此目录作为来源或目标'],
+  ['conflict','不要覆盖、复用或强制修复'],
+  ['unknown_ownership','不能推断目录为空或安全'],
+] as const)('provides fixed %s guidance bound to the observed directory without new writes',async (state,text) => {
+  const inspect=vi.spyOn(bridge,'inspectQoderCache').mockResolvedValue({state,recoveryPlan:state.endsWith('_verified')?'retain_cache_no_action':'preserve_and_review',deletionAuthorized:false,manualReviewRequired:true,installed:false});
+  const write=vi.spyOn(bridge,'writeQoderCache');render(<QoderDistribution />);
+  fireEvent.change(screen.getByLabelText('Qoder 缓存绝对目录'),{target:{value:'/observed/cache'}});fireEvent.click(screen.getByRole('button',{name:'只读诊断 Qoder 缓存'}));
+  const report=await screen.findByRole('region',{name:'Qoder 缓存诊断结果'});expect(report).toHaveTextContent(text);expect(report).toHaveTextContent('本次只读诊断目录：/observed/cache');
+  expect(inspect).toHaveBeenCalledTimes(1);expect(write).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText('Qoder 缓存绝对目录'),{target:{value:'/changed'}});expect(screen.queryByRole('region',{name:'Qoder 缓存诊断结果'})).not.toBeInTheDocument();
+});
+it('failed diagnosis gives no safety conclusion and binds only the requested directory',async () => {
+  vi.spyOn(bridge,'inspectQoderCache').mockRejectedValue(new Error('SECRET'));
+  render(<QoderDistribution />);fireEvent.change(screen.getByLabelText('Qoder 缓存绝对目录'),{target:{value:'/missing/cache'}});fireEvent.click(screen.getByRole('button',{name:'只读诊断 Qoder 缓存'}));
+  expect(await screen.findByRole('alert')).toHaveTextContent('不能推断为空、安全或可删除');
+  expect(screen.getByText('未获得诊断结论的目录：/missing/cache')).toBeInTheDocument();expect(screen.queryByRole('region',{name:'Qoder 缓存诊断结果'})).not.toBeInTheDocument();
+});

@@ -104,3 +104,17 @@ A native Qoder-only `try_lock` lives inside the blocking worker until filesystem
 Linux x86_64 原生 Qoder 工作区新增固定 1.1.85 `linux-amd64-baseline` 的“暂存归档”和“解包缓存”。这不是安装、激活或执行，不改 PATH/配置。预览明确显示操作、固定目标/版本、来源与全新目标目录；更改输入即废弃确认。只有显式确认才调用写入 IPC，后端在访问文件前检查确认标志、固定操作/目标与有界绝对路径；其他主机失败关闭。
 
 原生锁仅协调 Qoder 缓存写入，位于实际阻塞任务内部，调用方消失也不会提前释放，不代表整个应用的原子锁。写入中不可更改输入、清除或取消；独立忙碌标记在组件卸载后仍保留至 IPC 真实结算。不自动重试、覆盖或清理失败结果。失败或完成状态不明时可能残留私有部分文件，应保留现场人工检查，不能原地重试。同用户恶意竞争、文件系统 I/O 时限和崩溃恢复仍有核心边界；记录不构成执行或删除授权。
+
+## Read-only guidance after a submitted write / 提交写入后的只读定位与指引
+
+The UI keeps the most recent actually confirmed submission's operation, source, destination and outcome in component memory. Later form edits do not relabel that record. Completion is historical, not a fresh assertion about the directory; an unconfirmed outcome can mean no directory or partial output. Nothing is persisted to disk by this UI record, and global Clear or unmount removes it.
+
+“Fill the last submitted destination into read-only diagnosis” only copies that captured destination into the diagnosis field. It does not call IPC, retry a write, clean up, or automatically diagnose. The user must separately invoke diagnosis. Every result displays the exact directory captured at that request; input changes, cancellation, Clear and unmount invalidate pending or displayed observations. Missing/unreadable/unsupported diagnosis yields no integrity, emptiness, deletion or cleanup conclusion.
+
+All five recovery hints are fixed local text. A verified staged cache may be chosen manually as a later unpack source with a **different new destination**, fresh confirmation and complete core revalidation. An unpacked cache is retained only and is not offered as a staged-source substitute. Incomplete, conflicting and unknown-ownership directories require preservation and manual review, never automatic deletion, repair, reuse or in-place retry. No new backend capability, execution permission or automatic operation is introduced.
+
+界面仅在组件内存保存最近一次实际确认提交的操作、来源、目标与结算状态；之后修改表单不会篡改该记录。曾报告完成不代表目录当前状态；未确认完成可能意味着目录不存在，也可能残留部分文件。记录本身不写磁盘，通用清除或组件卸载会移除记录。
+
+“将上次提交目标填入只读诊断”仅填写捕获的原目标，不调用 IPC、不重试、不清理、不自动诊断。用户仍须另行点击只读诊断。每份结果显示请求时的精确目录；修改输入、取消、清除或卸载都会废弃迟到响应及旧结论。目录缺失、不可读或平台不支持时，没有完整性、空目录、安全删除或已清理结论。
+
+五种恢复提示均为本地固定文案：完整暂存目录可以手动选择为后续解包来源，但必须另选全新目标、重新确认并经核心完整复验；解包缓存仅保留，不能作为暂存来源替代。不完整、冲突或归属未知时保留现场人工排查，不自动删除、修复、复用或原地重试。本增量没有新增后端能力、执行权限或自动操作。

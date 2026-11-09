@@ -65,3 +65,12 @@ export function validateQoderWrite(value: unknown, operation: QoderWriteOperatio
   if (report.operation !== operation || report.state !== state || report.target !== 'linux-amd64-baseline' || report.version !== '1.1.85' || report.installed !== false || report.executable !== false) throw invalid();
   return { operation, state };
 }
+
+/** Guidance is local fixed text, never backend instructions or cleanup authority. */
+export const qoderCacheRecoveryGuidance: Record<QoderCacheState, string> = {
+  staged_archive_verified: '可将这个暂存目录作为后续解包来源，并选择另一个全新目标目录；每次解包仍须重新确认和由核心重新校验，不复用本次诊断作为授权。',
+  unpacked_payload_verified: '仅保留此解包缓存，不激活或执行；它不能作为暂存归档或受控暂存目录来源再次解包。',
+  incomplete: '保留未完成现场，人工排查；不要复用此目录作为来源或目标，不原地重试，不自动删除。',
+  conflict: '保留冲突现场，人工排查；不要覆盖、复用或强制修复，不自动删除。',
+  unknown_ownership: '归属未知，保留现场并人工排查；不复用、不据此清理，也不能推断目录为空或安全。',
+};
