@@ -6,7 +6,7 @@ This document describes the ongoing development source: installation-instance an
 
 This development branch also includes the [MCP toggle preflight and backup-order fix](docs/MCP-SAFETY.md), which has not shipped in a public installer. Validation uses synthetic fixtures only, not real agents or the desktop GUI.
 
-**Next-development-version note:** This branch adds Qwen Code manual-install guidance and passive PATH candidate observation, not yet shipped in a public installer. A candidate does not establish a verified installation or login; Qwen Code automatic installation, runtime/source verification and general configuration writes remain unavailable; only the experimental CLI Vim preference apply/restore described below is available. See the [catalog source review](docs/REGISTRY-SOURCES.md#qwen-code-manual-installation-and-passive-path-discovery-only).
+**Next-development-version note:** This branch adds Qwen Code manual-install guidance and passive PATH candidate observation, not yet shipped in a public installer. A candidate does not establish a verified installation or login; Qwen Code automatic installation, runtime/source verification and general configuration writes remain unavailable; only the experimental CLI/desktop Vim preference apply/restore described below is available. See the [catalog source review](docs/REGISTRY-SOURCES.md#qwen-code-manual-installation-and-passive-path-discovery-only).
 
 The catalog adds six [official manual-guidance entries](docs/MAINSTREAM-CATALOG.md) for Cursor, GitHub Copilot CLI, Kimi Code and Qoder CLI, separating CLI and desktop surfaces. Its 16 entries do not imply 16 managed integrations. New entries execute no probes and write no configuration; they have not shipped in a public installer.
 

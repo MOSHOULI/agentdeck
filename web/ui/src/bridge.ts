@@ -1,4 +1,4 @@
-import { qwenDemoSummary, validateQwenReport } from './qwenContract';
+import { qwenDemoSummary, validateQwenReport, validateQwenVimPreview, validateQwenMutation } from './qwenContract';
 import type { QwenSummary } from './qwenContract';
 /**
  * Tauri 命令调用桥接层。
@@ -19,6 +19,28 @@ export async function inspectQwenSettings(settingsPath: string, runtimeManifest:
   if (demo) return { summary: qwenDemoSummary(), synthetic: true };
   const summary = validateQwenReport(await invoke<unknown>('inspect_qwen_settings', { settingsPath, runtimeManifest }));
   return { summary, synthetic: false };
+}
+
+/** These operations are never simulated in browser/demo mode. */
+function qwenOwnedPaths(settingsPath: string, runtimeManifest: string): void {
+  useDemo(true);
+  for (const path of [settingsPath, runtimeManifest]) {
+    if (typeof path !== 'string' || !path.trim() || new TextEncoder().encode(path).length > 4096 || /[\x00-\x1f\x7f]/.test(path)) throw new Error('请选择有效且长度受限的明确路径。');
+  }
+}
+export async function previewQwenVim(settingsPath: string, runtimeManifest: string, enabled: boolean) {
+  qwenOwnedPaths(settingsPath, runtimeManifest);
+  if (typeof enabled !== 'boolean') throw new Error('设置值不受支持。');
+  return validateQwenVimPreview(await invoke<unknown>('preview_qwen_vim', { settingsPath, runtimeManifest, enabled }), enabled);
+}
+export async function applyQwenVim(settingsPath: string, runtimeManifest: string, enabled: boolean, token: string) {
+  qwenOwnedPaths(settingsPath, runtimeManifest);
+  if (typeof enabled !== 'boolean' || typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) throw new Error('请重新预览。');
+  return validateQwenMutation(await invoke<unknown>('apply_qwen_vim', { settingsPath, runtimeManifest, enabled, token }));
+}
+export async function restoreQwenVim(settingsPath: string, runtimeManifest: string) {
+  qwenOwnedPaths(settingsPath, runtimeManifest);
+  return validateQwenMutation(await invoke<unknown>('restore_qwen_vim', { settingsPath, runtimeManifest }));
 }
 
 /** Independent of deployment: no registry read, discovery, or lifecycle command. */

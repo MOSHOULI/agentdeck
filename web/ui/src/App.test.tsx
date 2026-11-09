@@ -249,3 +249,31 @@ it('opens DSH inventory from its catalog card without inspecting or mutating, an
   expect(input).toHaveValue('/explicit/selected-profile');
   expect(inspect).not.toHaveBeenCalled();
 });
+
+it('retains Qwen mutation lock across navigation away and back', async () => {
+  vi.spyOn(bridge, 'runtimeMode').mockReturnValue('native');
+  vi.spyOn(bridge, 'getAgents').mockResolvedValue([notDetectedAgent]);
+  vi.spyOn(bridge, 'previewQwenVim').mockResolvedValue({ field: 'general.vimMode', before: null, after: false, changes: true, token: 'c'.repeat(64) });
+  let finish!: (value: boolean) => void;
+  const pending = new Promise<boolean>(resolve => { finish = resolve; });
+  const apply = vi.spyOn(bridge, 'applyQwenVim').mockReturnValue(pending);
+  await renderReadyApp(true);
+  fireEvent.click(screen.getByRole('tab', { name: /^Qwen 配置检查/ }));
+  const qwen = screen.getByRole('tabpanel', { name: /^Qwen 配置检查/ });
+  fireEvent.change(within(qwen).getByLabelText('settings.json 绝对路径'), { target: { value: '/selected/settings.json' } });
+  fireEvent.change(within(qwen).getByLabelText('运行时 package.json 绝对路径'), { target: { value: '/runtime/package.json' } });
+  fireEvent.click(within(qwen).getByRole('button', { name: '预览 Vim 变更' }));
+  fireEvent.click(await within(qwen).findByRole('button', { name: '确认应用 Vim 变更' }));
+  expect(apply).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('tab', { name: /^Agent 管理/ }));
+  expect(screen.getByText(/进行中：.*Qwen 配置检查/)).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: /^Qwen 配置检查/ }));
+  expect(within(qwen).getByLabelText('settings.json 绝对路径')).toBeDisabled();
+  expect(within(qwen).getByRole('button', { name: '预览 Vim 变更' })).toBeDisabled();
+  expect(within(qwen).getByRole('button', { name: '撤销受管 Vim 设置' })).toBeDisabled();
+  fireEvent.click(within(qwen).getByRole('button', { name: '预览 Vim 变更' }));
+  expect(apply).toHaveBeenCalledTimes(1);
+  await act(async () => { finish(true); await pending; });
+  expect(within(qwen).getByLabelText('settings.json 绝对路径')).toBeEnabled();
+  expect(useWorkspaceActivityStore.getState().busy.qwen).toBe(false);
+});

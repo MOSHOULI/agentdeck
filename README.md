@@ -6,7 +6,7 @@
 
 本开发分支另含 [MCP 开关预检与备份顺序修复](docs/MCP-SAFETY.zh-CN.md)，尚未随正式安装包发布；验证仅使用合成夹具，未测试真实 Agent 或桌面 GUI。
 
-**下一开发版本说明：** 当前分支新增 Qwen Code 手动安装指引与被动 PATH 候选观察，尚未随正式安装包发布。找到候选也不代表安装或登录已验证；Qwen Code 的自动安装、版本/来源验证及通用配置写入均未开放；仅实验性 CLI 支持下述 Vim 布尔设置的受管应用/撤销。详见[注册表来源核验](docs/REGISTRY-SOURCES.zh-CN.md#qwen-code手动安装与仅被动-path-发现)。
+**下一开发版本说明：** 当前分支新增 Qwen Code 手动安装指引与被动 PATH 候选观察，尚未随正式安装包发布。找到候选也不代表安装或登录已验证；Qwen Code 的自动安装、版本/来源验证及通用配置写入均未开放；实验性 CLI 与桌面入口支持下述 Vim 布尔设置的受管应用/撤销。详见[注册表来源核验](docs/REGISTRY-SOURCES.zh-CN.md#qwen-code手动安装与仅被动-path-发现)。
 
 
 新增 Cursor、GitHub Copilot CLI、Kimi Code 与 Qoder CLI 的六个[官方手动指引条目](docs/MAINSTREAM-CATALOG.zh-CN.md)，CLI 和桌面分别列出。目录共 17 条，不代表 17 款可自动管理；新条目不执行探针、不读写配置，尚未随正式安装包发布。

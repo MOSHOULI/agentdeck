@@ -32,7 +32,7 @@ describe('Qwen settings workspace', () => {
     await screen.findByRole('region', { name: 'Qwen 检查结果' });
     expect(bridge.inspectQwenSettings).toHaveBeenCalledExactlyOnceWith('/selected/settings.json', '/runtime/package.json');
     expect(screen.getByText('通用：区段存在')).toBeInTheDocument();
-    expect(screen.getAllByRole('button')).toHaveLength(2);
+    expect(screen.getAllByRole('button')).toHaveLength(4);
   });
   it('blocks repeated submissions and discards responses after path changes', async () => {
     const work = deferred(); vi.mocked(bridge.inspectQwenSettings).mockReturnValue(work.promise);
@@ -40,7 +40,7 @@ describe('Qwen settings workspace', () => {
     expect(bridge.inspectQwenSettings).toHaveBeenCalledTimes(1);
     fireEvent.change(screen.getByLabelText('settings.json 绝对路径'), { target: { value: '/new/settings.json' } });
     await act(async () => { work.resolve(result()); });
-    expect(screen.queryByRole('region')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Qwen 检查结果' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '检查所选文件' })).toBeEnabled();
   });
   it('clear invalidates pending success and wipes paths', async () => {
@@ -48,14 +48,14 @@ describe('Qwen settings workspace', () => {
     render(<QwenSettings />); fill(); submit();
     fireEvent.click(screen.getByRole('button', { name: '清除路径与结果' }));
     await act(async () => { work.resolve(result()); });
-    expect(screen.queryByRole('region')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Qwen 检查结果' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('settings.json 绝对路径')).toHaveValue('');
   });
   it('never echoes backend exceptions and supports retry', async () => {
     vi.mocked(bridge.inspectQwenSettings).mockRejectedValueOnce(new Error('SECRET'));
     render(<QwenSettings />); fill(); submit();
     expect(await screen.findByRole('alert')).not.toHaveTextContent('SECRET');
-    submit(); await screen.findByRole('region'); expect(screen.queryByRole('alert')).toBeNull();
+    submit(); await screen.findByRole('region', { name: 'Qwen 检查结果' }); expect(screen.queryByRole('alert')).toBeNull();
   });
   it('discarded errors and unmounted requests cannot restore results', async () => {
     const work = deferred(); vi.mocked(bridge.inspectQwenSettings).mockReturnValue(work.promise);

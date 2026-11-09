@@ -2,12 +2,15 @@
 
 ## English
 
-Experimental **CLI-only** operation for one non-credential boolean:
+Experimental **CLI and desktop** operation for one non-credential boolean:
 `general.vimMode`. Requires explicit existing local `settings.json` and
 `package.json` declaring `@qwen-code/qwen-code` **0.27.0**, settings `$version: 4`.
 This declaration is not proof of a genuine installation or the selected scope.
 No discovery, execution, login, environment interpolation or migration occurs.
-The desktop inspector stays read-only.
+The desktop summary inspector stays read-only. A separate Vim preference editor
+uses the same core contract and requires a preview and explicit confirmation
+before apply; restore has its own confirmation. Changing paths/value discards
+a pending preview. Inputs are locked during mutations; no automatic retry occurs.
 
 1. Stop Qwen and other configuration editors first.
 2. `aisync qwen vim-preview --settings /absolute/settings.json --runtime-manifest /absolute/package.json --enabled true`
@@ -55,9 +58,10 @@ Real Agent installation/authentication and GUI acceptance remain outstanding.
 
 ## 中文
 
-这是仅 CLI 开放的实验性单字段管理：`general.vimMode`，不是模型、认证或
+这是 CLI 与桌面开放的实验性单字段管理：`general.vimMode`，不是模型、认证或
 完整配置管理。必须明确选择已有普通文件，清单声明精确版本 0.27.0、配置
-`$version: 4`；声明不代表安装真实或作用域已确认。桌面检查仍为只读。
+`$version: 4`；声明不代表安装真实或作用域已确认。桌面摘要检查仍为只读；独立 Vim 设置区需要先预览、明确确认后应用，
+撤销也需单独确认。更改路径/值会取消旧预览，写入期间锁定输入，不自动重试。
 
 先停止 Qwen 和其他配置编辑器，运行上述 preview 命令，检查布尔值及限制，
 再用预览 token 和 `--yes` 应用；restore 也需要 `--yes`。
