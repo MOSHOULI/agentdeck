@@ -590,14 +590,14 @@
       "memory_collector": null,
       "name": "Qoder CLI",
       "ui_type": "cli",
-      "description": "Qoder 终端代理。官方首选独立安装，npm 为旧兼容路线；Windows ARM 架构暂不支持。AgentDeck 仅提供官方手动指引，不执行探针、安装或登录，不读写配置。",
+      "description": "Qoder 终端代理。官方首选独立安装，npm 为旧兼容路线；Windows ARM 架构的官方文档与分发清单存在矛盾，实际兼容性未验收。AgentDeck 仅提供官方手动指引，不执行探针、安装或登录，不读写配置。",
       "icon": "qoder-cli",
       "homepage": "https://docs.qoder.com/cli/installation",
       "auth_guide": {
         "steps": [
           "按官方文档安装原生独立 CLI（命令 qoder）；npm @qoder-ai/qodercli 是旧兼容路线，需 Node.js >=20",
           "认证与账号资格按官方当前说明由用户完成；自定义模型使用 /model 向导，AgentDeck 不注入密钥",
-          "Windows ARM64 暂不支持；选择与操作系统和架构匹配的官方包"
+          "Windows ARM64：文档称不支持，但 1.1.85 官方清单列出原生包；兼容性未验收，勿仅凭条目判断可用"
         ],
         "completion_check": null
       }
