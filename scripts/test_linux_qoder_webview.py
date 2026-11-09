@@ -491,6 +491,60 @@ class Tests(unittest.TestCase):
                         self.assertFalse(driver.dialog or driver.result or driver.alert or driver.read)
                         self.assertFalse((root/'confirmation-invalidated').exists())
 
+    def test_scope_gui_flow_preserves_redaction_and_zero_write_gates(self):
+        class Fake:
+            def __init__(self,root,fault):self.root=root;self.fault=fault;self.values={};self.report=False
+            def enabled(self,path):return True
+            def type(self,path,value):
+                self.values[path]=value
+                if self.fault!='stale':self.report=False
+            def value(self,path):return self.values.get(path,'')
+            def elements(self,path):return [{}] if self.report else []
+            def wait(self,predicate,seconds=20):
+                if not predicate():raise subject.Failure('ui_wait_expired')
+            def click(self,path):
+                if '清除' in path:
+                    if self.fault!='clear':self.values={};self.report=False
+                else:
+                    self.report=True
+                    if self.fault=='write':subject.write_private(self.root/'unexpected',b'changed')
+            def text(self,path):
+                if '作用域检查结果' in path:
+                    return ('重复 MCP 标识数：0' if self.fault=='overlap' else '重复 MCP 标识数：1')+' 重复只表示潜在重叠，不是冲突或生效优先级 未选作用域不视为空 不执行、不写入、不备份、不恢复'
+                if 'user_settings' in path or 'project_mcp' in path:
+                    flags='MCP 分区：存在 钩子分区：未见 安全分区：未见 '+('权限分区：存在 模型分区：存在 其他顶层字段：存在' if 'user_settings' in path else '权限分区：未见 模型分区：未见 其他顶层字段：未见')
+                    return '已读取固定摘要 MCP 条目数：'+('0' if self.fault=='count' else '2')+' '+flags
+                if 'project_settings' in path or 'local_settings' in path:
+                    return '未选择'+(' MCP 条目数：0' if self.fault=='unselected' else '')
+                return subject.CANARY if self.fault=='body_secret' else 'safe body'
+            def command(self,method,path):
+                self.last=(method,path)
+                return subject.CANARY if self.fault=='source_secret' else 'safe source'
+        for fault in (None,'stale','clear','write','overlap','count','unselected','body_secret','source_secret'):
+            with self.subTest(fault=fault),tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);paths=subject.scope_fixtures(root);records=[];driver=Fake(root,fault)
+                if fault:
+                    with self.assertRaises(subject.Failure):subject.exercise_scopes(driver,paths,root,records)
+                else:
+                    subject.exercise_scopes(driver,paths,root,records)
+                    self.assertEqual(len(records),2)
+                    self.assertEqual(driver.last,('GET','/source'))
+                    self.assertFalse(driver.report)
+                    self.assertFalse(driver.values)
+
+    def test_scope_fixtures_are_private_synthetic_and_overlap_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);paths=subject.scope_fixtures(root)
+            before=subject.snapshot(root)
+            user=json.loads(paths['user'].read_text().split('\n',1)[1])
+            project=json.loads(paths['project_mcp'].read_text())
+            self.assertEqual(len(user['mcpServers']),2)
+            self.assertEqual(len(project['mcpServers']),2)
+            self.assertEqual(len(set(user['mcpServers']) & set(project['mcpServers'])),1)
+            self.assertTrue(all(subject.CANARY in name for name in user['mcpServers']))
+            self.assertEqual(user['model'],subject.CANARY)
+            self.assertEqual(subject.snapshot(root),before)
+
     def test_desktop_output_verifier_rejects_missing_extra_or_executable_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)

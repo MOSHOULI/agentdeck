@@ -46,3 +46,17 @@ commands do not enable installation, execution, configuration or restore support
 
 另有独立的[原生分发计划与显式归档校验](QODER-DISTRIBUTION.md)，固定已审阅的
 1.1.85 包；不因此启用安装、执行、配置或恢复能力。
+
+## Desktop explicit inspection / 桌面显式检查
+
+The Qoder workspace now includes a separate read-only scope inspection panel. Its four optional inputs correspond exactly to the CLI selections above; choose at least one. No default path, directory picker discovery or credential lookup occurs. Native IPC validates all selected paths together (including bounded length, expected basename and lexical duplication) before calling the existing core reader. Windows and Linux x86_64/ARM64 use the audited reader; other platforms produce unsupported observations, never simulated success. Selected files remain read-only and may update access times.
+
+The desktop validates the fixed report contract, exact four-scope order, requested selection/status relationship, limits, boolean section flags and bounded counts. Incomplete observations suppress aggregate overlap rather than implying zero. Dynamic names, values, raw errors, backend limitation text and paths are not rendered in results. Paths remain visible only in the explicit user input fields. Repeated identifiers are possible overlap, not proven conflict, priority, active installation, project association or effective configuration. No merge/apply/restore capability is enabled.
+
+Input edits, cancellation, clearing and unmount discard late results. Cancellation does not stop underlying reads; an independent Qoder activity owner remains until native IPC settles even after unmount. Reads cannot start while any workspace operation reports busy, including Qoder cache writes; this is cross-workspace coordination, not an atomic global backend lock. Browser/demo modes never invoke or simulate file inspection. Synthetic secret-bearing fixtures test response redaction and no writes; they are not evidence of Qoder runtime compatibility or online authentication.
+
+Qoder 工作区新增独立只读作用域面板，四项可选路径对应上述 CLI 选择，至少明确选择一项，不自动填写默认路径、扫描目录或查找凭据。原生 IPC 先统一校验全部所选路径（有界长度、预期文件名和词法去重），再调用既有核心读取器。Windows 与 Linux x86_64/ARM64 使用已审阅读取边界；其他平台输出不支持，不模拟成功。只读可能改变访问时间。
+
+桌面严格校验固定契约、四作用域顺序、与本次选择对应的状态、读取上限、布尔分区标志和计数。缺失或不支持的观察不把汇总重叠数当作零。结果不显示任意名称、配置值、原始错误、后端限制文本或路径；路径只保留在用户明确填写的输入框中。重复标识仅为潜在重叠，不代表冲突、优先级、已安装、项目归属或生效配置，不启用合并、写入或恢复能力。
+
+编辑输入、取消、清除和卸载均废弃迟到结果。取消不停止底层读取，独立忙碌标记跨组件卸载保留至 IPC 真实结算；任何工作区报告忙碌时（包括 Qoder 缓存写入）不启动本检查。这是跨工作区协调，不是原子全局后端锁。浏览器和演示模式不调用或模拟检查。含合成秘密的测试验证脱敏与零写，不代表真实 Qoder 兼容性或在线认证已验收。

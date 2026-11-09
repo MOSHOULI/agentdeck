@@ -235,6 +235,20 @@ def fixtures(root):
     return paths
 
 
+def scope_fixtures(root):
+    user = root / 'user'; user.mkdir(mode=0o700)
+    project = root / 'project'; project.mkdir(mode=0o700)
+    shared = CANARY + '-shared-server'
+    entry = {'command': CANARY + '-never-execute', 'env': {'TOKEN': CANARY}}
+    settings = {'mcpServers': {shared: entry, CANARY + '-user-only': entry},
+                'permissions': {'allow': [CANARY]}, 'model': CANARY, CANARY + '-field': CANARY}
+    mcp = {'mcpServers': {shared: entry, CANARY + '-project-only': entry}}
+    paths = {'user': user / 'settings.json', 'project_mcp': project / '.mcp.json'}
+    write_private(paths['user'], ('// synthetic read-only fixture\n' + json.dumps(settings)).encode())
+    write_private(paths['project_mcp'], json.dumps(mcp).encode())
+    return paths
+
+
 def snapshot(root, exact=None):
     exact = exact or {}
     result = {}
@@ -444,6 +458,47 @@ def exercise_cache_writes(driver, archive, root, records, phase=lambda value: No
         raise Failure('private_fixture_content_exposed')
 
 
+def exercise_scopes(driver, paths, root, records, phase=lambda _: None):
+    result = "//section[@aria-label='Qoder 作用域检查结果']"
+    selectors = {name: "//*[@id='qoder-scope-" + name + "']" for name in ('user', 'project', 'local', 'mcp')}
+    before = snapshot(root)
+    phase('scope_explicit_synthetic_inspection')
+    for name, path in (('user', paths['user']), ('mcp', paths['project_mcp'])):
+        driver.wait(lambda: driver.enabled(selectors[name]))
+        driver.type(selectors[name], str(path))
+        driver.wait(lambda: driver.value(selectors[name]) == str(path))
+    inspect = "//button[text()='只读检查 Qoder 作用域']"
+    driver.wait(lambda: driver.enabled(inspect))
+    driver.click(inspect)
+    driver.wait(lambda: len(driver.elements(result)) == 1)
+    text = driver.text(result)
+    if any(value not in text for value in ('重复 MCP 标识数：1', '重复只表示潜在重叠，不是冲突或生效优先级', '未选作用域不视为空', '不执行、不写入、不备份、不恢复')):
+        raise Failure('scope_summary_invalid')
+    for scope in ('user_settings', 'project_mcp'):
+        text = driver.text("//section[@aria-label='Qoder 作用域 " + scope + "']")
+        if '已读取固定摘要' not in text or 'MCP 条目数：2' not in text:
+            raise Failure('scope_summary_invalid')
+        expected_flags = ('MCP 分区：存在', '钩子分区：未见', '安全分区：未见') + (('权限分区：存在', '模型分区：存在', '其他顶层字段：存在') if scope == 'user_settings' else ('权限分区：未见', '模型分区：未见', '其他顶层字段：未见'))
+        if any(flag not in text for flag in expected_flags): raise Failure('scope_summary_invalid')
+    for scope in ('project_settings', 'local_settings'):
+        text = driver.text("//section[@aria-label='Qoder 作用域 " + scope + "']")
+        if '未选择' not in text or 'MCP 条目数' in text:
+            raise Failure('scope_summary_invalid')
+    for value in (driver.text('//body'), driver.command('GET', '/source')):
+        if not isinstance(value, str): raise Failure('scope_summary_invalid')
+        if CANARY in value: raise Failure('private_fixture_content_exposed')
+    if snapshot(root) != before: raise Failure('scope_fixture_changed')
+    records.append({'scope': 'synthetic_settings_and_project_mcp', 'counts_verified': True,
+                    'potential_overlap_only': True, 'no_secret_rendered': True, 'zero_write': True})
+    phase('scope_input_invalidation_and_clear')
+    driver.type(selectors['user'], str(paths['user']))
+    driver.wait(lambda: not driver.elements(result))
+    driver.click("//button[text()='清除 Qoder 作用域选择与结果']")
+    driver.wait(lambda: not driver.elements(result) and all(driver.value(selector) == '' for selector in selectors.values()))
+    if snapshot(root) != before: raise Failure('scope_fixture_changed')
+    records.append({'scope': 'input_invalidation_and_clear', 'old_result_invalidated': True, 'zero_write': True})
+
+
 def failure_code(error):
     if isinstance(error, complete.PreparationFailure): return 'complete_cache_preparation_failed'
     if isinstance(error, Failure):
@@ -454,7 +509,7 @@ def failure_code(error):
                    'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready', 'startup_registry_not_idle', 'incomplete_gui_coverage', 'desktop_write_output_invalid', 'desktop_destination_not_new',
                    'desktop_confirmation_not_invalidated', 'desktop_confirmation_details_mismatch', 'desktop_unconfirmed_write',
                    'desktop_write_not_confirmed', 'desktop_write_modified_source', 'desktop_diagnosis_or_zero_write_failed',
-                   'desktop_existing_destination_not_rejected', 'desktop_existing_destination_changed', 'desktop_final_zero_write_failed', 'desktop_attempt_target_changed', 'desktop_attempt_fill_not_readonly', 'desktop_attempt_recovery_invalid', 'workspace_scroll_limit', 'workspace_scroll_invalid', 'workspace_scroll_changed_inputs'}
+                   'desktop_existing_destination_not_rejected', 'desktop_existing_destination_changed', 'desktop_final_zero_write_failed', 'scope_summary_invalid', 'scope_fixture_changed', 'desktop_attempt_target_changed', 'desktop_attempt_fill_not_readonly', 'desktop_attempt_recovery_invalid', 'workspace_scroll_limit', 'workspace_scroll_invalid', 'workspace_scroll_changed_inputs'}
         return str(error) if str(error) in allowed else 'harness_failure'
     if isinstance(error, (ConnectionError, http.client.HTTPException)): return 'webdriver_transport_error'
     if isinstance(error, TimeoutError): return 'webdriver_timeout'
@@ -583,7 +638,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
     env = dict(os.environ, HOME=str(home))
     for key, name in [('XDG_CONFIG_HOME', 'config'), ('XDG_CACHE_HOME', 'cache'), ('XDG_DATA_HOME', 'data'), ('XDG_STATE_HOME', 'state'), ('XDG_RUNTIME_DIR', 'runtime')]:
         directory = home / name; directory.mkdir(mode=0o700); env[key] = str(directory)
-    client = Driver(); process = None; records = []; write_records = []; passed = False
+    client = Driver(); process = None; records = []; write_records = []; scope_records = []; passed = False
     log = bytearray(); logger = None
     diagnostic = {'phase': 'start_driver', 'failure_code': None}
     def phase(value): diagnostic['phase'] = value
@@ -617,6 +672,11 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         exercise_cache_writes(client, archive, write_root, write_records, phase)
         if [entry.get('operation') for entry in write_records] != ['confirmation', 'stage', 'stage_existing', 'unpack', 'unpack_existing'] or snapshot(fixture_root, exact) != readonly_before:
             raise Failure('incomplete_gui_coverage')
+        scope_root = temporary / 'scope-fixtures'; scope_root.mkdir(mode=0o700)
+        scope_paths = scope_fixtures(scope_root)
+        exercise_scopes(client, scope_paths, scope_root, scope_records, phase)
+        if len(scope_records) != 2 or snapshot(fixture_root, exact) != readonly_before:
+            raise Failure('incomplete_gui_coverage')
         phase('acceptance_complete')
         passed = True
     except Exception as error:
@@ -645,7 +705,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         if CANARY.encode() in retained:
             retained = b'Synthetic private content suppressed.\n'; passed = False
         (evidence / 'driver.log').write_bytes(retained)
-        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'desktop_write_checks': write_records, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_directory_mode': '0700'}, indent=2))
+        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'desktop_write_checks': write_records, 'scope_checks': scope_records, 'synthetic_scope_gui_verified': passed and len(scope_records)==2, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_directory_mode': '0700'}, indent=2))
     if not passed:
         raise Failure('acceptance_not_confirmed')
 

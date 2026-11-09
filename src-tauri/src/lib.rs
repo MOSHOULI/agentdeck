@@ -15,6 +15,7 @@ pub fn run() {
             commands::qoder::qoder_distribution_plan,
             commands::qoder::verify_qoder_package,
             commands::qoder::inspect_qoder_cache,
+            commands::qoder_scopes::inspect_qoder_scopes,
             commands::qoder::write_qoder_cache,
             commands::dsh::inspect_dsh_profile,
             commands::qwen::inspect_qwen_settings,
