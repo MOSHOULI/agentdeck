@@ -54,6 +54,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.BUILD_SHA }}
+      - run: python -B scripts/test_build_nsis_resilient.py
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.99.1
@@ -157,8 +158,11 @@ jobs:
       - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- health
       - name: Qwen owned field compatibility (synthetic, pinned offline source)
         run: python scripts/run-isolated.py node scripts/test-qwen-owned-setting.mjs
-      - name: Build NSIS installer
-        run: npm exec --prefix web/ui -- tauri build --bundles nsis --ci -- --locked
+      - name: Test bounded NSIS build retry classifier (offline)
+        run: python -B scripts/test_build_nsis_resilient.py
+      - name: Build NSIS installer (bounded official download retry)
+        timeout-minutes: 15
+        run: python -B scripts/build_nsis_resilient.py
       - name: Record installer integrity
         shell: pwsh
         run: |
