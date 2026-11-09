@@ -147,14 +147,15 @@ class Tests(unittest.TestCase):
         subject.capture_log(stream,output)
         self.assertEqual(len(output),1_048_576);self.assertEqual(stream.tell(),2_000_000)
 
-    def test_exercise_asserts_all_three_states_and_fails_on_mutation(self):
+    def test_exercise_asserts_five_state_flow_plans_clear_and_zero_write(self):
         class Fake:
             def __init__(self, paths, mutate=False):
-                self.paths=paths; self.kind=None; self.visible=False; self.current_value=''; self.mutate=mutate; self.inspect_clicks=0
+                self.paths=paths; self.kind=None; self.visible=False; self.current_value=''; self.mutate=mutate; self.inspect_clicks=0; self.wait_seconds=[]
             def elements(self, xpath):
                 if '缓存诊断结果' in xpath: return [{}] if self.visible else []
                 return [{}]
             def wait(self, predicate, seconds=20):
+                self.wait_seconds.append(seconds)
                 if not predicate(): raise subject.Failure('predicate_failed')
             def type(self, xpath, text):
                 self.current_value=text;self.visible=False
@@ -166,7 +167,7 @@ class Tests(unittest.TestCase):
                     if self.mutate: (self.paths[self.kind]/'new').write_text('changed')
                 if '清除' in xpath:self.visible=False;self.current_value=''
             def text(self, xpath):
-                return subject.LABELS[self.kind] + ' 本报告不授权删除'
+                return subject.LABELS[self.kind] + ' 本报告不授权删除 ' + ('保留缓存，不执行操作。' if self.kind in ('staged','unpacked') else '保留现场，人工检查。')
             def one(self, xpath):return 'control'
             def command(self, *args):return self.current_value
             def value(self, xpath):return self.current_value
@@ -177,11 +178,34 @@ class Tests(unittest.TestCase):
             subject.exercise(Fake(paths),paths,root,records,phases.append)
             self.assertLess(phases.index('unknown_confirm_typed_path'),phases.index('unknown_click_inspect'))
             self.assertLess(phases.index('unknown_wait_inspect_enabled'),phases.index('unknown_click_inspect'))
-            self.assertEqual([r['state'] for r in records],list(subject.LABELS))
+            self.assertEqual([r['state'] for r in records],['unknown','incomplete','conflict'])
             startup=Fake(paths); original_elements=startup.elements
             startup.elements=lambda xpath: [] if 'workspace-tab-updates' in xpath else original_elements(xpath)
             with self.assertRaisesRegex(subject.Failure,'startup_registry_not_idle'):subject.exercise(startup,paths,root,[])
             self.assertEqual(startup.inspect_clicks,0)
+            allpaths=dict(paths)
+            for kind in ('staged','unpacked'):
+                allpaths[kind]=root/kind;allpaths[kind].mkdir(mode=0o700)
+            # Mock-only UI flow coverage: these empty directories are not genuine
+            # complete caches and do not constitute native GUI or package proof.
+            five=Fake(allpaths);five_records=[]
+            subject.exercise(five,allpaths,root,five_records)
+            self.assertEqual([r['state'] for r in five_records],list(subject.LABELS))
+            self.assertEqual(five.wait_seconds.count(90),2)
+            self.assertEqual(five.inspect_clicks,5)
+            self.assertEqual(five.current_value,'')
+            self.assertFalse(five.visible)
+            for wrong_kind in ('staged','unpacked'):
+                wrong_plan=Fake(allpaths); original_text=wrong_plan.text
+                wrong_plan.text=lambda xpath, d=wrong_plan, original=original_text, kind=wrong_kind: (
+                    original(xpath).replace('保留缓存，不执行操作。','保留现场，人工检查。')
+                    if d.kind == kind else original(xpath))
+                with self.assertRaisesRegex(subject.Failure,'unexpected_cache_state'):
+                    subject.exercise(wrong_plan,allpaths,root,[])
+            uncleared=Fake(allpaths); original_click=uncleared.click
+            uncleared.click=lambda xpath: None if '清除' in xpath else original_click(xpath)
+            with self.assertRaisesRegex(subject.Failure,'predicate_failed'):
+                subject.exercise(uncleared,allpaths,root,[])
             wrong_value=Fake(paths);wrong_value.value=lambda xpath:'wrong'
             with self.assertRaises(subject.Failure):subject.exercise(wrong_value,paths,root,[])
             self.assertEqual(wrong_value.inspect_clicks,0)

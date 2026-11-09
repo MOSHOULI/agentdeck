@@ -56,6 +56,7 @@ jobs:
           ref: ${{ env.BUILD_SHA }}
       - run: python -B scripts/test_build_nsis_resilient.py
       - run: python -B scripts/test_linux_qoder_webview.py
+      - run: python -B scripts/test_qoder_complete_fixtures.py
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.99.1
@@ -262,8 +263,16 @@ jobs:
           dpkg-query -W webkit2gtk-driver xvfb libwebkit2gtk-4.1-dev
       - name: Install pinned external Tauri driver
         run: cargo install tauri-driver --version 2.1.0 --locked
-      - name: Offline acceptance harness checks
-        run: python -B scripts/test_linux_qoder_webview.py
+      - name: Offline acceptance harness and complete-fixture checks
+        run: |
+          python -B scripts/test_linux_qoder_webview.py
+          python -B scripts/test_qoder_complete_fixtures.py
+          python -B scripts/test_fetch_qoder_ui_archive.py
+      - name: Fetch pinned official Qoder archive (never execute)
+        timeout-minutes: 4
+        run: python -B scripts/fetch_qoder_ui_archive.py --destination "$RUNNER_TEMP/qoder-linux-official"
+      - name: Build exact checkout CLI for controlled cache preparation
+        run: cargo build --locked -p aisync-cli
       - run: npm ci --prefix web/ui
       - name: Build real native Linux application, without packaging or test plugins
         run: npm exec --prefix web/ui -- tauri build --debug --no-bundle --ci -- --locked
@@ -274,7 +283,9 @@ jobs:
             --application "$PWD/target/debug/agentdeck" \
             --driver "$HOME/.cargo/bin/tauri-driver" \
             --native-driver /usr/bin/WebKitWebDriver \
-            --evidence "$RUNNER_TEMP/linux-webview-evidence"
+            --evidence "$RUNNER_TEMP/linux-webview-evidence" \
+            --cli "$PWD/target/debug/aisync" \
+            --archive "$RUNNER_TEMP/qoder-linux-official/qodercli-linux-x64-baseline.tar.gz"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

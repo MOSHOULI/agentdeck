@@ -76,3 +76,21 @@ Offline tests use a real local HTTP/1.1 server to verify two requests share the 
 启动修复后的一次真实运行已完成三态点击/IPC/零写，但最终清除点击在收到响应前遭原生代理连接重置，仍然失败，未重放未知结果的点击。官方 tauri-driver 2.1.0 使用共享 hyper 上游连接池、禁用取消请求自动重试，却原样转发 Connection 头；Python urllib 每次强制 Connection: close 并关闭连接，存在连接生命周期兼容嫌疑，但不能断言全部 reset 根因。
 
 改用固定 loopback 的标准 http.client 单持久连接、明确 Content-Length，不发送 close，完整读取有界响应后复用。所有跳转/非成功/异常 JSON/超限均关连接并失败，不自动重放任何未知命令；之后只读诊断可新建连接但保留原失败。正常清理也关闭连接。离线真实 HTTP/1.1 服务测试验证复用与头信息，断连点击恰好发送一次；未改 driver、按键、产品门禁、Cargo 或 sandbox，实际兼容效果仍待 CI。
+
+## Complete official cache extension / 完整官方缓存扩展
+
+The Linux hosted x86_64 job now downloads the same reviewed 1.1.85 baseline archive used by Windows read-only acceptance: 78,587,775 bytes, SHA256 `a2fd8cc04711603f9637f54b63097380efc79939739967985cd6193507472dc4`. The downloader retains its fixed official URL, no redirects, streaming size/hash bounds, 180-second subprocess deadline, new-file-only creation and private RUNNER_TEMP destination. The existing Windows-hosted guard is unchanged; the additional branch requires hosted Linux **and actual Linux x86_64**, not a general-purpose bypass. Download failure blocks the job.
+
+CI builds `aisync` from the same exact checkout using `--locked`. Under the GUI harness's new temporary HOME/XDG, it invokes only `qoder stage-package --target linux-amd64-baseline ... --yes` and `qoder unpack-cache ... --yes`, each with a 120-second subprocess deadline and bounded output. Destinations are new private directories, never reused. Nonzero exit, timeout, malformed/incorrect report or invalid member set fails before starting the GUI; there is no fallback to only synthetic states. Reports are strictly checked for fixed fields/types, non-installation and non-execution flags. Core stage/unpack independently check archive/payload content and retain partial failures. No Qoder payload is executed or given executable permissions.
+
+Actual stage/unpack member sets, directory 0700/file 0600 modes, ownership, regular single links, fixed archive and payload sizes/hashes are checked before GUI interaction. The payload is 182,543,840 bytes with SHA256 `8af52502ae32eabd8eac922e6dc5769840d710bcf0374f50f23339779f19b06b`. Snapshot hashing is streamed in 64 KiB blocks through no-follow handles with before/after metadata/identity checks. Only the three fixed large artifact paths get their exact reviewed size/hash contracts; other records retain a 64 KiB ceiling. No blanket unbounded read was introduced.
+
+The actual WebView then inspects all five paths: the three original synthetic states plus the genuine staged and unpacked caches. Complete states must display their exact local label and “retain cache, take no action”, alongside the no-deletion-authorization boundary. Input-change invalidation, enabled gating, final Clear and before/after member/hash/metadata checks remain mandatory. Complete-result waits are bounded at 90 seconds to accommodate debug Rust hashing of large artifacts; this does not fake completion or release busy early. The existing eight-minute GUI job-step budget is unchanged. Evidence contains fixed hashes/sizes/required modes and observed assertion booleans, never archives, payloads, fixture files or HOME contents.
+
+This extension is not a runtime or installer test for Qoder. Local real CLI/snapshot checks are separate from actual GUI success; `complete_cache_gui_verified` is true only after all five GUI assertions and cleanup finish successfully. The earlier three-state scope descriptions above describe the original gate and are extended, not replaced or weakened, by this section.
+
+Linux hosted x86_64 CI 新增下载同一固定官方包，Windows 原 guard 不变；固定 URL/大小/SHA、无跳转、流式上限/180 秒总时限及新文件私有目录规则保持。Linux 分支同时核实际 Linux x86_64。任意下载失败直接阻断。
+
+同 checkout `--locked` 编译 CLI，在临时 HOME/XDG 中对两个全新目录真实运行 stage/unpack，各限时 120 秒且输出有界。必须验证退出码、严格报告、成员集、owner/链接/0700/0600、固定归档与载荷摘要后才启动 GUI；不能伪造 complete 记录或在失败时退化为仅三态通过。Qoder 不执行，载荷不赋执行位。大文件采用 64 KiB 流式 no-follow 读取与前后身份/metadata 核验，仅固定三条大文件路径按精确大小/SHA 放宽，其他记录仍限 64 KiB。
+
+真实 WebView 保留原三态并追加完整暂存/解包两态，必须显示精确文案、“保留缓存，不执行操作”和不授权删除；换路径失效、按钮启用、清除与完整零写检查全部保留。完整态结果等待上限 90 秒只为有界真实哈希留余量，不伪造完成。证据只含固定摘要/大小/要求权限和断言布尔，不上传包、载荷、缓存或 HOME。五态及清理全部完成后才标记完整 GUI 已验证，本地 CLI/snapshot 测试不能替代 GUI，也不证明 Qoder 运行兼容。
