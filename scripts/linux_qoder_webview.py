@@ -2,6 +2,7 @@
 """Real external WebDriver acceptance; no execute-script, mock or direct IPC."""
 import argparse
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -10,8 +11,6 @@ import subprocess
 import tempfile
 import threading
 import time
-import urllib.error
-import urllib.request
 
 ELEMENT = 'element-6066-11e4-a52e-4f735466cecf'
 CANARY = 'QODER-SYNTHETIC-PRIVATE-CONTENT-NOT-FOR-UI'
@@ -24,47 +23,58 @@ LABELS = {
 class Failure(Exception):
     pass
 
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        raise Failure('driver_redirect_forbidden')
-
-
 class Driver:
     def __init__(self):
-        self.client = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+        self.connection = http.client.HTTPConnection('127.0.0.1', 4444, timeout=30)
         self.session = None
         self.expected_input = None
         self.input_stage = None
         self.last_response = None
 
+    def close(self):
+        self.connection.close()
+
     def request(self, method, path, body=None):
-        # Only the local external driver. No external URL or script endpoint API.
-        if not path.startswith('/') or any(token in path for token in ('execute', 'script')):
+        # One fixed loopback HTTP/1.1 connection; no proxy lookup, redirects or
+        # automatic replay. Tauri 2.1.0 forwards Connection headers unchanged to
+        # its pooled native client, so do not send urllib's forced close header.
+        if method not in {'GET', 'POST', 'DELETE'} or not path.startswith('/') or path.startswith('//') or any(ord(c) < 32 or ord(c) == 127 for c in path) or any(token in path for token in ('execute', 'script')):
             raise Failure('forbidden_driver_endpoint')
         payload = None if body is None else json.dumps(body).encode()
-        req = urllib.request.Request('http://127.0.0.1:4444' + path, data=payload, method=method,
-                                     headers={'Content-Type': 'application/json'})
         operation = path.rsplit('/', 1)[-1]
         allowed_operations = {'status', 'session', 'elements', 'click', 'clear', 'value', 'enabled', 'text', 'source'}
         self.last_response = {'operation': operation if operation in allowed_operations else 'other', 'method': method, 'received': False}
         try:
-            with self.client.open(req, timeout=30) as response:
+            self.connection.request(method, path, body=payload, headers={'Content-Type': 'application/json', 'Content-Length': str(len(payload) if payload is not None else 0)})
+            response = self.connection.getresponse()
+            try:
                 raw = response.read(1_048_577)
-                self.last_response.update({'received': True, 'status': response.status,
-                                           **response_shape(raw)})
+                self.last_response.update({'received': True, 'status': response.status, **response_shape(raw)})
                 if len(raw) > 1_048_576:
                     raise Failure('driver_response_limit')
-        except urllib.error.HTTPError as error:
-            raw = error.read(1_048_577)
-            self.last_response.update({'received': True, 'status': error.code, **response_shape(raw)})
+                # read(amt), unlike read(), may return a short valid JSON body
+                # at EOF without raising IncompleteRead. Never accept a frame
+                # whose declared non-chunked body still has bytes outstanding.
+                if not response.chunked and response.length not in (None, 0):
+                    raise Failure('driver_incomplete_response')
+                if 300 <= response.status <= 399:
+                    raise Failure('driver_redirect_forbidden')
+                if not 200 <= response.status <= 299:
+                    raise Failure('driver_http_error')
+            finally:
+                response.close()
+            decoded = json.loads(raw)
+            if not isinstance(decoded, dict) or 'value' not in decoded:
+                raise Failure('driver_response_schema')
+            value = decoded['value']
+            if isinstance(value, dict) and 'error' in value:
+                raise Failure('webdriver_command_failed')
+            return value
+        except Exception:
+            # This request may have taken effect. Close transport and propagate;
+            # callers never replay a failed click, clear or key command.
+            self.close()
             raise
-        decoded = json.loads(raw)
-        if not isinstance(decoded, dict) or 'value' not in decoded:
-            raise Failure('driver_response_schema')
-        value = decoded['value']
-        if isinstance(value, dict) and 'error' in value:
-            raise Failure('webdriver_command_failed')
-        return value
 
     def command(self, method, path, body=None):
         if not self.session:
@@ -137,7 +147,8 @@ def response_shape(raw):
 def exception_class(error):
     allowed = {'Failure', 'TypeError', 'AttributeError', 'KeyError', 'ValueError', 'JSONDecodeError',
                'UnicodeDecodeError', 'UnicodeEncodeError', 'HTTPError', 'URLError', 'TimeoutError',
-               'ConnectionError', 'ConnectionResetError', 'BrokenPipeError', 'OSError'}
+               'ConnectionError', 'ConnectionResetError', 'BrokenPipeError', 'OSError',
+               'RemoteDisconnected', 'BadStatusLine', 'IncompleteRead', 'LineTooLong', 'HTTPException'}
     name = type(error).__name__
     return name if name in allowed else 'OtherException'
 
@@ -221,14 +232,12 @@ def exercise(driver, paths, root, record, phase=lambda value: None):
 def failure_code(error):
     if isinstance(error, Failure):
         allowed = {'driver_redirect_forbidden', 'forbidden_driver_endpoint', 'driver_response_limit',
-                   'webdriver_command_failed', 'driver_response_schema', 'no_session', 'missing_or_ambiguous_control', 'ui_wait_expired',
+                   'webdriver_command_failed', 'driver_response_schema', 'driver_http_error', 'driver_incomplete_response', 'no_session', 'missing_or_ambiguous_control', 'ui_wait_expired',
                    'unsafe_fixture', 'fixture_size_changed', 'unexpected_cache_state',
                    'private_fixture_content_exposed', 'cache_fixture_changed',
                    'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready', 'startup_registry_not_idle'}
         return str(error) if str(error) in allowed else 'harness_failure'
-    if isinstance(error, urllib.error.HTTPError):
-        return 'webdriver_http_' + str(error.code) if 100 <= error.code <= 599 else 'webdriver_http_error'
-    if isinstance(error, urllib.error.URLError): return 'webdriver_transport_error'
+    if isinstance(error, (ConnectionError, http.client.HTTPException)): return 'webdriver_transport_error'
     if isinstance(error, TimeoutError): return 'webdriver_timeout'
     return 'unexpected_harness_error'
 
@@ -311,7 +320,7 @@ def guarded_run(application, driver_binary, native_driver, evidence):
                 raise Failure('driver_exited')
             try:
                 client.request('GET', '/status'); break
-            except (urllib.error.URLError, ConnectionError):
+            except (OSError, http.client.HTTPException):
                 if time.monotonic() > deadline: raise Failure('driver_not_ready') from None
                 time.sleep(0.2)
         phase('create_session')
@@ -331,6 +340,7 @@ def guarded_run(application, driver_binary, native_driver, evidence):
         if client.session:
             try: client.command('DELETE', '')
             except Exception: passed = False
+        client.close()
         if process is not None:
             try: os.killpg(process.pid, signal.SIGTERM)
             except ProcessLookupError: pass

@@ -19,7 +19,7 @@ The hosted-runner-only harness creates a new temporary HOME and XDG directories 
 
 Changing the path must remove the previous result before the next click. Clear must remove the result and reset the input. Before and after all observations, the harness compares all fixture members, hashes, inode, owner, mode, link count, size, mtime and ctime. Access times are excluded because reading may update them. A synthetic content canary must never appear in the rendered body; private fixture files are never uploaded. Evidence is fixed assertion metadata plus capped (1 MiB) driver logs, scrubbed if the content canary appears.
 
-Python stdlib speaks only the local WebDriver protocol, with proxy discovery disabled and every HTTP redirect rejected before following; no extra client library or product test hook is needed. Requests have 30-second socket timeouts, wait loops have deadlines, responses are capped at 1 MiB, and the real UI step has an eight-minute workflow deadline. Only the process group started by the harness is stopped on completion. Offline harness tests check command construction, no script endpoint, fixture boundaries, guards, response/log limits; **they are not GUI acceptance**.
+Python stdlib `http.client` speaks only the fixed loopback WebDriver protocol, without proxy discovery and with every HTTP redirect rejected; no extra client library or product test hook is needed. Requests have 30-second socket timeouts, wait loops have deadlines, responses are capped at 1 MiB, and the real UI step has an eight-minute workflow deadline. Only the process group started by the harness is stopped on completion. Offline harness tests check command construction, no script endpoint, fixture boundaries, guards, response/log limits; **they are not GUI acceptance**.
 
 The job is required by the release job. Missing drivers, unavailable sandbox/user namespaces, failed app launch, UI mismatch or unexpected fixture modification fail the job, never skip to green. No WebKit sandbox-disabling environment variables, sysctl changes, AppArmor changes or namespace bypasses are supplied. The harness explicitly refuses sandbox override variables. If the runner cannot start WebKit under its existing policy, retain the failure and arrange a compatible runner rather than relaxing isolation.
 
@@ -62,3 +62,17 @@ Real GUI acceptance now asserts the registry tab is idle at startup before touch
 完整失败源码明确显示“进行中：注册表更新”，输入路径已正确进入原生 DOM，Qoder 按钮因另一工作区正在检查注册表而合法禁用，并非已证明 React 输入事件或 sandbox 出错。原组件挂载即自动检查；manifest 与签名串行 HTTP 请求各已有 60 秒超时，可能超过脚本 20 秒等待，不能称为无限挂死。
 
 产品改为启动“尚未检查”，挂载/展示不自动联网，也不声称最新；需要时由用户显式检查。一旦开始，检查/应用仍保持真实忙碌及重复操作防护，隐藏工作区不释放，直到 IPC 真正结算。没有假取消、Promise 超时抢先解锁、缩短写入寿命或绕跨工作区忙碌协调；签名和载荷校验不变。真实 GUI 新增注册表初始空闲断言，并保留精确路径/启用门禁，没有 Tab 猜测修复或盲等 150 秒。效果待下一次 CI 实跑确认。
+
+### Native proxy transport compatibility / 原生代理传输兼容
+
+After the startup fix, one real Linux run completed all three state assertions and zero-write checks, then failed before receiving a response to the final clear click. The proxy logged a native `SendRequest` connection reset (errno 104). The failed click was not replayed, and the job remained failed; partial checks are not complete acceptance.
+
+Review of official `tauri-driver` 2.1.0 `src/server.rs` shows a shared hyper upstream connection pool, `retry_canceled_requests(false)`, and forwarding of request headers without removing `Connection`. Python's `urllib.request.AbstractHTTPHandler.do_open` unconditionally adds `Connection: close` and closes its socket after each request. That interaction is a plausible connection-lifetime compatibility cause, not a proven diagnosis of every reset.
+
+The harness now uses one standard `http.client.HTTPConnection('127.0.0.1', 4444, timeout=30)`, sends an explicit Content-Length without `Connection: close`, fully consumes each bounded response before reuse, and rejects all 3xx, non-2xx, malformed JSON/schema and over-limit responses. It never follows redirects or discovers a proxy. Any failure closes the connection and propagates without replaying the unknown command. Explicit later read-only diagnostics may establish a fresh connection but cannot erase the original failure. Cleanup closes the connection after attempting session deletion, even when deletion fails. No Tauri/WebKit source, key-event payload, product gate, Cargo dependency or sandbox setting is changed.
+
+Offline tests use a real local HTTP/1.1 server to verify two requests share the same TCP connection, no close header is sent, and Content-Length matches. A disconnected click is sent exactly once; response-size, JSON and redirect failures close transport. The next real CI run must confirm compatibility; tests do not manufacture GUI success.
+
+启动修复后的一次真实运行已完成三态点击/IPC/零写，但最终清除点击在收到响应前遭原生代理连接重置，仍然失败，未重放未知结果的点击。官方 tauri-driver 2.1.0 使用共享 hyper 上游连接池、禁用取消请求自动重试，却原样转发 Connection 头；Python urllib 每次强制 Connection: close 并关闭连接，存在连接生命周期兼容嫌疑，但不能断言全部 reset 根因。
+
+改用固定 loopback 的标准 http.client 单持久连接、明确 Content-Length，不发送 close，完整读取有界响应后复用。所有跳转/非成功/异常 JSON/超限均关连接并失败，不自动重放任何未知命令；之后只读诊断可新建连接但保留原失败。正常清理也关闭连接。离线真实 HTTP/1.1 服务测试验证复用与头信息，断连点击恰好发送一次；未改 driver、按键、产品门禁、Cargo 或 sandbox，实际兼容效果仍待 CI。

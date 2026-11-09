@@ -48,23 +48,99 @@ class Tests(unittest.TestCase):
         with self.assertRaises(subject.Failure):driver.one('//button')
         with self.assertRaises(subject.Failure):driver.request('POST','/session/id/execute/sync',{})
 
-    def test_all_redirects_are_rejected_before_following(self):
-        import urllib.request
-        driver = subject.Driver()
-        handlers = [handler for handler in driver.client.handlers if isinstance(handler, urllib.request.HTTPRedirectHandler)]
-        self.assertEqual(len(handlers), 1)
-        self.assertIsInstance(handlers[0], subject.NoRedirect)
-        for code in (301, 302, 303, 307, 308):
-            for destination in ('https://example.com/private', 'http://127.0.0.1:4444/other'):
-                with self.assertRaises(subject.Failure):
-                    handlers[0].redirect_request(urllib.request.Request('http://127.0.0.1:4444/status'), None, code, 'redirect', {}, destination)
+    def test_all_redirects_and_http_failures_close_without_following(self):
+        for code in (301, 302, 303, 307, 308, 400, 404, 500):
+            driver=subject.Driver();driver.connection=Mock()
+            response=Mock();response.chunked=False;response.length=0;response.status=code;response.read.return_value=b'{"value":null}'
+            driver.connection.getresponse.return_value=response
+            with self.assertRaises(subject.Failure):driver.request('POST','/session/id/element/id/click',{})
+            driver.connection.request.assert_called_once()
+            driver.connection.close.assert_called_once()
+            response.close.assert_called_once()
 
     def test_response_size_bound(self):
-        driver=subject.Driver(); response=Mock(); response.read.return_value=b'x'*1_048_577
-        manager=Mock();manager.__enter__=Mock(return_value=response);manager.__exit__=Mock(return_value=False)
-        driver.client=Mock();driver.client.open.return_value=manager
+        driver=subject.Driver();driver.connection=Mock()
+        response=Mock();response.chunked=False;response.length=0;response.status=200;response.read.return_value=b'x'*1_048_577
+        driver.connection.getresponse.return_value=response
         with self.assertRaises(subject.Failure):driver.request('GET','/status')
         response.read.assert_called_once_with(1_048_577)
+        driver.connection.close.assert_called_once()
+
+    def test_disconnected_click_is_not_replayed(self):
+        import http.client
+        driver=subject.Driver();driver.connection=Mock()
+        driver.connection.getresponse.side_effect=http.client.RemoteDisconnected('SECRET')
+        with self.assertRaises(http.client.RemoteDisconnected):driver.request('POST','/session/id/element/id/click',{})
+        driver.connection.request.assert_called_once()
+        driver.connection.close.assert_called_once()
+        self.assertFalse(driver.last_response['received'])
+        self.assertEqual(subject.exception_class(http.client.RemoteDisconnected('SECRET')),'RemoteDisconnected')
+        self.assertEqual(subject.failure_code(http.client.RemoteDisconnected('SECRET')),'webdriver_transport_error')
+
+    def test_real_http11_connection_reused_without_connection_close_header(self):
+        import http.client
+        from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+        import threading
+        observed=[]
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version='HTTP/1.1'
+            def do_POST(self):
+                body=self.rfile.read(int(self.headers['Content-Length']))
+                observed.append((self.client_address,dict(self.headers),body))
+                result=b'{"value":null}'
+                self.send_response(200);self.send_header('Content-Length',str(len(result)));self.end_headers()
+                self.wfile.write(result);self.wfile.flush()
+            def log_message(self,*args):pass
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        real=http.client.HTTPConnection
+        try:
+            with patch.object(subject.http.client,'HTTPConnection',side_effect=lambda host,port,timeout:real(host,server.server_port,timeout=timeout)) as factory:
+                driver=subject.Driver()
+                factory.assert_called_once_with('127.0.0.1',4444,timeout=30)
+                try:
+                    self.assertIsNone(driver.request('POST','/session/id/element/id/click',{}))
+                    self.assertIsNone(driver.request('POST','/session/id/element/id/clear',{}))
+                finally:driver.close()
+            self.assertEqual(len(observed),2)
+            self.assertEqual(observed[0][0],observed[1][0])
+            for _,headers,body in observed:
+                self.assertNotIn('Connection',headers)
+                self.assertEqual(int(headers['Content-Length']),len(body))
+                self.assertNotIn('Transfer-Encoding',headers)
+        finally:
+            server.shutdown();server.server_close();thread.join(timeout=2)
+
+    def test_real_short_content_length_frame_is_rejected_without_replay(self):
+        import http.client
+        from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+        import threading
+        received=[]
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version='HTTP/1.1'
+            def do_POST(self):
+                received.append(self.path)
+                self.rfile.read(int(self.headers['Content-Length']))
+                self.send_response(200)
+                self.send_header('Content-Length','100')
+                self.end_headers()
+                self.wfile.write(b'{"value":null}'); self.wfile.flush()
+                self.close_connection=True
+            def log_message(self,*args):pass
+        server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        real=http.client.HTTPConnection
+        try:
+            with patch.object(subject.http.client,'HTTPConnection',side_effect=lambda host,port,timeout:real(host,server.server_port,timeout=timeout)):
+                driver=subject.Driver()
+                try:
+                    with self.assertRaisesRegex(subject.Failure,'driver_incomplete_response'):
+                        driver.request('POST','/session/id/element/id/click',{})
+                    self.assertEqual(received,['/session/id/element/id/click'])
+                    self.assertIsNone(driver.connection.sock)
+                finally:driver.close()
+        finally:
+            server.shutdown();server.server_close();thread.join(timeout=2)
 
     def test_log_capture_is_bounded_but_drains(self):
         stream=io.BytesIO(b'x'*2_000_000); output=bytearray()
@@ -147,13 +223,16 @@ class Tests(unittest.TestCase):
     def test_w3c_null_response_and_malformed_bodies_are_distinguished(self):
         class Response(io.BytesIO):
             status=200
+            chunked=False
+            length=0
         for raw, expected in [(b'{"value":null}',None),(b'',json.JSONDecodeError),(b'[]',subject.Failure),(b'{"SECRET":"private"}',subject.Failure)]:
             driver=subject.Driver()
-            driver.client=Mock();driver.client.open.return_value=Response(raw)
+            driver.connection=Mock();driver.connection.getresponse.return_value=Response(raw)
             if expected is None:
                 self.assertIsNone(driver.request('POST','/session/id/element/id/clear',{}))
             else:
                 with self.assertRaises(expected):driver.request('POST','/session/id/element/id/clear',{})
+                driver.connection.close.assert_called_once()
             self.assertEqual(driver.last_response['operation'],'clear')
             self.assertNotIn('SECRET',json.dumps(driver.last_response))
             self.assertNotIn('private',json.dumps(driver.last_response))
