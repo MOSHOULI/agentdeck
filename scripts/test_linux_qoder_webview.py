@@ -370,7 +370,7 @@ class Tests(unittest.TestCase):
         # integrity or real native UI. Real CI uses the unpatched verifier.
         class Fake:
             def __init__(self, fault=None):
-                self.values={};self.operation='stage';self.dialog=False;self.result=False;self.alert=False;self.read=False;self.fault=fault;self.confirmed=0
+                self.values={};self.operation='stage';self.dialog=False;self.result=False;self.alert=False;self.read=False;self.fault=fault;self.confirmed=0;self.attempt=None
             def wheel_scroll_workspace_top(self):pass
             def one(self,xpath):return 'element'
             def wait(self,predicate,seconds=20):
@@ -380,8 +380,10 @@ class Tests(unittest.TestCase):
             def type(self,xpath,text):
                 self.values[xpath]=text
                 if self.fault!='stale_confirmation':self.reset()
+                if self.fault=='mutable_attempt':self.attempt=text
             def value(self,xpath):return self.values.get(xpath,'')
             def elements(self,xpath):
+                if '上次提交记录' in xpath:return [{}] if self.attempt else []
                 if "role='dialog'" in xpath:return [{}] if self.dialog else []
                 if '确认创建' in xpath:return [{}] if self.dialog else []
                 if '缓存写入结果' in xpath:return [{}] if self.result else []
@@ -389,6 +391,7 @@ class Tests(unittest.TestCase):
                 if '缓存诊断结果' in xpath:return [{}] if self.read else []
                 return [{}]
             def text(self,xpath):
+                if '上次提交记录' in xpath:return '已提交目标：'+str(self.attempt)
                 if "role='dialog'" in xpath:
                     source=self.values["//*[@id='qoder-write-source']"]
                     destination=self.values["//*[@id='qoder-write-destination']"]
@@ -397,7 +400,9 @@ class Tests(unittest.TestCase):
                 if '缓存写入结果' in xpath:return subject.LABELS['staged' if self.operation=='stage' else 'unpacked']
                 if '缓存诊断结果' in xpath:
                     kind='staged' if self.values["//*[@id='qoder-cache']"].endswith('desktop-staged') else 'unpacked'
-                    return subject.LABELS[kind]+' 保留缓存，不执行操作。 本报告不授权删除'
+                    guidance='可将这个暂存目录作为后续解包来源' if kind=='staged' else '仅保留此解包缓存，不激活或执行'
+                    if self.fault=='wrong_guidance':guidance='wrong'
+                    return subject.LABELS[kind]+' 保留缓存，不执行操作。 本报告不授权删除 本次只读诊断目录：'+self.values["//*[@id='qoder-cache']"]+' '+guidance
                 return 'safe visible text'
             def click(self,xpath):
                 if '选择暂存' in xpath:self.reset();self.operation='stage'
@@ -410,19 +415,26 @@ class Tests(unittest.TestCase):
                     if not self.dialog:raise AssertionError('write without preview')
                     self.reset();self.confirmed+=1
                     destination=Path(self.values["//*[@id='qoder-write-destination']"])
+                    self.attempt=str(destination)
                     if destination.exists():
                         self.alert=True
                         if self.fault=='overwrite':subject.write_private(destination/'unexpected',b'changed')
                     elif self.fault=='false_success':self.alert=True
                     else:
                         destination.mkdir(mode=0o700);subject.write_private(destination/'archive.tar.gz',b'mock archive');self.result=True
+                elif '将上次提交目标' in xpath:
+                    self.reset();self.values["//*[@id='qoder-cache']"]=self.attempt
+                    if self.fault=='auto_diagnose':self.read=True
+                    if self.fault=='fill_mutates':subject.write_private(Path(self.attempt)/'unexpected',b'changed')
                 elif '只读诊断' in xpath:self.reset();self.read=True
                 elif '清除 Qoder' in xpath:
-                    if self.fault!='clear_broken':self.reset()
+                    if self.fault!='clear_broken':
+                        self.reset()
+                        if self.fault!='history_not_cleared':self.attempt=None
                 else:raise AssertionError('unexpected action')
         original_snapshot=subject.snapshot
         def tiny_snapshot(root,exact=None):return original_snapshot(root)
-        for fault in (None,'wrong_preview','cancel_writes','stale_confirmation','overwrite','false_success','clear_broken'):
+        for fault in (None,'wrong_preview','cancel_writes','stale_confirmation','overwrite','false_success','clear_broken','mutable_attempt','wrong_guidance','auto_diagnose','fill_mutates','history_not_cleared'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
                 base=Path(tmp);source=base/'source';source.mkdir(mode=0o700);archive=source/'official.tar.gz';subject.write_private(archive,b'mock source')
                 root=base/'writes';root.mkdir(mode=0o700);records=[];driver=Fake(fault)
@@ -433,6 +445,8 @@ class Tests(unittest.TestCase):
                         subject.exercise_cache_writes(driver,archive,root,records)
                         self.assertEqual([r['operation'] for r in records],['confirmation','stage','stage_existing','unpack','unpack_existing'])
                         self.assertEqual(driver.confirmed,4)
+                        self.assertTrue(all(r.get('immutable_attempt_target_diagnosed') and r.get('recovery_guidance_verified') and r.get('recovery_diagnosis_zero_write') for r in records if r['operation'].endswith('_existing')))
+                        self.assertIsNone(driver.attempt)
                         self.assertFalse(driver.dialog or driver.result or driver.alert or driver.read)
                         self.assertFalse((root/'confirmation-invalidated').exists())
 

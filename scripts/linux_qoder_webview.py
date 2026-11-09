@@ -399,7 +399,29 @@ def exercise_cache_writes(driver, archive, root, records, phase=lambda value: No
         driver.wait(lambda: driver.enabled(source_input))
         if snapshot(root, exact) != before or snapshot(archive.parent, source_contract) != original_source:
             raise Failure('desktop_existing_destination_changed')
-        records.append({'operation': operation + '_existing', 'rejected_without_overwrite': True})
+        phase('desktop_' + operation + '_recover_attempt_diagnosis')
+        history = "//section[@aria-label='Qoder 上次提交记录']"
+        fill = "//button[text()='将上次提交目标填入只读诊断']"
+        # Editing a draft must not retarget the immutable last actual request.
+        driver.type(destination_input, str(unused))
+        driver.wait(lambda: driver.value(destination_input) == str(unused))
+        if '已提交目标：' + str(destination) not in driver.text(history):
+            raise Failure('desktop_attempt_target_changed')
+        driver.wait(lambda: driver.enabled(fill))
+        driver.click(fill)
+        driver.wait(lambda: driver.value("//*[@id='qoder-cache']") == str(destination))
+        if driver.elements(read_result) or snapshot(root, exact) != before:
+            raise Failure('desktop_attempt_fill_not_readonly')
+        driver.wait(lambda: driver.enabled("//button[text()='只读诊断 Qoder 缓存']"))
+        driver.click("//button[text()='只读诊断 Qoder 缓存']")
+        driver.wait(lambda: len(driver.elements(read_result)) == 1, seconds=90)
+        recovery = '可将这个暂存目录作为后续解包来源' if operation == 'stage' else '仅保留此解包缓存，不激活或执行'
+        expected = (LABELS[kind], '本次只读诊断目录：' + str(destination), recovery, '本报告不授权删除')
+        if any(value not in driver.text(read_result) for value in expected) or snapshot(root, exact) != before or snapshot(archive.parent, source_contract) != original_source:
+            raise Failure('desktop_attempt_recovery_invalid')
+        records.append({'operation': operation + '_existing', 'rejected_without_overwrite': True,
+                        'immutable_attempt_target_diagnosed': True, 'recovery_guidance_verified': True,
+                        'recovery_diagnosis_zero_write': True})
     phase('desktop_clear_and_final_zero_write')
     before = snapshot(root, exact)
     retained_inputs = [driver.value(path) for path in (source_input, destination_input, "//*[@id='qoder-cache']")]
@@ -408,7 +430,7 @@ def exercise_cache_writes(driver, archive, root, records, phase=lambda value: No
         raise Failure('workspace_scroll_changed_inputs')
     driver.wait(lambda: driver.enabled("//button[text()='清除 Qoder 选择与结果']"))
     driver.click("//button[text()='清除 Qoder 选择与结果']")
-    driver.wait(lambda: not driver.elements(result) and not driver.elements(alert) and not driver.elements(read_result) and not driver.elements(dialog))
+    driver.wait(lambda: not driver.elements(result) and not driver.elements(alert) and not driver.elements(read_result) and not driver.elements(dialog) and not driver.elements("//section[@aria-label='Qoder 上次提交记录']"))
     if snapshot(root, exact) != before or snapshot(archive.parent, source_contract) != original_source or unused.exists():
         raise Failure('desktop_final_zero_write_failed')
     if CANARY in driver.text('//body'):
@@ -425,7 +447,7 @@ def failure_code(error):
                    'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready', 'startup_registry_not_idle', 'incomplete_gui_coverage', 'desktop_write_output_invalid', 'desktop_destination_not_new',
                    'desktop_confirmation_not_invalidated', 'desktop_confirmation_details_mismatch', 'desktop_unconfirmed_write',
                    'desktop_write_not_confirmed', 'desktop_write_modified_source', 'desktop_diagnosis_or_zero_write_failed',
-                   'desktop_existing_destination_not_rejected', 'desktop_existing_destination_changed', 'desktop_final_zero_write_failed', 'workspace_scroll_limit', 'workspace_scroll_invalid', 'workspace_scroll_changed_inputs'}
+                   'desktop_existing_destination_not_rejected', 'desktop_existing_destination_changed', 'desktop_final_zero_write_failed', 'desktop_attempt_target_changed', 'desktop_attempt_fill_not_readonly', 'desktop_attempt_recovery_invalid', 'workspace_scroll_limit', 'workspace_scroll_invalid', 'workspace_scroll_changed_inputs'}
         return str(error) if str(error) in allowed else 'harness_failure'
     if isinstance(error, (ConnectionError, http.client.HTTPException)): return 'webdriver_transport_error'
     if isinstance(error, TimeoutError): return 'webdriver_timeout'
