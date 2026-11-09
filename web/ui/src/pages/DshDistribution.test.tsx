@@ -31,3 +31,22 @@ it('cancelled failure stays hidden and other workspace activity blocks native ro
  const owner=Symbol();useWorkspaceActivityStore.getState().setActivity('qwen',owner,true);render(<DshDistribution/>);expect(screen.getByRole('button',{name:'查看 DSH 根包计划'})).toBeDisabled();verify();expect(bridge.verifyDshPackage).not.toHaveBeenCalled();act(()=>useWorkspaceActivityStore.getState().setActivity('qwen',owner,false));
  const work=deferred<DshRootVerification>();vi.mocked(bridge.verifyDshPackage).mockReturnValue(work.promise);fill();verify();fireEvent.click(screen.getByRole('button',{name:'取消 DSH 根包结果'}));expect(useWorkspaceActivityStore.getState().busy.dsh).toBe(true);await act(async()=>work.reject(new Error('SECRET')));expect(screen.queryByRole('alert')).not.toBeInTheDocument();expect(useWorkspaceActivityStore.getState().busy.dsh).toBe(false);
 });
+it.each(['resolve','reject'] as const)('remount blocks new root IPC until old %s settles without inheriting its outcome',async outcome=>{
+ const old=deferred<DshRootVerification>();vi.mocked(bridge.verifyDshPackage).mockReturnValueOnce(old.promise);
+ const first=render(<DshDistribution/>);fill();verify();first.unmount();
+ render(<DshDistribution/>);
+ const planButton=screen.getByRole('button',{name:'查看 DSH 根包计划'});
+ const verifyButton=screen.getByRole('button',{name:'只读校验 DSH 根归档'});
+ expect(planButton).toBeDisabled();expect(verifyButton).toBeDisabled();
+ fireEvent.click(planButton);fireEvent.click(verifyButton);
+ expect(bridge.dshDistributionPlan).not.toHaveBeenCalled();expect(bridge.verifyDshPackage).toHaveBeenCalledTimes(1);
+ await act(async()=>{if(outcome==='resolve')old.resolve(verified);else old.reject(new Error('OLD_SECRET'));});
+ expect(screen.queryByRole('region',{name:'DSH 根包计划结果'})).not.toBeInTheDocument();
+ expect(screen.queryByRole('region',{name:'DSH 根归档校验结果'})).not.toBeInTheDocument();expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+ expect(useWorkspaceActivityStore.getState().busy.dsh).toBe(false);expect(planButton).not.toBeDisabled();
+ fireEvent.click(planButton);await screen.findByRole('region',{name:'DSH 根包计划结果'});
+ expect(bridge.dshDistributionPlan).toHaveBeenCalledTimes(1);
+ fill();expect(verifyButton).not.toBeDisabled();verify();
+ expect(await screen.findByRole('region',{name:'DSH 根归档校验结果'})).toHaveTextContent('已读取字节：25197');
+ expect(bridge.verifyDshPackage).toHaveBeenCalledTimes(2);
+});
