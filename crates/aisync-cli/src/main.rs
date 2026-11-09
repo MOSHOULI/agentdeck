@@ -88,6 +88,20 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum QoderAction {
+    /// Stage a pinned archive in a NEW private directory; never unpack, install or execute.
+    #[command(
+        long_about = "Create a new explicit private archive cache, only for linux-amd64-baseline@1.1.85 on Linux x86_64. Requires --yes. Existing destinations are never reused or overwritten. Copies and hashes the same audited source handle, then rechecks the private copy. No unpacking, execution, PATH or configuration writes. Failure may retain an incomplete destination; inspect before manual cleanup. Completion means staged archive only, not installed/runtime-ready. Same-user hostile races and mount I/O deadlines are not solved."
+    )]
+    StagePackage {
+        #[arg(long, value_parser = [qoder::staging::TARGET])]
+        target: String,
+        #[arg(long)]
+        archive: PathBuf,
+        #[arg(long)]
+        destination: PathBuf,
+        #[arg(long)]
+        yes: bool,
+    },
     /// Print a pinned native distribution plan; never download, install or execute.
     DistributionPlan {
         #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(qoder::distribution::TARGETS.iter().copied()))]
@@ -403,6 +417,27 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             )?;
             use std::io::Write;
             writeln!(std::io::stdout().lock(), "{report}")?;
+        }
+        Commands::Qoder {
+            action:
+                QoderAction::StagePackage {
+                    target,
+                    archive,
+                    destination,
+                    yes,
+                },
+        } => {
+            require_confirmation(yes)?;
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&qoder::staging::stage_package(
+                    &target,
+                    &archive,
+                    &destination
+                )?)?
+            )?;
         }
         Commands::Qoder {
             action: QoderAction::DistributionPlan { target },

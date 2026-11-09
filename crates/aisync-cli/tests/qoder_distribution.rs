@@ -58,3 +58,35 @@ fn mismatch_returns_nonzero_without_output_or_mutation() {
     assert_eq!(fs::read(&archive).unwrap(), b"SECRET");
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn staging_requires_explicit_write_confirmation_before_creating_destination() {
+    let dir = std::env::temp_dir().join(format!(
+        "qoder-stage-cli-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir(&dir).unwrap();
+    let archive = dir.join("qodercli-linux-x64-baseline.tar.gz");
+    fs::write(&archive, b"bad").unwrap();
+    let dest = dir.join("new-stage");
+    let output = Command::new(env!("CARGO_BIN_EXE_aisync"))
+        .args([
+            "qoder",
+            "stage-package",
+            "--target",
+            "linux-amd64-baseline",
+            "--archive",
+        ])
+        .arg(&archive)
+        .arg("--destination")
+        .arg(&dest)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!dest.exists());
+    assert!(output.stdout.is_empty());
+    fs::remove_dir_all(dir).unwrap();
+}

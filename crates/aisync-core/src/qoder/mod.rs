@@ -1,6 +1,7 @@
 //! Qoder CLI explicit scope inventory based on official docs reviewed 2026-11-08.
 //! No effective-config claim, automatic discovery, execution, BYOK editing or writes.
 pub mod distribution;
+pub mod staging;
 pub use crate::inspection::types::{InspectionIssue, InspectionLimits};
 use crate::inspection::{
     parse,

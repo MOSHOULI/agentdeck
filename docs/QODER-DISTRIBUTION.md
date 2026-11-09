@@ -48,3 +48,9 @@ ARM64 的文档和分发清单仍矛盾。URL、文件名与 SHA256 固定于已
 退出码 0 仅代表包摘要与固定上游摘要相符，不代表独立签名、兼容、安装或运行验收。
 错误/不匹配返回非零，不回显文件内容或原始系统错误；参数解析错误可能回显参数。
 注册表继续手动安装，后续安全暂存、安装所有权和回滚需另行实现与测试。
+
+A separate, opt-in [controlled archive staging command](QODER-CONTROLLED-STAGING.md)
+can copy the reviewed Linux baseline archive into a new private cache. It does not
+change the no-write behavior of `distribution-plan` or `verify-package`, and does
+not enable installation or extraction. 另有需明确确认的[受控暂存命令](QODER-CONTROLLED-STAGING.md)，
+仅创建全新私有归档缓存，不改变前述两个命令的只读行为，也不启用安装或解包。
