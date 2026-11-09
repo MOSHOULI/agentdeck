@@ -70,6 +70,16 @@ impl SelectedFileReader for NativeSelectedFileReader {
             Some(".mcp.json") => ".mcp.json",
             _ => return Err(InspectionIssue::UnexpectedFileName),
         };
+        self.read_named(path, expected)
+    }
+}
+
+impl NativeSelectedFileReader {
+    pub(crate) fn read_named(
+        &self,
+        path: &Path,
+        expected: &str,
+    ) -> Result<Vec<u8>, InspectionIssue> {
         validate_path(path, expected)?;
         // Refuse all platforms without the no-follow/non-blocking flags audited
         // below. Future ports need explicit review, not a weaker fallback open.

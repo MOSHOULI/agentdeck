@@ -106,6 +106,37 @@ enum QoderAction {
 
 #[derive(Subcommand)]
 enum QwenAction {
+    /// Preview one explicit non-credential field; no writes.
+    VimPreview {
+        #[arg(long, value_parser = parse_qwen_settings)]
+        settings: PathBuf,
+        #[arg(long, value_parser = parse_qwen_manifest)]
+        runtime_manifest: PathBuf,
+        #[arg(long, action = clap::ArgAction::Set)]
+        enabled: bool,
+    },
+    /// Apply general.vimMode with a current preview token and field-only recovery receipt.
+    VimApply {
+        #[arg(long, value_parser = parse_qwen_settings)]
+        settings: PathBuf,
+        #[arg(long, value_parser = parse_qwen_manifest)]
+        runtime_manifest: PathBuf,
+        #[arg(long, action = clap::ArgAction::Set)]
+        enabled: bool,
+        #[arg(long)]
+        preview_token: String,
+        #[arg(long, required = true)]
+        yes: bool,
+    },
+    /// Restore only the owned field, refusing detected drift; stop other editors first.
+    VimRestore {
+        #[arg(long, value_parser = parse_qwen_settings)]
+        settings: PathBuf,
+        #[arg(long, value_parser = parse_qwen_manifest)]
+        runtime_manifest: PathBuf,
+        #[arg(long, required = true)]
+        yes: bool,
+    },
     /// Read fixed section presence only; never executes Qwen, writes files or returns values.
     #[command(
         long_about = "Inspect explicitly selected Qwen package/settings files and emit fixed, redacted JSON observations. Only the reviewed package and settings schema are eligible for content inspection. No execution, environment expansion, credential discovery, initialization, backup or writes. This is not effective configuration, installation/authentication verification, a diff or a restore plan. Exit 0 means a report was produced, including unsupported or unavailable observations; invalid paths exit 2."
@@ -372,6 +403,50 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&report)?
             )?;
+        }
+        Commands::Qwen {
+            action:
+                QwenAction::VimPreview {
+                    settings,
+                    runtime_manifest,
+                    enabled,
+                },
+        } => {
+            let preview = qwen::owned::preview(&settings, &runtime_manifest, enabled)?;
+            println!("{}", serde_json::to_string_pretty(&preview)?);
+        }
+        Commands::Qwen {
+            action:
+                QwenAction::VimApply {
+                    settings,
+                    runtime_manifest,
+                    enabled,
+                    preview_token,
+                    yes,
+                },
+        } => {
+            anyhow::ensure!(yes, "--yes is required");
+            let changed =
+                qwen::owned::apply(&settings, &runtime_manifest, enabled, &preview_token)?;
+            println!(
+                "{}",
+                serde_json::json!({"changed": changed, "field": "general.vimMode"})
+            );
+        }
+        Commands::Qwen {
+            action:
+                QwenAction::VimRestore {
+                    settings,
+                    runtime_manifest,
+                    yes,
+                },
+        } => {
+            anyhow::ensure!(yes, "--yes is required");
+            let changed = qwen::owned::restore(&settings, &runtime_manifest)?;
+            println!(
+                "{}",
+                serde_json::json!({"changed": changed, "field": "general.vimMode"})
+            );
         }
         Commands::Qwen {
             action:

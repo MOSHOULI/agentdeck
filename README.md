@@ -6,7 +6,7 @@
 
 本开发分支另含 [MCP 开关预检与备份顺序修复](docs/MCP-SAFETY.zh-CN.md)，尚未随正式安装包发布；验证仅使用合成夹具，未测试真实 Agent 或桌面 GUI。
 
-**下一开发版本说明：** 当前分支新增 Qwen Code 手动安装指引与被动 PATH 候选观察，尚未随正式安装包发布。找到候选也不代表安装或登录已验证；Qwen Code 的自动安装、版本/来源验证及配置写入均未开放。详见[注册表来源核验](docs/REGISTRY-SOURCES.zh-CN.md#qwen-code手动安装与仅被动-path-发现)。
+**下一开发版本说明：** 当前分支新增 Qwen Code 手动安装指引与被动 PATH 候选观察，尚未随正式安装包发布。找到候选也不代表安装或登录已验证；Qwen Code 的自动安装、版本/来源验证及通用配置写入均未开放；仅实验性 CLI 支持下述 Vim 布尔设置的受管应用/撤销。详见[注册表来源核验](docs/REGISTRY-SOURCES.zh-CN.md#qwen-code手动安装与仅被动-path-发现)。
 
 
 新增 Cursor、GitHub Copilot CLI、Kimi Code 与 Qoder CLI 的六个[官方手动指引条目](docs/MAINSTREAM-CATALOG.zh-CN.md)，CLI 和桌面分别列出。目录共 17 条，不代表 17 款可自动管理；新条目不执行探针、不读写配置，尚未随正式安装包发布。
@@ -123,6 +123,6 @@ CI 验证前端、Linux 核心/CLI、Windows 全工作区（含 DPAPI），构�
 
 ### Qwen 设置检查
 
-明确路径、受版本限制的只读 CLI 检查见 [Qwen 配置检查说明](docs/QWEN-CONFIG-INSPECTION.md)。这不是配置切换或恢复功能。
+明确路径、受版本限制的只读 CLI 检查见 [Qwen 配置检查说明](docs/QWEN-CONFIG-INSPECTION.md)。这不是配置切换或恢复功能。另有[实验性 Vim 单字段应用/撤销](docs/QWEN-OWNED-SETTING.md)，仅显式路径和精确版本，未验证完整运行时生效。
 
 Qoder CLI 的显式作用域只读检查：`aisync qoder inspect --user-settings /absolute/settings.json`。支持多层文件的脱敏摘要与潜在 MCP 重叠计数，不写 BYOK、不验证生效配置或运行版本。详见 [作用域检查边界](docs/QODER-SCOPE-INSPECTION.md)。
