@@ -90,6 +90,8 @@ Installation, configuration, synchronization and restoration require `--yes`. In
 
 `dsh inspect` uses the same passive reader as the desktop DSH workspace, returns only JSON and does not enter the deployment workflow above. It reads only the selected profile's `package.json`; `--runtime-manifest` can explicitly select an additional runtime package's `package.json`. It does not scan HOME, invoke DSH/npm/pnpm, or read credentials, `cordis.yml`, or plugin code. Package dependencies and bundle selections are saved declarations only; versions are manifest-reported values. They do not establish that software is installed, plugins are running, or authentication has succeeded. Exit code 0 means only that a report was produced; inspect the JSON for missing, unsupported, or unknown states. The parser subset was reviewed against fixed `0.2.2-alpha.3` and `0.2.2-rc.1` snapshots; exact name/version recognition is not runtime compatibility or npm publication verification. Management writes remain disabled for all versions. See [DSH passive inventory boundaries](docs/DSH-PASSIVE-INVENTORY.md).
 
+`aisync dsh dependency-evidence` emits a fixed offline review of all 90 root dependency declarations and three illustrative exact metadata snapshots. It does not resolve a closure, verify dependency archives or enable installation. See [DSH dependency evidence](docs/DSH-DEPENDENCY-EVIDENCE.md).
+
 The CLI supports a [read-only sync plan](docs/SYNC-DRY-RUN.md): `sync --tools codex,claude-code --dry-run` reports target/action metadata without executing probes, initializing data, or modifying files. It is not a diff or verified apply readiness.
 
 ## Tests and releases
