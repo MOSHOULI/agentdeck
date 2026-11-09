@@ -58,15 +58,58 @@ Qwen 生命周期还通过真实点击检查四种恢复观察状态，核对整
 字节哈希均不变，诊断不打开应用/撤销确认。此项验证已安装 UI/IPC，不代表真实
 Qwen 运行效果，仍须以 Windows CI 实际通过为准。
 
-## Qoder read-only workspace / Qoder 只读工作区
+## Qoder real-archive read-only verification / Qoder 真实归档只读校验
 
-Installed UI acceptance selects the explicit Linux baseline plan through native
-keyboard/UIAutomation, checks its fixed official archive filename, then verifies
-that a synthetic mismatching archive is rejected through real IPC with unchanged
-bytes and file count. Clearing the selected path is also checked. It performs no
-Qoder download, extraction, execution or installation; real matching archive success
-on Windows remains unverified by this smoke test.
+The installed UI still tests explicit-plan selection and synthetic mismatching
+archive rejection. It now also hashes the pinned official **Linux amd64-baseline**
+Qoder 1.1.85 archive while running on Windows, using actual UIAutomation actions.
+Success must display the fixed SHA256-match message and exactly 78,587,775 bytes.
+Original archive hash, write time and directory file count must remain unchanged.
+Changing the selected target clears success; a subsequent successful read followed
+by a path change must clear it again. A separate same-name/same-size copy with one
+changed byte must then be rejected, proving the result is not reused from the
+previous success. No archive is unpacked and no Qoder code is executed.
 
-已安装UI通过原生键盘/UIAutomation选择明确Linux baseline计划并核固定包名，
-再经真实IPC拒绝合成摘要错误包，核对文件字节及数量不变，并测试清除路径。不下载、
-解包、执行或安装Qoder；此冒烟不证明真实匹配包在Windows上的成功验收。
+`scripts/fetch_qoder_ui_archive.py` is CI-only, guarded for a disposable GitHub-hosted
+Windows runner and a NEW directory beneath RUNNER_TEMP. Its only network destination
+is the exact version-pinned URL from the reviewed manifest; no URL/version/hash
+CLI or environment overrides exist. TLS verification uses Python defaults and all
+redirects are rejected. Status must be 200, one exact Content-Length is required,
+content encoding must be absent/identity and transfer encoding is rejected. Streaming
+is bounded to the expected size plus one overflow-detection byte, using 64 KiB
+chunks, and the complete SHA256 must match. Per-socket timeout is 15 seconds; a
+supervising process enforces a 180-second total worker deadline (up to 10 additional
+seconds to terminate/kill). Existing destinations are never reused or overwritten.
+Failure retains partial bytes, reports failure and blocks acceptance, never skips.
+
+The helper rejects linked/reparse ancestor paths; exclusive creation prevents
+reusing a leaf. The app's actual core reader independently applies its reviewed
+no-follow/nonblocking, bounded-file validation. These are ordinary temporary CI
+files with best-effort race checks, **not a security/isolation namespace or a
+sandbox against a same-UID process**. Only result hashes, counts and accessibility
+logs/screenshots are uploaded; the real archive and corrupted copy are outside the
+evidence directory and are never uploaded as artifacts. Offline downloader tests
+cover redirects, wrong headers, truncated/oversized bodies, wrong hashes, existing
+destinations, timeout and worker failure without contacting the service.
+
+This is real Windows **read/hash** UI evidence for a Linux archive, not validation
+of a Windows-native Qoder package, installation, runtime, login or signatures.
+Temporary CI hosts are discarded by the runner service; the script does not run
+Qoder or recursively clean partial data. Network availability is a new explicit
+acceptance dependency; failure must remain visible. Exact-commit CI must pass
+before reporting the real installed flow verified.
+
+现保留原计划/合成错误包门禁，并在Windows已安装界面真实点击校验固定官方Linux
+baseline归档，必须显示摘要匹配与78587775字节。核对原包hash、写入时间、文件数
+不变；改目标/路径均使成功结果失效，并用单字节损坏的同名同大小副本验证拒绝。
+不解包、不运行Qoder，不等于Windows原生包的安装、运行或登录兼容性。
+
+CI专用下载器仅允许全新RUNNER_TEMP目录和固定官方URL，TLS正常验签，拒绝所有
+重定向、异常状态/长度/编码。64KiB流式读取、精确大小加一字节超限检测、固定SHA256；
+socket超时15秒，独立监督进程限制180秒总下载时间，终止最多额外10秒。已有目标拒绝
+覆盖，失败保留partial并阻断门禁，不跳过。离线测试不联网。
+
+下载器拒绝父路径链接/reparse并独占创建文件，应用另有安全reader复查；这只是临时
+CI文件及尽力竞态检查，不是隔离namespace或同UID攻击沙箱。只上传哈希、计数和UI证据，
+不上传归档或损坏副本。新增网络依赖不可用时明确失败，只有精确提交CI通过才算真实
+已安装流程验证，不以本地mock/AST替代。

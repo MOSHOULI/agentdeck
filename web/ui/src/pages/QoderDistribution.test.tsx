@@ -2,18 +2,18 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import * as bridge from '../bridge';
 import { QoderDistribution } from './QoderDistribution';
-import { validateQoderPlan } from '../qoderContract';
+import { qoderTargets, validateQoderPlan } from '../qoderContract';
 import { qoderRawPlan } from '../test-fixtures/qoder';
 import { useWorkspaceActivityStore } from '../stores/workspaceActivity';
 const plan = validateQoderPlan(qoderRawPlan(), 'linux-amd64-baseline');
 const result = { plan, bytes: 123 };
 beforeEach(() => { vi.spyOn(bridge, 'runtimeMode').mockReturnValue('native'); vi.spyOn(bridge, 'qoderDistributionPlan').mockResolvedValue(plan); vi.spyOn(bridge, 'verifyQoderPackage').mockResolvedValue(result); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
-function fill() { fireEvent.change(screen.getByLabelText('明确分发目标（不是本机自动检测）'), { target: { value: plan.target } }); fireEvent.change(screen.getByLabelText('Qoder 官方归档绝对路径'), { target: { value: '/selected/archive' } }); }
+function fill() { fireEvent.click(screen.getByRole('radio', { name: plan.target })); fireEvent.change(screen.getByLabelText('Qoder 官方归档绝对路径'), { target: { value: '/selected/archive' } }); }
 function verify() { fireEvent.click(screen.getByRole('button', { name: '只读校验 Qoder 归档' })); }
 function defer<T>() { let resolve!: (v: T) => void; let reject!: (v: Error) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { resolve, reject, promise }; }
 it('requires explicit target and renders all 11 variants with no install actions', async () => {
-  render(<QoderDistribution />); expect(screen.getAllByRole('option')).toHaveLength(12);
+  render(<QoderDistribution />); expect(screen.getAllByRole('radio')).toHaveLength(11);
   expect(screen.getByRole('button', { name: '查看 Qoder 分发计划' })).toBeDisabled();
   fill(); fireEvent.click(screen.getByRole('button', { name: '查看 Qoder 分发计划' }));
   expect(await screen.findByRole('region', { name: 'Qoder 分发计划结果' })).toHaveTextContent('未安装、未运行');
@@ -26,7 +26,7 @@ it.each(['target', 'path', 'clear', 'cancel', 'unmount'])('discards late success
   const view = render(<QoderDistribution />); fill(); verify(); verify();
   expect(bridge.verifyQoderPackage).toHaveBeenCalledTimes(1); expect(useWorkspaceActivityStore.getState().busy.qoder).toBe(true);
   expect(screen.getByRole('button', { name: '查看 Qoder 分发计划' })).toBeDisabled();
-  if (change === 'target') fireEvent.change(screen.getByRole('combobox'), { target: { value: 'windows-amd64-standard' } });
+  if (change === 'target') fireEvent.click(screen.getByRole('radio', { name: 'windows-amd64-standard' }));
   if (change === 'path') fireEvent.change(screen.getByLabelText('Qoder 官方归档绝对路径'), { target: { value: '/other/archive' } });
   if (change === 'clear') fireEvent.click(screen.getByRole('button', { name: '清除 Qoder 选择与结果' }));
   if (change === 'cancel') fireEvent.click(screen.getByRole('button', { name: '取消 Qoder 结果' }));
@@ -63,4 +63,29 @@ it('renders selected identity and archive name as complete accessible text nodes
   const name = await screen.findByText('官方归档名：qodercli-linux-x64-baseline.tar.gz');
   expect(name.childNodes).toHaveLength(1);
   expect(name.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+});
+
+it('renders a successful byte count as one complete accessible text node', async () => {
+  render(<QoderDistribution />); fill(); verify();
+  const bytes = await screen.findByText('已读取字节：123');
+  expect(bytes.childNodes).toHaveLength(1);
+  expect(bytes.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+});
+
+it('offers a labelled group, exclusive target choices and complete clear', () => {
+  render(<QoderDistribution />);
+  expect(screen.getByRole('group', { name: '明确分发目标（不是本机自动检测）' })).toBeInTheDocument();
+  for (const target of qoderTargets) {
+    fireEvent.click(screen.getByRole('radio', { name: target }));
+    for (const other of qoderTargets) expect((screen.getByRole('radio', { name: other }) as HTMLInputElement).checked).toBe(other === target);
+    expect(screen.getByText(`当前分发目标：${target}`)).toBeInTheDocument();
+  }
+  fireEvent.click(screen.getByRole('button', { name: '清除 Qoder 选择与结果' }));
+  for (const radio of screen.getAllByRole('radio')) expect(radio).not.toBeChecked();
+  expect(screen.getByText('当前分发目标：未选择')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '查看 Qoder 分发计划' })).toBeDisabled();
+});
+it.each(['demo', 'unavailable'] as const)('disables all radios in %s', mode => {
+  vi.mocked(bridge.runtimeMode).mockReturnValue(mode); render(<QoderDistribution />);
+  for (const radio of screen.getAllByRole('radio')) { expect(radio).toBeDisabled(); expect(radio).not.toBeChecked(); }
 });

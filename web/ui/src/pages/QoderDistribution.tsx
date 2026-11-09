@@ -4,6 +4,7 @@ import { qoderTargets } from '../qoderContract';
 import type { QoderPlan, QoderVerification } from '../qoderContract';
 import { useWorkspaceActivity } from '../stores/workspaceActivity';
 import './DshInventory.css';
+import './QoderDistribution.css';
 export function QoderDistribution() {
   const [target, setTarget] = useState('');
   const [path, setPath] = useState('');
@@ -30,10 +31,15 @@ export function QoderDistribution() {
     <div className="notice">这里只提供分发计划和显式本地归档哈希校验，不下载、不暂存、不解包、不执行、不安装、不修改 PATH 或配置。</div>
     {!native && <p role="status">仅桌面原生后端可用；浏览器及演示模式不读取归档，也不模拟校验成功。</p>}
     <section className="panel" aria-label="Qoder 分发选择">
-      <label htmlFor="qoder-target">明确分发目标（不是本机自动检测）</label>
-      <select id="qoder-target" className="control" value={target} disabled={!native} onChange={event => { clearResult(); setTarget(event.target.value); }}>
-        <option value="">请选择目标</option>{qoderTargets.map(id => <option value={id} key={id}>{id}</option>)}
-      </select>
+      <fieldset className="qoder-targets" disabled={!native}>
+        <legend>明确分发目标（不是本机自动检测）</legend>
+        <div className="qoder-target-grid">
+          {qoderTargets.map(id => <label className="qoder-target-option" key={id}>
+            <input type="radio" name="qoder-target" value={id} checked={target === id} onChange={() => { clearResult(); setTarget(id); }} />
+            <span>{id}</span>
+          </label>)}
+        </div>
+      </fieldset>
       <p aria-live="polite">{`当前分发目标：${target || '未选择'}`}</p>
       <label htmlFor="qoder-archive">Qoder 官方归档绝对路径</label>
       <input id="qoder-archive" className="control" value={path} maxLength={4096} disabled={!native} autoComplete="off" spellCheck={false} onChange={event => { clearResult(); setPath(event.target.value); }} />
@@ -54,7 +60,7 @@ export function QoderDistribution() {
       <p>运行时声明：{plan.runtime}；变体：{plan.variant}。</p><p>{plan.requirements}</p>
       <p>未安装、未运行、未验证独立签名；选择目标不证明该平台可用。清单来源摘要不等于独立真实性证明。</p>
     </section>}
-    {verified && <section className="panel" aria-label="Qoder 归档校验结果"><p role="status">归档与固定官方 SHA256 一致，仅证明所读包摘要匹配。</p><p>已读取字节：{verified.bytes}</p><p>这不是安装成功、运行兼容或执行授权。文件可在检查后改变，读取不是原子事务，访问时间可能更新。</p></section>}
+    {verified && <section className="panel" aria-label="Qoder 归档校验结果"><p role="status">归档与固定官方 SHA256 一致，仅证明所读包摘要匹配。</p><p>{`已读取字节：${verified.bytes}`}</p><p>这不是安装成功、运行兼容或执行授权。文件可在检查后改变，读取不是原子事务，访问时间可能更新。</p></section>}
     <p className="muted">受控暂存与严格解包目前仅是 Linux x86_64 上固定 baseline 的独立 CLI 能力，桌面未开放。它们也不会自动安装或执行 Qoder。</p>
   </div>;
 }

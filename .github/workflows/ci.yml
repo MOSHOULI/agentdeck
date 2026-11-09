@@ -69,6 +69,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Qoder pinned archive downloader (offline safety regressions)
+        run: python -B scripts/test_fetch_qoder_ui_archive.py
       - name: Qwen distribution harness (offline safety regressions)
         run: python scripts/test_qwen_distribution_harness.py
       - name: Qwen owned field compatibility (synthetic, pinned offline source)
@@ -197,6 +199,16 @@ jobs:
         run: |
           gh release download v1.1.1 --repo MOSHOULI/agentdeck --dir acceptance/baseline --pattern 'AgentDeck_1.1.1_x64-setup.exe' --pattern SHA256SUMS.txt
           if ($LASTEXITCODE -ne 0) { throw 'Published baseline download failed' }
+      - name: Test pinned Qoder download helper (offline)
+        run: python -B scripts/test_fetch_qoder_ui_archive.py
+      - name: Fetch pinned Qoder archive for read-only UI verification
+        shell: pwsh
+        timeout-minutes: 4
+        run: |
+          New-Item -ItemType Directory -Force -Path acceptance/evidence | Out-Null
+          $report = & python -B scripts/fetch_qoder_ui_archive.py --destination (Join-Path $env:RUNNER_TEMP 'qoder-real-ui')
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned Qoder archive unavailable or invalid; acceptance cannot be skipped' }
+          $report | Set-Content -LiteralPath acceptance/evidence/qoder-download.json -Encoding utf8
       - name: Verify artifacts and exercise installed application
         shell: pwsh
         run: |
@@ -210,7 +222,7 @@ jobs:
             if ($actual -ne $lines[0].Substring(0, 64)) { throw 'Installer checksum mismatch' }
           }
           if ((Get-FileHash acceptance/baseline/AgentDeck_1.1.1_x64-setup.exe -Algorithm SHA256).Hash -ne '78be70c5788ca41f118dbabc99b3dcae5fddd37a53c70eef46ef31ab3efe8e2d') { throw 'Published baseline differs from reviewed pinned hash' }
-          ./scripts/windows-installer-acceptance.ps1 -Installer "acceptance/current/$current" -BaselineInstaller acceptance/baseline/AgentDeck_1.1.1_x64-setup.exe -ExpectedVersion $version -ExpectedCommit $env:BUILD_SHA -EvidenceDirectory acceptance/evidence
+          ./scripts/windows-installer-acceptance.ps1 -Installer "acceptance/current/$current" -BaselineInstaller acceptance/baseline/AgentDeck_1.1.1_x64-setup.exe -ExpectedVersion $version -ExpectedCommit $env:BUILD_SHA -EvidenceDirectory acceptance/evidence -RealQoderArchive (Join-Path $env:RUNNER_TEMP 'qoder-real-ui/qodercli-linux-x64-baseline.tar.gz')
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -32,11 +32,15 @@ staging/unpacking CLI capabilities are limited to Linux x86_64 and the pinned
 baseline archive, and also do not install or execute. Browser/demo mode does not
 invoke either command or simulate a successful package check.
 
-Windows installed-app acceptance clicks the real workspace, selects an explicit
-plan and checks rejection of a deliberately invalid synthetic archive with
-unchanged file bytes/count. It does not download a real Qoder archive or establish
-successful hashing on Windows. Frontend mocked success tests and native synthetic
-failure tests are not substitutes for real package/platform acceptance.
+Windows installed-app acceptance uses a separate CI-only downloader to obtain the
+fixed official Linux baseline archive, then clicks the real installed UI to check
+successful SHA256 verification and exact byte count. It asserts unchanged archive
+hash, write time and directory file count, invalidation after target/path changes,
+and rejection of a same-name, same-size copy with one byte changed. The existing
+synthetic-invalid archive test also remains. No Qoder archive is unpacked/executed;
+this validates Windows desktop read/hash behavior, **not Windows-native Qoder runtime
+compatibility**. Until the exact Windows CI run passes, local mock tests and script
+parsing are not proof that this installed-app flow succeeded.
 
 ## 中文
 
@@ -54,5 +58,13 @@ x86_64/ARM64，macOS可看计划不等于支持本机文件校验。ARM64 Window
 
 桌面不提供下载、暂存、解包、执行、安装、PATH/配置修改或登录。独立CLI暂存/解包
 只适用于Linux x86_64固定baseline，仍非安装。浏览器与demo模式不读取归档、不模拟
-校验成功。Windows安装UI验收只证明真实计划与合成错误包拒绝/零写，不证明真实包
-在Windows校验成功；mock成功测试不能冒充实际平台验收。
+校验成功。Windows安装UI验收另用CI专用下载器获取固定官方Linux归档，真实点击验证摘要和精确字节数，
+核原包hash/写入时间/文件数不变，切换目标/路径失效，并拒绝单字节损坏的同名同大小副本。
+原合成错误包门禁保留，不解包、不运行Qoder；这是Windows桌面读取Linux归档的验收，
+不是Windows原生Qoder运行兼容性。精确CI未通过前，不以mock或脚本语法检查冒充完成。
+
+### Explicit target selection / 明确目标选择
+
+All 11 fixed targets are individually labelled native radio controls in a responsive grid, with no default or automatic host selection. They are disabled in demo/unavailable mode. Changing a target invalidates results, including pending results; Clear deselects all targets. Windows installed acceptance selects the exact RadioButton through UI Automation SelectionItem and checks both its selected state and the displayed target, without keyboard-position guesses or direct IPC.
+
+11 个固定目标使用带完整名称的原生单选项，紧凑网格随宽度换行，不默认选择、不自动检测主机；演示或后端不可用时禁用。改目标使已有及迟到结果失效，清除后全部取消选择。Windows 安装版验收按精确名称通过 UI Automation SelectionItem 选择 RadioButton，同时核对选中状态与显示目标，不猜键盘位置、不直接调用 IPC。
