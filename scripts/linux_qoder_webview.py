@@ -15,6 +15,7 @@ import threading
 import time
 import qoder_complete_fixtures as complete
 import dsh_distribution_smoke as dsh_pinned
+import linux_qwen_webview as qwen
 
 ELEMENT = 'element-6066-11e4-a52e-4f735466cecf'
 CANARY = 'QODER-SYNTHETIC-PRIVATE-CONTENT-NOT-FOR-UI'
@@ -561,6 +562,7 @@ def exercise_dsh_root(driver, paths, root, records, phase=lambda _: None):
 
 
 def failure_code(error):
+    if isinstance(error, qwen.QwenFailure): return 'qwen_gui_acceptance_failed'
     if isinstance(error, complete.PreparationFailure): return 'complete_cache_preparation_failed'
     if isinstance(error, Failure):
         allowed = {'driver_redirect_forbidden', 'forbidden_driver_endpoint', 'driver_response_limit',
@@ -699,7 +701,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
     env = dict(os.environ, HOME=str(home))
     for key, name in [('XDG_CONFIG_HOME', 'config'), ('XDG_CACHE_HOME', 'cache'), ('XDG_DATA_HOME', 'data'), ('XDG_STATE_HOME', 'state'), ('XDG_RUNTIME_DIR', 'runtime')]:
         directory = home / name; directory.mkdir(mode=0o700); env[key] = str(directory)
-    client = Driver(); process = None; records = []; write_records = []; scope_records = []; dsh_records = []; passed = False
+    client = Driver(); process = None; records = []; write_records = []; scope_records = []; dsh_records = []; qwen_records = []; passed = False
     log = bytearray(); logger = None
     diagnostic = {'phase': 'start_driver', 'failure_code': None}
     def phase(value): diagnostic['phase'] = value
@@ -744,6 +746,11 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         exercise_dsh_root(client, dsh_paths, dsh_root, dsh_records, phase)
         if len(dsh_records) != 3 or snapshot(dsh_archive.parent) != dsh_source_before:
             raise Failure('incomplete_gui_coverage')
+        qwen_root = temporary / 'qwen-fixtures'; qwen_root.mkdir(mode=0o700)
+        qwen.exercise(client, qwen_root, qwen_records, write_private, phase)
+        qwen.assert_coverage(qwen_records)
+        if snapshot(fixture_root, exact) != readonly_before or snapshot(dsh_archive.parent) != dsh_source_before:
+            raise Failure('incomplete_gui_coverage')
         phase('acceptance_complete')
         passed = True
     except Exception as error:
@@ -772,7 +779,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         if CANARY.encode() in retained:
             retained = b'Synthetic private content suppressed.\n'; passed = False
         (evidence / 'driver.log').write_bytes(retained)
-        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'desktop_write_checks': write_records, 'scope_checks': scope_records, 'dsh_root_checks': dsh_records, 'dsh_root_gui_verified': passed and len(dsh_records)==3, 'dsh_executed': False, 'synthetic_scope_gui_verified': passed and len(scope_records)==2, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_directory_mode': '0700'}, indent=2))
+        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'qwen_owned_checks': qwen_records, 'qwen_owned_gui_verified': passed and qwen_records == [{'stage': name, 'verified': True} for name in qwen.STAGES], 'qwen_executed': False, 'desktop_write_checks': write_records, 'scope_checks': scope_records, 'dsh_root_checks': dsh_records, 'dsh_root_gui_verified': passed and len(dsh_records)==3, 'dsh_executed': False, 'synthetic_scope_gui_verified': passed and len(scope_records)==2, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_directory_mode': '0700'}, indent=2))
     if not passed:
         raise Failure('acceptance_not_confirmed')
 

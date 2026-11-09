@@ -56,6 +56,7 @@ jobs:
           ref: ${{ env.BUILD_SHA }}
       - run: python -B scripts/test_build_nsis_resilient.py
       - run: python -B scripts/test_linux_qoder_webview.py
+      - run: python -B scripts/test_linux_qwen_webview.py
       - run: python -B scripts/test_qoder_complete_fixtures.py
       - name: Preserve DSH evidence bytes across Git checkout modes
         run: python -B scripts/test_dsh_evidence_checkout.py
@@ -277,6 +278,7 @@ jobs:
       - name: Offline acceptance harness and complete-fixture checks
         run: |
           python -B scripts/test_linux_qoder_webview.py
+          python -B scripts/test_linux_qwen_webview.py
           python -B scripts/test_qoder_complete_fixtures.py
           python -B scripts/test_fetch_qoder_ui_archive.py
           python -B scripts/test_dsh_distribution_smoke.py
