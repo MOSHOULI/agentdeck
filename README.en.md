@@ -123,3 +123,5 @@ Publisher registry signing uses the existing protected private key. That key is 
 ### Qwen settings inspection
 
 Explicit, version-gated read-only CLI inspection is documented in [Qwen configuration inspection](docs/QWEN-CONFIG-INSPECTION.md). It is not configuration switching or restoration.
+
+Qoder CLI explicit scope inventory: `aisync qoder inspect --user-settings /absolute/settings.json`. Redacted summaries and potential cross-file MCP overlap counts only, without BYOK edits, effective-config or runtime-version claims. See [scope inspection boundaries](docs/QODER-SCOPE-INSPECTION.md).

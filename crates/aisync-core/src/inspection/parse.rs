@@ -112,7 +112,7 @@ impl<'de> Visitor<'de> for StrictValue<'_> {
     }
 }
 
-pub(super) fn parse_json(bytes: &[u8]) -> Result<Value> {
+pub(crate) fn parse_json(bytes: &[u8]) -> Result<Value> {
     if bytes.len() > LIMITS.max_manifest_bytes {
         return Err(InspectionIssue::FileTooLarge);
     }
