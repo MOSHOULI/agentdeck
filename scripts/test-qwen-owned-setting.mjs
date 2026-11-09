@@ -23,7 +23,18 @@ const run = (action, extra = [], success = true) => {
 try {
   writeFileSync(manifest, JSON.stringify({name:'@qwen-code/qwen-code',version:'0.27.0'}));
   const original = {$version:4,general:{language:'en'},security:{example:'SYNTHETIC-ONLY'}};
-  writeFileSync(settings, JSON.stringify(original));
+  // Preserve JavaScript numeric semantics across the entire rewritten document.
+  // Default serde_json float parsing (without float_roundtrip) changed these.
+  const numbers = ['1000000000000000.123456789e-0', '-0', '-0.0', '5e-324',
+    '1.7976931348623157e308', '9007199254740993', '18446744073709551616',
+    ...Array.from({length:1000}, (_,i)=>`${1000000000000000+i}.123456789e-0`)];
+  const raw = JSON.stringify(original).slice(0,-1)+',"numeric":['+numbers.join(',')+']}';
+  const expectedNumbers = JSON.parse(raw).numeric;
+  const unchangedNumbers = value => {
+    assert.equal(value.numeric.length, expectedNumbers.length);
+    value.numeric.forEach((n,i)=>assert.ok(Object.is(n,expectedNumbers[i]), `numeric sample ${i} changed`));
+  };
+  writeFileSync(settings, raw);
   const plan = run('vim-preview',['--enabled','true']);
   assert.equal(existsSync(join(directory,'.agentdeck-qwen-vim.json')), false);
   run('vim-apply',['--enabled','true','--preview-token',plan.token],false);
@@ -32,14 +43,17 @@ try {
   // Our output is strict JSON without BOM, so those normalizations are identity.
   const applied = JSON.parse(readConfigFile(settings));
   assert.equal(applied.general.vimMode,true);
+  unchangedNumbers(applied);
   assert.equal(applied.general.language,'en');
   assert.equal(applied.security.example,'SYNTHETIC-ONLY');
   // A new process reads the same persisted value. This is not a running Qwen UI test.
   assert.equal(run('vim-preview',['--enabled','true']).changes,false);
-  applied.general.newUserField='preserve';writeFileSync(settings,JSON.stringify(applied));
+  // Keep negative zero intact when simulating an unrelated external edit.
+  writeFileSync(settings,readFileSync(settings,'utf8').replace('"language": "en"','"language": "en", "newUserField": "preserve"'));
   run('vim-restore',['--yes']);
   const restored = JSON.parse(readConfigFile(settings));
   assert.equal('vimMode' in restored.general,false);
+  unchangedNumbers(restored);
   assert.equal(restored.general.newUserField,'preserve');
   assert.equal(restored.security.example,'SYNTHETIC-ONLY');
   assert.equal(existsSync(join(directory,'.agentdeck-qwen-vim.json')),false);

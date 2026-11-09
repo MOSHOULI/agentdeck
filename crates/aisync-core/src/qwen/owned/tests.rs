@@ -188,8 +188,20 @@ fn occupied_or_malformed_receipt_never_overwritten() {
 #[test]
 fn cooperative_lock_excludes_another_writer() {
     let f = Fixture::new(r#"{"$version":4}"#);
-    let _guard = lock(&f.settings).unwrap();
-    assert!(matches!(f.apply(true), Err(EditError::Busy)));
+    let original = fs::read(&f.settings).unwrap();
+    let guard = lock(&f.settings).unwrap();
+    // Windows mandatory byte locks can reject the safety read before try_lock;
+    // Unix reaches the advisory-lock Busy path. Both must refuse without writes.
+    let error = f.apply(true).unwrap_err();
+    #[cfg(windows)]
+    assert!(matches!(error, EditError::Busy | EditError::Unsupported));
+    #[cfg(not(windows))]
+    assert!(matches!(error, EditError::Busy));
+    assert_eq!(fs::read(&f.settings).unwrap(), original);
+    assert!(!f.dir.join(RECEIPT).exists());
+    drop(guard);
+    assert!(f.apply(true).unwrap());
+    assert!(restore(&f.settings, &f.manifest).unwrap());
 }
 #[cfg(unix)]
 #[test]
