@@ -2,41 +2,17 @@
 # Reuses native UIAutomation helpers; no JavaScript or direct IPC invocation.
 function Assert-QoderSelectedTarget([string]$target) {
     Wait-QwenText "当前分发目标：$target"
-    $combo = Wait-QwenControl '明确分发目标（不是本机自动检测）' ([Windows.Automation.ControlType]::ComboBox)
-    $pattern = $null
-    if ($combo.TryGetCurrentPattern([Windows.Automation.SelectionPattern]::Pattern, [ref]$pattern)) {
-        $selected = @(([Windows.Automation.SelectionPattern]$pattern).GetCurrentSelection())
-        if ($selected.Count -ne 1 -or $selected[0].Current.Name -ne $target) { throw 'Native Qoder selection disagrees with the explicit target' }
-    } elseif ($combo.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
-        if (([Windows.Automation.ValuePattern]$pattern).Current.Value -ne $target) { throw 'Native Qoder value disagrees with the explicit target' }
-    }
-    Record 'qoder-target-selected' @{ target = $target; visibleSelectionConfirmed = $true }
+    $radio = Wait-QwenControl $target ([Windows.Automation.ControlType]::RadioButton)
+    $selection = [Windows.Automation.SelectionItemPattern]$radio.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)
+    if (-not $selection.Current.IsSelected) { throw 'Native Qoder radio selection disagrees with the explicit target' }
+    Record 'qoder-target-selected' @{ target = $target; visibleSelectionConfirmed = $true; nativeSelectionConfirmed = $true }
 }
 function Select-QoderTarget([string]$target) {
-    # WebView's native select popup is outside the combo subtree and its provider
-    # advertises ExpandCollapse while rejecting Collapse. Do not call that pattern.
-    # Each candidate is a complete keyboard transaction: reacquire focus, open,
-    # navigate from Home, commit with Enter and leave with Tab. Never return with
-    # an outstanding popup/focus transaction that can swallow the next selection.
-    # Scan candidates, checking exact committed state rather than assuming order.
-    Add-Type -AssemblyName System.Windows.Forms
-    for ($step = 0; $step -lt 12; $step++) {
-        $combo = Wait-QwenControl '明确分发目标（不是本机自动检测）' ([Windows.Automation.ControlType]::ComboBox)
-        $combo.SetFocus()
-        [Windows.Forms.SendKeys]::SendWait('%{DOWN}')
-        [Windows.Forms.SendKeys]::SendWait('{HOME}')
-        for ($down = 0; $down -lt $step; $down++) {
-            [Windows.Forms.SendKeys]::SendWait('{DOWN}')
-        }
-        [Windows.Forms.SendKeys]::SendWait('{ENTER}')
-        [Windows.Forms.SendKeys]::SendWait('{TAB}')
-        $deadline = [DateTime]::UtcNow.AddSeconds(1)
-        do {
-            if ($null -ne (Find-QwenControl "当前分发目标：$target" ([Windows.Automation.ControlType]::Text))) { Assert-QoderSelectedTarget $target; return }
-            Start-Sleep -Milliseconds 100
-        } while ([DateTime]::UtcNow -lt $deadline)
-    }
-    throw "Could not select the exact Qoder target: $target"
+    # Real accessible radio selection, not keyboard guesses into an opaque popup.
+    # Missing/ambiguous controls or unsupported patterns fail rather than skip.
+    $radio = Wait-QwenControl $target ([Windows.Automation.ControlType]::RadioButton)
+    ([Windows.Automation.SelectionItemPattern]$radio.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)).Select()
+    Assert-QoderSelectedTarget $target
 }
 function Assert-QoderSuccessCleared {
     $deadline = [DateTime]::UtcNow.AddSeconds(10)

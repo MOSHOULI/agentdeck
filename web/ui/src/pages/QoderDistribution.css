@@ -1,0 +1,9 @@
+.qoder-targets { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 0; min-width: 0; }
+.qoder-targets legend { padding: 0 6px; font-size: 12px; font-weight: 600; }
+.qoder-target-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 8px; }
+.qoder-target-option { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px; border-radius: 6px; background: var(--surface-subtle); cursor: pointer; }
+.qoder-target-option span { overflow-wrap: anywhere; font-size: 12px; }
+.qoder-target-option input { flex: 0 0 auto; margin: 0; }
+.qoder-target-option:has(input:checked) { outline: 1px solid var(--border); }
+.qoder-target-option:has(input:focus-visible) { outline: 2px solid currentColor; outline-offset: 2px; }
+.qoder-targets:disabled .qoder-target-option { opacity: 0.6; cursor: not-allowed; }

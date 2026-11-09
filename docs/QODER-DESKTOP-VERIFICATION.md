@@ -62,3 +62,9 @@ x86_64/ARM64，macOS可看计划不等于支持本机文件校验。ARM64 Window
 核原包hash/写入时间/文件数不变，切换目标/路径失效，并拒绝单字节损坏的同名同大小副本。
 原合成错误包门禁保留，不解包、不运行Qoder；这是Windows桌面读取Linux归档的验收，
 不是Windows原生Qoder运行兼容性。精确CI未通过前，不以mock或脚本语法检查冒充完成。
+
+### Explicit target selection / 明确目标选择
+
+All 11 fixed targets are individually labelled native radio controls in a responsive grid, with no default or automatic host selection. They are disabled in demo/unavailable mode. Changing a target invalidates results, including pending results; Clear deselects all targets. Windows installed acceptance selects the exact RadioButton through UI Automation SelectionItem and checks both its selected state and the displayed target, without keyboard-position guesses or direct IPC.
+
+11 个固定目标使用带完整名称的原生单选项，紧凑网格随宽度换行，不默认选择、不自动检测主机；演示或后端不可用时禁用。改目标使已有及迟到结果失效，清除后全部取消选择。Windows 安装版验收按精确名称通过 UI Automation SelectionItem 选择 RadioButton，同时核对选中状态与显示目标，不猜键盘位置、不直接调用 IPC。
