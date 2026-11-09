@@ -143,3 +143,7 @@ Windows 上验证；可移植的 Linux 测试通过不代表这些检查已经�
 profile 归属、已认证的运行时传输、插件实际激活、凭据处理和修改计划，均属于后续独立
 工作。静态 manifest 不能授权这些操作。本功能不改变 GLib 回移修复及其剩余告警/验证
 限制，参见 [GLib 说明](GLIB-BACKPORT.zh-CN.md)。
+
+另有独立的[固定根归档分发计划与校验](DSH-DISTRIBUTION.md)，只验证
+0.2.2-rc.1 npm 根 tgz，不解析依赖、不安装或执行 DSH，也不扩大本被动
+profile 检查器的读取权限。

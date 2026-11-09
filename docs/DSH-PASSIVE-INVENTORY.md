@@ -177,3 +177,7 @@ Profile ownership, authenticated runtime transport, actual plugin activation,
 credential handling and mutation plans remain future work. A static manifest cannot
 authorize those operations. This feature does not change the GLib backport or its
 remaining advisory/validation limits; see the [GLib guide](GLIB-BACKPORT.md).
+
+A separate [fixed root-archive distribution plan and verifier](DSH-DISTRIBUTION.md)
+now checks the 0.2.2-rc.1 npm root tgz only. This does not resolve dependencies,
+install or run DSH, and does not expand this passive profile reader's permissions.

@@ -65,6 +65,13 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --locked -p aisync-core -p aisync-cli --all-targets -- -D warnings
       - run: python scripts/run-isolated.py cargo test --locked -p aisync-core -p aisync-cli
+      - name: DSH pinned root archive downloader (offline safety regressions)
+        run: python -B scripts/test_dsh_distribution_smoke.py
+      - name: Build real DSH inspection CLI
+        run: cargo build --locked -p aisync-cli
+      - name: Verify official DSH root archive without installation or execution
+        timeout-minutes: 5
+        run: python -B scripts/dsh_distribution_smoke.py --cli "$PWD/target/debug/aisync" --destination "$RUNNER_TEMP/dsh-root-package-smoke"
       - name: Qwen owned setting rejects extended POSIX ACLs
         run: python scripts/run-isolated.py cargo test --locked -p aisync-core extended_posix_acl_is_not_silently_lost -- --ignored
       - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- health
