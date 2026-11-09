@@ -1,3 +1,4 @@
+import { validateDshRootPlan, validateDshRootVerification } from "./dshDistributionContract";
 import { scopeIds, validateScopeReport, type ScopePaths } from './qoderScopeContract';
 import { validateQoderWrite, type QoderWriteOperation } from './qoderContract';
 import { requireQoderTarget, validateQoderPlan, validateQoderVerification, validateQoderCacheObservation } from './qoderContract';
@@ -530,4 +531,15 @@ export async function inspectQoderScopes(paths: ScopePaths) {
   const captured = { ...paths };
   if (!scopeIds.some(id=>!!captured[id]) || scopeIds.some(id=>typeof captured[id]!=='string' || new TextEncoder().encode(captured[id]).length>4096 || /[\x00-\x1f\x7f]/.test(captured[id]))) throw new Error('QODER_SCOPE_INVALID_SELECTION');
   return validateScopeReport(await invoke<unknown>('inspect_qoder_scopes', {userSettings:captured.user_settings||null,projectSettings:captured.project_settings||null,localSettings:captured.local_settings||null,projectMcp:captured.project_mcp||null}),captured);
+}
+
+export async function dshDistributionPlan() {
+  useDemo(true);
+  return validateDshRootPlan(await invoke<unknown>('dsh_distribution_plan'));
+}
+export async function verifyDshPackage(archivePath: string) {
+  useDemo(true);
+  if (typeof archivePath!=='string'||!archivePath.trim()||new TextEncoder().encode(archivePath).length>4096||/[\x00-\x1f\x7f]/.test(archivePath)) throw new Error('DSH_PACKAGE_INVALID_PATH');
+  if (!(/^(?:\/(?!\/)|[a-zA-Z]:[\\/])/.test(archivePath)) || archivePath.split(/[\\/]/).slice(-1)[0]!=='dsh-0.2.2-rc.1.tgz' || archivePath.split(/[\\/]/).includes('..')) throw new Error('DSH_PACKAGE_INVALID_PATH');
+  return validateDshRootVerification(await invoke<unknown>('verify_dsh_package',{archivePath}));
 }

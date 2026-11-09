@@ -69,3 +69,13 @@ routing then succeeded. Hosted CI remains a separate required check.
 
 2026-11-09 本地新 aisync 已完成官方固定元数据/归档、正常包/损坏包及零写验收，
 未执行 DSH。使用环境原有代理路由，没有修改代理或 TLS 设置；托管 CI 仍需独立通过。
+
+## Desktop root-archive panel / 桌面根归档面板
+
+The DSH workspace now embeds a separate native-only plan/verification panel. It shows the pinned prerelease URL, SHA256, SHA512 SRI, exact size, Node declaration and unresolved dependency boundaries using strict fixed response projection; arbitrary backend limitations, paths and errors are never displayed. The URL is text, not an automatic download action. Verification only reads the explicitly selected absolute archive with the expected filename; the existing core reader and 64 KiB ceiling are unchanged. No download, unpack, dependency resolution, npm/npx/Node/DSH execution or installation is added. Browser and demo modes do not simulate this verification.
+
+Editing a path, cancelling results, clearing, or unmounting discards late responses without cancelling the native read. Both the old profile inventory and new root-archive operations own a shared DSH activity token until their IPC actually settles, even after unmount. This prevents a second frontend operation while an earlier read remains pending and coordinates with other workspaces; it is not a global atomic backend lock. Reading may change access times and does not solve same-user hostile races or filesystem I/O deadlines. Native tests and frontend fixtures are not proof of runtime compatibility. The existing explicitly labelled synthetic **profile** demo remains separate from the new root-archive feature, which never returns synthetic success.
+
+DSH 工作区新增独立的原生根包计划/校验面板，严格核对固定响应后显示预发布 URL、SHA256、SHA512 SRI、精确长度、Node 声明与未解析依赖边界，不显示后端任意限制文本、路径或原始错误。URL 仅作为文字展示，不自动下载。校验只读用户明确指定、具有预期文件名的绝对归档路径，既有核心读取器与 64 KiB 上限不变；不添加下载、解包、依赖解析、npm/npx/Node/DSH 执行或安装能力。浏览器和演示模式不模拟根包验证成功。
+
+修改路径、取消结果、清除或卸载会废弃迟到响应，但不取消底层读取。旧 profile 盘点与新根包操作各持独立 DSH 忙碌标记，跨卸载保留至 IPC 真实结算，避免前端并发读取并与其他工作区协调；这不是全局原子后端锁。访问时间、同用户竞争和文件系统 I/O 时限等边界不变。原生测试和前端夹具不证明运行兼容性。旧 profile 明确标识的合成示例仍独立保留，新根包功能绝不产生合成成功。

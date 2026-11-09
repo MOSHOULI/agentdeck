@@ -21,3 +21,5 @@ pub mod qwen;
 pub mod qoder;
 
 pub mod qoder_scopes;
+
+pub mod dsh_distribution;

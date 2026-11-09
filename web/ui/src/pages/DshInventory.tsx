@@ -3,7 +3,8 @@ import type { FormEvent } from 'react';
 import * as bridge from '../bridge';
 import type { DshInventoryReport, DshInspectionResult } from '../bridge';
 import type { DshIssue, DshManifestStatus } from '../dshContract';
-import { useWorkspaceActivity } from '../stores/workspaceActivity';
+import { useWorkspaceActivityStore } from '../stores/workspaceActivity';
+import { DshDistribution } from './DshDistribution';
 import { Icon } from '../components/Icon';
 import './DshInventory.css';
 
@@ -38,7 +39,7 @@ export function DshInventory() {
   const operation = useRef(false);
   const generation = useRef(0);
   const mounted = useRef(false);
-  useWorkspaceActivity('dsh', busy);
+  const workspaceBusy = useWorkspaceActivityStore(state => Object.values(state.busy).some(Boolean));
 
   useEffect(() => {
     mounted.current = true;
@@ -55,7 +56,9 @@ export function DshInventory() {
 
   const inspect = async (event: FormEvent) => {
     event.preventDefault();
-    if (operation.current || mode === 'unavailable' || !profile.trim()) return;
+    if (operation.current || mode === 'unavailable' || !profile.trim() || Object.values(useWorkspaceActivityStore.getState().busy).some(Boolean)) return;
+    const owner = Symbol('dsh-profile-read');
+    useWorkspaceActivityStore.getState().setActivity('dsh', owner, true);
     operation.current = true;
     const current = ++generation.current;
     setBusy(true);
@@ -72,6 +75,7 @@ export function DshInventory() {
       }
     } finally {
       operation.current = false;
+      useWorkspaceActivityStore.getState().setActivity('dsh', owner, false);
       if (mounted.current) setBusy(false);
     }
   };
@@ -99,7 +103,7 @@ export function DshInventory() {
           placeholder="C:\DSH\runtime\package.json" disabled={mode === 'unavailable'} onChange={(event) => changeSelection('runtime', event.target.value)} aria-describedby="dsh-path-help" />
       </div>
       <p id="dsh-path-help" className="muted">只在点击盘点后读取最多两个文件，每个不超过 64 KiB。不接受相对路径、链接或 Windows UNC/device 路径。路径不会保存。</p>
-      <div className="dsh-form-actions"><button type="submit" className="button button-primary" disabled={busy || mode === 'unavailable' || !profile.trim()}><Icon name={busy ? 'refresh' : 'search'} />{busy ? '盘点中…' : mode === 'demo' ? '查看合成示例' : '盘点所选声明'}</button>
+      <div className="dsh-form-actions"><button type="submit" className="button button-primary" disabled={busy || workspaceBusy || mode === 'unavailable' || !profile.trim()}><Icon name={busy ? 'refresh' : 'search'} />{busy ? '盘点中…' : mode === 'demo' ? '查看合成示例' : '盘点所选声明'}</button>
         {busy && <span className="muted" role="status">正在读取所选声明，可切换工作区。此操作不启动外部程序。</span>}
       </div>
       {selectionChanged && <p className="muted" role="status">路径已更改，旧结果已清除。{busy ? '当前读取结束后请重新盘点。' : '请重新盘点。'}</p>}
@@ -129,5 +133,6 @@ export function DshInventory() {
       </section>}
     </section>}
     <p className="muted dsh-boundary-note">只读保证针对本次盘点，不代表整个桌面应用不写入自身数据。文件读取可能更新访问时间；文件系统检查不是对抗同权限并发修改的沙箱，也没有文件读取的硬超时。</p>
+    <DshDistribution />
   </div>;
 }

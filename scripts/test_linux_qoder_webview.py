@@ -491,6 +491,58 @@ class Tests(unittest.TestCase):
                         self.assertFalse(driver.dialog or driver.result or driver.alert or driver.read)
                         self.assertFalse((root/'confirmation-invalidated').exists())
 
+    def test_dsh_root_real_gui_protocol_keeps_negative_and_clear_gates(self):
+        class Fake:
+            def __init__(self,root,fault):self.root=root;self.fault=fault;self.value_text='';self.plan=False;self.verified=False;self.alert=False
+            def enabled(self,path):return True
+            def value(self,path):return self.value_text
+            def type(self,path,value):
+                self.value_text=value
+                if self.fault!='stale':self.plan=False;self.verified=False;self.alert=False
+            def wait(self,predicate,seconds=20):
+                if not predicate():raise subject.Failure('ui_wait_expired')
+            def elements(self,path):
+                if "role='tab'" in path:return [{}]
+                active=self.plan if '根包计划结果' in path else self.verified if '根归档校验结果' in path else self.alert
+                return [{}] if active else []
+            def click(self,path):
+                if "role='tab'" in path:return
+                if '查看 DSH' in path:self.plan=True
+                elif '只读校验' in path:
+                    bad='corrupt' in self.value_text;self.plan=False;self.verified=not bad;self.alert=bad
+                    if bad and self.fault=='accepted':self.verified=True
+                    if self.fault=='write':subject.write_private(self.root/'unexpected',b'change')
+                elif '清除 DSH' in path:
+                    if self.fault!='clear':self.value_text='';self.plan=False;self.verified=False;self.alert=False
+            def text(self,path):
+                if '根包计划结果' in path:
+                    return ' '.join([subject.dsh_pinned.VERSION,subject.dsh_pinned.NAME,subject.dsh_pinned.URL,subject.dsh_pinned.SHA256,subject.dsh_pinned.SRI,'预发布','90 个直接依赖，其中 8 项范围','未验证独立签名']) if self.fault!='plan' else 'wrong'
+                if '根归档校验结果' in path:return '根归档与固定长度、SHA256 和 SHA512 一致。 已读取字节：25197 依赖未解析、未安装、未运行、平台兼容性未验证'
+                return subject.CANARY if self.fault=='secret' else 'safe'
+            def command(self,method,path):return 'safe source'
+        for fault in (None,'plan','stale','accepted','write','clear','secret'):
+            with self.subTest(fault=fault),tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);paths={}
+                for kind in ('valid','corrupt'):
+                    directory=root/kind;directory.mkdir(mode=0o700);paths[kind]=directory/subject.dsh_pinned.NAME;subject.write_private(paths[kind],b'tiny flow fixture')
+                records=[];driver=Fake(root,fault)
+                if fault:
+                    with self.assertRaises(subject.Failure):subject.exercise_dsh_root(driver,paths,root,records)
+                else:
+                    subject.exercise_dsh_root(driver,paths,root,records)
+                    self.assertEqual([r['state'] for r in records],['official_root_verified','corrupt_root_rejected','cleared'])
+    def test_dsh_fixture_corruption_preserves_size_and_basename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);archive=root/'input';subject.write_private(archive,b'x'*subject.dsh_pinned.SIZE)
+            target=root/'fixtures';target.mkdir(mode=0o700)
+            with patch.object(subject.complete,'file_digest'),patch.object(subject.dsh_pinned,'validate_archive'):
+                paths=subject.dsh_fixtures(target,archive)
+            self.assertEqual(paths['valid'].name,subject.dsh_pinned.NAME)
+            self.assertEqual(paths['corrupt'].name,subject.dsh_pinned.NAME)
+            self.assertEqual(paths['valid'].stat().st_size,paths['corrupt'].stat().st_size)
+            self.assertIn(subject.CANARY.encode(),paths['corrupt'].read_bytes())
+            self.assertNotEqual(paths['valid'].read_bytes(),paths['corrupt'].read_bytes())
+
     def test_scope_gui_flow_preserves_redaction_and_zero_write_gates(self):
         class Fake:
             def __init__(self,root,fault):self.root=root;self.fault=fault;self.values={};self.report=False

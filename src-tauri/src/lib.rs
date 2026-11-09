@@ -18,6 +18,8 @@ pub fn run() {
             commands::qoder_scopes::inspect_qoder_scopes,
             commands::qoder::write_qoder_cache,
             commands::dsh::inspect_dsh_profile,
+            commands::dsh_distribution::dsh_distribution_plan,
+            commands::dsh_distribution::verify_dsh_package,
             commands::qwen::inspect_qwen_settings,
             commands::qwen::preview_qwen_vim,
             commands::qwen::inspect_qwen_vim_recovery,

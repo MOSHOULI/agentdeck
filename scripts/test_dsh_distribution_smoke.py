@@ -10,6 +10,7 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 import dsh_distribution_smoke as subject
+import fetch_dsh_ui_archive as ui_fetch
 
 
 class Response(io.BytesIO):
@@ -126,6 +127,18 @@ class Tests(unittest.TestCase):
             with self.assertRaisesRegex(subject.Failure,'worker_deadline'):subject.supervise(process,Mock())
             kill.assert_called_once_with(123,subject.signal.SIGKILL)
             self.assertEqual([c.args for c in process.join.call_args_list],[(240,),(5,)])
+
+    def test_ui_download_only_preserves_hosted_guard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            with patch.dict(os.environ,{'GITHUB_ACTIONS':'true','RUNNER_ENVIRONMENT':'github-hosted','RUNNER_OS':'Linux','RUNNER_TEMP':tmp}),patch.object(subject.guard.platform,'machine',return_value='x86_64'):
+                ui_fetch.guard(root/'new')
+            with patch.dict(os.environ,{'GITHUB_ACTIONS':'false'}):
+                with self.assertRaises(subject.Failure):ui_fetch.guard(root/'new')
+        sender=Mock()
+        with patch.object(ui_fetch.os,'setsid'),patch.object(ui_fetch,'guard'),patch.object(subject,'fetch_package',return_value=(b'metadata',b'archive',Path('/unused'))),patch.object(subject,'run_cli') as cli:
+            ui_fetch.worker('/new',sender)
+            cli.assert_not_called();self.assertTrue(sender.send.call_args.args[0][0])
 
     def test_hosted_linux_guard_not_bypassed(self):
         with tempfile.TemporaryDirectory() as tmp:

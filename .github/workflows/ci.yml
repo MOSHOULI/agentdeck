@@ -279,9 +279,13 @@ jobs:
           python -B scripts/test_linux_qoder_webview.py
           python -B scripts/test_qoder_complete_fixtures.py
           python -B scripts/test_fetch_qoder_ui_archive.py
+          python -B scripts/test_dsh_distribution_smoke.py
       - name: Fetch pinned official Qoder archive (never execute)
         timeout-minutes: 4
         run: python -B scripts/fetch_qoder_ui_archive.py --destination "$RUNNER_TEMP/qoder-linux-official"
+      - name: Fetch pinned official DSH root archive (no CLI or package execution)
+        timeout-minutes: 5
+        run: python -B scripts/fetch_dsh_ui_archive.py --destination "$RUNNER_TEMP/dsh-linux-official"
       - name: Build exact checkout CLI for controlled cache preparation
         run: cargo build --locked -p aisync-cli
       - run: npm ci --prefix web/ui
@@ -289,6 +293,8 @@ jobs:
         run: npm exec --prefix web/ui -- tauri build --debug --no-bundle --ci -- --locked
       - name: Native Linux Qoder IPC regression tests
         run: cargo test --locked -p agentdeck commands::qoder --lib
+      - name: Native Linux DSH root package IPC regression tests
+        run: cargo test --locked -p agentdeck commands::dsh_distribution --lib
       - name: Real WebView click/type cache observation and confirmed writes (sandbox retained)
         timeout-minutes: 15
         run: |
@@ -298,7 +304,8 @@ jobs:
             --native-driver /usr/bin/WebKitWebDriver \
             --evidence "$RUNNER_TEMP/linux-webview-evidence" \
             --cli "$PWD/target/debug/aisync" \
-            --archive "$RUNNER_TEMP/qoder-linux-official/qodercli-linux-x64-baseline.tar.gz"
+            --archive "$RUNNER_TEMP/qoder-linux-official/qodercli-linux-x64-baseline.tar.gz" \
+            --dsh-archive "$RUNNER_TEMP/dsh-linux-official/dsh-0.2.2-rc.1.tgz"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
