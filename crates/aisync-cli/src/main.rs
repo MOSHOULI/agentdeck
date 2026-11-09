@@ -23,7 +23,7 @@ enum DeployAction {
 enum Commands {
     /// List supported agents and installation capabilities (does not run installers).
     Agents,
-    /// Inspect an explicitly selected DSH profile without executing or changing it.
+    /// Inspect DSH manifests or fixed offline evidence without executing or changing it.
     Dsh {
         #[command(subcommand)]
         action: DshAction,
@@ -224,6 +224,11 @@ fn parse_qwen_manifest(value: &str) -> Result<PathBuf, String> {
 
 #[derive(Subcommand)]
 enum DshAction {
+    /// Fixed offline dependency evidence, not a resolved tree or installation plan.
+    #[command(
+        long_about = "Emit a fixed, reviewed dependency-evidence snapshot as JSON. Reads only embedded fixtures: no network, local discovery, package execution or installation. Root archive verification is historical; illustrative dependency metadata is not artifact verification or a complete closure. Exit 0 means a report was produced, not that DSH is installable. No version, source, target or path overrides are accepted."
+    )]
+    DependencyEvidence,
     /// Fixed prerelease root npm archive plan, not an installation or resolved dependency tree.
     DistributionPlan,
     /// Verify fixed root tgz size/SHA256/SHA512; no unpack or execution.
@@ -429,6 +434,16 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     }
                 );
             }
+        }
+        Commands::Dsh {
+            action: DshAction::DependencyEvidence,
+        } => {
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&dsh::dependency_evidence::report()?)?
+            )?;
         }
         Commands::Dsh {
             action: DshAction::DistributionPlan,

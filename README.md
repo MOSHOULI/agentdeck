@@ -91,6 +91,8 @@ cargo run --locked -p aisync-cli -- restore <timestamp> --full --yes
 
 `dsh inspect` 与桌面 DSH 工作区使用相同的被动读取器；它仅返回 JSON，不进入上述部署流程。它只读取明确选择的 profile 的 `package.json`，可通过 `--runtime-manifest` 另外选择一个 runtime 包的 `package.json`。不扫描 HOME，不调用 DSH/npm/pnpm，不读取凭据、`cordis.yml` 或插件代码。包依赖和 bundle selection 仅是保存的声明，版本仅是 manifest 报告值，不代表软件已安装、插件正在运行或已经认证。退出码 0 只表示成功产生报告；缺失、不支持或未知状态需检查 JSON。解析约定依据固定 `0.2.2-alpha.3` 与 `0.2.2-rc.1` 快照审查；精确包名/版本识别不代表真实运行时兼容或 npm 发布验证。所有版本的管理写操作均未开放。详见 [DSH 被动盘点边界](docs/DSH-PASSIVE-INVENTORY.zh-CN.md)。
 
+`aisync dsh dependency-evidence` 输出固定离线证据：根包全部 90 条依赖声明及三个准确版本元数据示例，不解析完整闭包、不校验依赖归档，也不开启安装。详见 [DSH 依赖证据](docs/DSH-DEPENDENCY-EVIDENCE.md)。
+
 CLI 支持[只读同步计划](docs/SYNC-DRY-RUN.zh-CN.md)：`sync --tools codex,claude-code --dry-run` 输出目标与动作元数据，不执行探测、不初始化或修改文件；不是完整 diff，也不代表安装资格或应用已验证。
 
 ## 测试与发布
