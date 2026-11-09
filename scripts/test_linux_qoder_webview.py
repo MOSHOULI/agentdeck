@@ -140,6 +140,35 @@ class Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             subject.capture_failure_dom(driver,Path(tmp));driver.text.assert_not_called();driver.command.assert_not_called()
 
+    def test_w3c_null_response_and_malformed_bodies_are_distinguished(self):
+        class Response(io.BytesIO):
+            status=200
+        for raw, expected in [(b'{"value":null}',None),(b'',json.JSONDecodeError),(b'[]',subject.Failure),(b'{"SECRET":"private"}',subject.Failure)]:
+            driver=subject.Driver()
+            driver.client=Mock();driver.client.open.return_value=Response(raw)
+            if expected is None:
+                self.assertIsNone(driver.request('POST','/session/id/element/id/clear',{}))
+            else:
+                with self.assertRaises(expected):driver.request('POST','/session/id/element/id/clear',{})
+            self.assertEqual(driver.last_response['operation'],'clear')
+            self.assertNotIn('SECRET',json.dumps(driver.last_response))
+            self.assertNotIn('private',json.dumps(driver.last_response))
+            self.assertEqual(driver.last_response['empty'],raw==b'')
+
+    def test_type_records_the_exact_failing_substep_without_changing_sendkeys(self):
+        driver=subject.Driver();driver.one=Mock(return_value='element')
+        driver.command=Mock(side_effect=json.JSONDecodeError('SECRET','',0))
+        with self.assertRaises(json.JSONDecodeError):driver.type('//input','private path')
+        self.assertEqual(driver.input_stage,'clear_input')
+        driver.command=Mock(side_effect=[None,TypeError('SECRET')])
+        with self.assertRaises(TypeError):driver.type('//input','private path')
+        self.assertEqual(driver.input_stage,'send_keys')
+        self.assertEqual(subject.exception_class(TypeError('SECRET')),'TypeError')
+        self.assertEqual(subject.exception_class(json.JSONDecodeError('SECRET','',0)),'JSONDecodeError')
+        class SecretException(Exception): pass
+        self.assertEqual(subject.exception_class(SecretException('private')),'OtherException')
+        driver.command.assert_called_with('POST','/element/element/value',{'text':'private path','value':list('private path')})
+
     def test_control_diagnostics_do_not_dump_untrusted_input(self):
         with tempfile.TemporaryDirectory() as tmp:
             driver=Mock();driver.session='session';driver.expected_input='/expected'

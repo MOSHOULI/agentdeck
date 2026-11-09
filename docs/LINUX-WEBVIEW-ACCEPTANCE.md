@@ -44,3 +44,9 @@ Failures retain a fixed phase and sanitized failure code. Before closing an esta
 Typing is followed by a standard WebDriver `property/value` exact readback, and clicking inspection waits for the native `enabled` response to be true. A timeout in either precondition fails before clicking. Failure diagnostics retain only input agreement/type/length-bound booleans and button-enabled state, never an arbitrary input value. This distinguishes React/input readiness from IPC/result failures without JavaScript.
 
 输入后通过标准 WebDriver `property/value` 精确读回，诊断按钮必须由原生 `enabled` 确认为 true 才点击；任一前置等待超时即失败。诊断只记录输入是否相符、类型/长度边界和按钮启用布尔值，不转储任意输入，便于区分输入状态就绪问题与 IPC/结果问题。
+
+Failure classification also records a whitelisted Python exception class and the input substep (`locate_input`, `clear_input`, `send_keys`, `send_keys_returned`). The last response is summarized only by fixed operation, HTTP status, empty/size flags and JSON root/value types, never arbitrary keys or response data; this snapshot is saved before failure DOM reads overwrite the client's latest operation. Empty/non-JSON bodies remain failures, not successful clear/send operations.
+
+Protocol review: WebKit's official `Source/WebDriver/WebDriverService.cpp` implementation of `elementSendKeys` requires the `text` string; the existing request supplies that field (with a legacy `value` array that the implementation does not reject). Responses are wrapped in a JSON `value` field; a successful clear can return `value: null`, not an empty HTTP body. The diagnostic increment does not speculate by changing key input or sandbox settings before the concrete exception is known.
+
+失败补充白名单 Python 异常类型和输入子步骤；最近响应仅记录固定操作/HTTP 状态、空值及大小标记、JSON 结构类型，不记录原始字段或内容，且在诊断读页面前保存快照。空响应/非 JSON 仍失败。已核对官方 WebKit SendKeys 必须提供 text，当前请求符合，成功清空返回 value:null 而非空正文；没有在明确异常前猜改输入或 sandbox。

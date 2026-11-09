@@ -34,6 +34,8 @@ class Driver:
         self.client = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
         self.session = None
         self.expected_input = None
+        self.input_stage = None
+        self.last_response = None
 
     def request(self, method, path, body=None):
         # Only the local external driver. No external URL or script endpoint API.
@@ -42,11 +44,24 @@ class Driver:
         payload = None if body is None else json.dumps(body).encode()
         req = urllib.request.Request('http://127.0.0.1:4444' + path, data=payload, method=method,
                                      headers={'Content-Type': 'application/json'})
-        with self.client.open(req, timeout=30) as response:
-            raw = response.read(1_048_577)
-            if len(raw) > 1_048_576:
-                raise Failure('driver_response_limit')
-        value = json.loads(raw).get('value')
+        operation = path.rsplit('/', 1)[-1]
+        allowed_operations = {'status', 'session', 'elements', 'click', 'clear', 'value', 'enabled', 'text', 'source'}
+        self.last_response = {'operation': operation if operation in allowed_operations else 'other', 'method': method, 'received': False}
+        try:
+            with self.client.open(req, timeout=30) as response:
+                raw = response.read(1_048_577)
+                self.last_response.update({'received': True, 'status': response.status,
+                                           **response_shape(raw)})
+                if len(raw) > 1_048_576:
+                    raise Failure('driver_response_limit')
+        except urllib.error.HTTPError as error:
+            raw = error.read(1_048_577)
+            self.last_response.update({'received': True, 'status': error.code, **response_shape(raw)})
+            raise
+        decoded = json.loads(raw)
+        if not isinstance(decoded, dict) or 'value' not in decoded:
+            raise Failure('driver_response_schema')
+        value = decoded['value']
         if isinstance(value, dict) and 'error' in value:
             raise Failure('webdriver_command_failed')
         return value
@@ -70,9 +85,13 @@ class Driver:
 
     def type(self, xpath, text):
         self.expected_input = text
+        self.input_stage = 'locate_input'
         element = self.one(xpath)
+        self.input_stage = 'clear_input'
         self.command('POST', '/element/' + element + '/clear', {})
+        self.input_stage = 'send_keys'
         self.command('POST', '/element/' + element + '/value', {'text': text, 'value': list(text)})
+        self.input_stage = 'send_keys_returned'
 
     def value(self, xpath):
         return self.command('GET', '/element/' + self.one(xpath) + '/property/value')
@@ -90,6 +109,37 @@ class Driver:
                 return
             time.sleep(0.1)
         raise Failure('ui_wait_expired')
+
+
+def response_shape(raw):
+    # Classify structure only: never keys, strings, IDs, URLs or backend messages.
+    info = {'empty': len(raw) == 0, 'within_limit': len(raw) <= 1_048_576}
+    if not info['within_limit']: return info
+    try: value = json.loads(raw)
+    except (ValueError, UnicodeError): return {**info, 'json': 'invalid'}
+    def kind(item):
+        if item is None: return 'null'
+        if isinstance(item, bool): return 'boolean'
+        if isinstance(item, dict): return 'object'
+        if isinstance(item, list): return 'array'
+        if isinstance(item, str): return 'string'
+        if isinstance(item, (float, int)): return 'number'
+        return 'other'
+    info.update({'json': 'valid', 'root_type': kind(value)})
+    if isinstance(value, dict):
+        info['has_value'] = 'value' in value
+        if 'value' in value:
+            info['value_type'] = kind(value['value'])
+            if isinstance(value['value'], dict): info['has_error'] = 'error' in value['value']
+    return info
+
+
+def exception_class(error):
+    allowed = {'Failure', 'TypeError', 'AttributeError', 'KeyError', 'ValueError', 'JSONDecodeError',
+               'UnicodeDecodeError', 'UnicodeEncodeError', 'HTTPError', 'URLError', 'TimeoutError',
+               'ConnectionError', 'ConnectionResetError', 'BrokenPipeError', 'OSError'}
+    name = type(error).__name__
+    return name if name in allowed else 'OtherException'
 
 
 def write_private(path, content):
@@ -168,7 +218,7 @@ def exercise(driver, paths, root, record, phase=lambda value: None):
 def failure_code(error):
     if isinstance(error, Failure):
         allowed = {'driver_redirect_forbidden', 'forbidden_driver_endpoint', 'driver_response_limit',
-                   'webdriver_command_failed', 'no_session', 'missing_or_ambiguous_control', 'ui_wait_expired',
+                   'webdriver_command_failed', 'driver_response_schema', 'no_session', 'missing_or_ambiguous_control', 'ui_wait_expired',
                    'unsafe_fixture', 'fixture_size_changed', 'unexpected_cache_state',
                    'private_fixture_content_exposed', 'cache_fixture_changed',
                    'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready'}
@@ -269,6 +319,9 @@ def guarded_run(application, driver_binary, native_driver, evidence):
         passed = True
     except Exception as error:
         diagnostic['failure_code'] = failure_code(error)
+        diagnostic['exception_class'] = exception_class(error)
+        diagnostic['input_stage'] = client.input_stage
+        diagnostic['last_response'] = client.last_response
         capture_failure_dom(client, evidence)
         raise
     finally:
