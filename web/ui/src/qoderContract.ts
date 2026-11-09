@@ -37,3 +37,22 @@ export function validateQoderVerification(value: unknown, target: string): Qoder
   if (report.state !== 'matches_pinned_archive' || typeof report.bytes !== 'number' || !Number.isSafeInteger(report.bytes) || report.bytes <= 0 || report.bytes > maxBytes) throw invalid();
   return { plan: validateQoderPlan(report.plan, target), bytes: report.bytes };
 }
+
+export const qoderCacheStates = ['staged_archive_verified', 'unpacked_payload_verified', 'incomplete', 'conflict', 'unknown_ownership'] as const;
+export type QoderCacheState = typeof qoderCacheStates[number];
+export interface QoderCacheObservation { state: QoderCacheState; recoveryPlan: 'retain_cache_no_action' | 'preserve_and_review'; deletionAuthorized: false; manualReviewRequired: true; installed: false }
+export function validateQoderCacheObservation(value: unknown): QoderCacheObservation {
+  const report = object(value);
+  if (!qoderCacheStates.includes(report.state as QoderCacheState)) throw invalid();
+  const state = report.state as QoderCacheState;
+  const recoveryPlan = state === 'staged_archive_verified' || state === 'unpacked_payload_verified' ? 'retain_cache_no_action' : 'preserve_and_review';
+  if (report.recovery_plan !== recoveryPlan || report.deletion_authorized !== false || report.manual_review_required !== true || report.installed !== false) throw invalid();
+  return { state, recoveryPlan, deletionAuthorized: false, manualReviewRequired: true, installed: false };
+}
+export const qoderCacheLabels: Record<QoderCacheState, string> = {
+  staged_archive_verified: '暂存归档与固定契约一致；未安装、未运行。',
+  unpacked_payload_verified: '解包缓存的归档与载荷符合固定契约；未安装、未运行。',
+  incomplete: '缓存未完成；部分字节未获得完整性结论，请保留现场。',
+  conflict: '缓存存在冲突或不安全状态；请保留现场，不覆盖或强制修复。',
+  unknown_ownership: '无法确认缓存归属；请保留现场，不据此删除。',
+};

@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import * as bridge from '../bridge';
-import { qoderTargets } from '../qoderContract';
-import type { QoderPlan, QoderVerification } from '../qoderContract';
-import { useWorkspaceActivity } from '../stores/workspaceActivity';
+import { qoderTargets, qoderCacheLabels } from '../qoderContract';
+import type { QoderPlan, QoderVerification, QoderCacheObservation } from '../qoderContract';
+import { useWorkspaceActivity, useWorkspaceActivityStore } from '../stores/workspaceActivity';
 import './DshInventory.css';
 import './QoderDistribution.css';
 export function QoderDistribution() {
   const [target, setTarget] = useState('');
   const [path, setPath] = useState('');
+  const [cachePath, setCachePath] = useState('');
+  const [cacheReport, setCacheReport] = useState<QoderCacheObservation | null>(null);
+  const [cacheError, setCacheError] = useState<false | 'unsupported' | 'failed'>(false);
+  const otherBusy = useWorkspaceActivityStore(state => Object.entries(state.busy).some(([id, active]) => id !== 'qoder' && active));
   const [plan, setPlan] = useState<QoderPlan | null>(null);
   const [verified, setVerified] = useState<QoderVerification | null>(null);
   const [busy, setBusy] = useState(false);
@@ -16,9 +20,9 @@ export function QoderDistribution() {
   const native = bridge.runtimeMode() === 'native';
   useWorkspaceActivity('qoder', busy);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; epoch.current++; }; }, []);
-  const clearResult = () => { epoch.current++; setPlan(null); setVerified(null); setError(false); };
+  const clearResult = () => { epoch.current++; setPlan(null); setVerified(null); setError(false); setCacheReport(null); setCacheError(false); };
   const run = async (verify: boolean) => {
-    if (!native || running.current || !target || (verify && !path.trim())) return;
+    if (!native || running.current || Object.entries(useWorkspaceActivityStore.getState().busy).some(([id, active]) => id !== 'qoder' && active) || !target || (verify && !path.trim())) return;
     clearResult(); const request = epoch.current; running.current = true; setBusy(true);
     try {
       if (verify) { const value = await bridge.verifyQoderPackage(target, path); if (mounted.current && epoch.current === request) { setVerified(value); setPlan(value.plan); } }
@@ -26,9 +30,16 @@ export function QoderDistribution() {
     } catch { if (mounted.current && epoch.current === request) setError(true); }
     finally { running.current = false; if (mounted.current) setBusy(false); }
   };
+  const inspectCache = async () => {
+    if (!native || running.current || !cachePath.trim() || Object.entries(useWorkspaceActivityStore.getState().busy).some(([id, active]) => id !== 'qoder' && active)) return;
+    clearResult(); const request = epoch.current; running.current = true; setBusy(true);
+    try { const value = await bridge.inspectQoderCache(cachePath); if (mounted.current && epoch.current === request) setCacheReport(value); }
+    catch (error) { if (mounted.current && epoch.current === request) setCacheError(error === 'QODER_CACHE_UNSUPPORTED_HOST' ? 'unsupported' : 'failed'); }
+    finally { running.current = false; if (mounted.current) setBusy(false); }
+  };
   return <div className="dsh-workspace">
     <header className="workspace-heading"><div><p className="eyebrow">QODER DISTRIBUTION</p><h1>Qoder 分发与校验</h1><p className="muted">固定 1.1.85 分发清单，不查询滚动最新版本，不自动判断本机平台。</p></div><span className="status-badge">只读</span></header>
-    <div className="notice">这里只提供分发计划和显式本地归档哈希校验，不下载、不暂存、不解包、不执行、不安装、不修改 PATH 或配置。</div>
+    <div className="notice">这里只提供分发计划、显式本地归档哈希校验和缓存只读诊断，不下载、不暂存、不解包、不执行、不安装、不修改 PATH 或配置。</div>
     {!native && <p role="status">仅桌面原生后端可用；浏览器及演示模式不读取归档，也不模拟校验成功。</p>}
     <section className="panel" aria-label="Qoder 分发选择">
       <fieldset className="qoder-targets" disabled={!native}>
@@ -45,12 +56,26 @@ export function QoderDistribution() {
       <input id="qoder-archive" className="control" value={path} maxLength={4096} disabled={!native} autoComplete="off" spellCheck={false} onChange={event => { clearResult(); setPath(event.target.value); }} />
       <p className="muted">须使用该目标的官方文件名；每包最多 256 MiB。读取边界仅审阅 Windows 与 Linux x86_64/ARM64；macOS 等主机的计划可查看，但文件校验失败关闭。哈希一致不代表运行兼容。</p>
       <div className="dsh-form-actions">
-        <button type="button" className="button" disabled={!native || busy || !target} onClick={() => { void run(false); }}>查看 Qoder 分发计划</button>
-        <button type="button" className="button" disabled={!native || busy || !target || !path.trim()} onClick={() => { void run(true); }}>只读校验 Qoder 归档</button>
-        <button type="button" className="button" onClick={() => { clearResult(); setTarget(''); setPath(''); }}>清除 Qoder 选择与结果</button>
+        <button type="button" className="button" disabled={!native || busy || otherBusy || !target} onClick={() => { void run(false); }}>查看 Qoder 分发计划</button>
+        <button type="button" className="button" disabled={!native || busy || otherBusy || !target || !path.trim()} onClick={() => { void run(true); }}>只读校验 Qoder 归档</button>
+        <button type="button" className="button" onClick={() => { clearResult(); setTarget(''); setPath(''); setCachePath(''); }}>清除 Qoder 选择与结果</button>
         {busy && <button type="button" className="button" onClick={clearResult}>取消 Qoder 结果</button>}
       </div>
     </section>
+    <section className="panel" aria-label="Qoder 缓存只读诊断">
+      <h2>缓存状态与保留计划</h2>
+      <p>仅 Linux x86_64 后端支持固定 1.1.85 baseline 缓存诊断；Windows、macOS 等主机失败关闭，不模拟成功。</p>
+      <label htmlFor="qoder-cache">Qoder 缓存绝对目录</label>
+      <input id="qoder-cache" className="control" value={cachePath} maxLength={4096} disabled={!native} autoComplete="off" spellCheck={false} onChange={event => { clearResult(); setCachePath(event.target.value); }} />
+      <button type="button" className="button" disabled={!native || busy || otherBusy || !cachePath.trim()} onClick={() => { void inspectCache(); }}>只读诊断 Qoder 缓存</button>
+      <p>不创建锁、不删除、不修复、不激活、不执行。读取可能更新访问时间；缓存契约匹配不是历史所有权证明或清理授权。</p>
+    </section>
+    {cacheError && <p role="alert">{cacheError === 'unsupported' ? '当前主机不支持 Qoder 缓存诊断；仅支持 Linux x86_64，没有读取缓存或获得清理授权。' : 'Qoder 缓存诊断未完成；没有获得完整性或清理授权，请检查明确目录与读取边界。'}</p>}
+    {cacheReport && <section className="panel" aria-label="Qoder 缓存诊断结果">
+      <p role="status">{qoderCacheLabels[cacheReport.state]}</p>
+      <p>{cacheReport.recoveryPlan === 'retain_cache_no_action' ? '保留缓存，不执行操作。' : '保留现场，人工检查。'}</p>
+      <p>任何清理均须独立人工复核。本报告不授权删除、不表示安装或运行成功，也不是原子快照。</p>
+    </section>}
     {busy && <p role="status">正在处理。取消或修改输入仅丢弃结果，不中止底层读取；完成前不会开始另一个请求。</p>}
     {error && <p role="alert">未能确认 Qoder 分发计划或包摘要。请检查目标、官方文件名、文件权限和支持的读取平台；没有获得校验成功结论。</p>}
     {plan && <section className="panel" aria-label="Qoder 分发计划结果">

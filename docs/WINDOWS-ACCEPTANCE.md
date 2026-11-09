@@ -113,3 +113,9 @@ socket超时15秒，独立监督进程限制180秒总下载时间，终止最多
 CI文件及尽力竞态检查，不是隔离namespace或同UID攻击沙箱。只上传哈希、计数和UI证据，
 不上传归档或损坏副本。新增网络依赖不可用时明确失败，只有精确提交CI通过才算真实
 已安装流程验证，不以本地mock/AST替代。
+
+### Qoder cache unsupported-host boundary / 缓存诊断平台边界
+
+The installed Windows application now also receives an existing synthetic cache directory via actual UI input and click. Acceptance requires the distinct unsupported-host alert, preserves the fixture hash, directory member count and directory modification time, and records `qoder-cache-unsupported-host` evidence. No Linux success state is fabricated; this does not cover installed Linux GUI success. The cache observer has no desktop write, cleanup, repair or activation operation.
+
+Windows 安装版新增真实 UI 缓存入口验收：输入已存在的合成目录并点击，必须显示独立的“不支持当前主机”提示，核对文件摘要、成员数量和目录修改时间未变，记录 `qoder-cache-unsupported-host` 证据。不能用不存在路径错误冒充平台拒绝，也不模拟 Linux 成功态；Linux 真实 GUI 成功仍未验收。没有缓存写入、清理、修复或激活操作。

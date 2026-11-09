@@ -1,4 +1,4 @@
-import { requireQoderTarget, validateQoderPlan, validateQoderVerification } from './qoderContract';
+import { requireQoderTarget, validateQoderPlan, validateQoderVerification, validateQoderCacheObservation } from './qoderContract';
 import { qwenDemoSummary, validateQwenReport, validateQwenVimPreview, validateQwenMutation, validateQwenRecovery } from './qwenContract';
 import type { QwenSummary } from './qwenContract';
 /**
@@ -57,6 +57,12 @@ export async function verifyQoderPackage(target: string, archivePath: string) {
   useDemo(true); requireQoderTarget(target);
   if (typeof archivePath !== 'string' || !archivePath.trim() || new TextEncoder().encode(archivePath).length > 4096 || /[\x00-\x1f\x7f]/.test(archivePath)) throw new Error('请选择长度受限的有效包路径。');
   return validateQoderVerification(await invoke<unknown>('verify_qoder_package', { target, archivePath }), target);
+}
+
+export async function inspectQoderCache(cachePath: string) {
+  useDemo(true);
+  if (typeof cachePath !== 'string' || !cachePath.trim() || new TextEncoder().encode(cachePath).length > 4096 || /[\x00-\x1f\x7f]/.test(cachePath)) throw new Error('请选择长度受限的有效缓存路径。');
+  return validateQoderCacheObservation(await invoke<unknown>('inspect_qoder_cache', { cachePath }));
 }
 
 /** Independent of deployment: no registry read, discovery, or lifecycle command. */

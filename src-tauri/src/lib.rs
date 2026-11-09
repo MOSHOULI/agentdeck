@@ -14,6 +14,7 @@ pub fn run() {
             commands::health_check,
             commands::qoder::qoder_distribution_plan,
             commands::qoder::verify_qoder_package,
+            commands::qoder::inspect_qoder_cache,
             commands::dsh::inspect_dsh_profile,
             commands::qwen::inspect_qwen_settings,
             commands::qwen::preview_qwen_vim,

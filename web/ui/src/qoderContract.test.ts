@@ -38,3 +38,23 @@ it.each(['/', '/?demo=1'])('never reads in browser or demo mode %s', async url =
   await expect(bridge.qoderDistributionPlan('linux-amd64-baseline')).rejects.toThrow();
   await expect(bridge.verifyQoderPackage('linux-amd64-baseline', '/path')).rejects.toThrow(); expect(invoke).not.toHaveBeenCalled();
 });
+
+it.each(['staged_archive_verified', 'unpacked_payload_verified', 'incomplete', 'conflict', 'unknown_ownership'])('projects cache state %s without backend strings', async state => {
+  const recovery_plan = state.endsWith('_verified') ? 'retain_cache_no_action' : 'preserve_and_review';
+  vi.mocked(invoke).mockResolvedValue({ state, recovery_plan, deletion_authorized: false, manual_review_required: true, installed: false, limitations: 'SECRET', path: 'SECRET' });
+  const result = await bridge.inspectQoderCache('/explicit/cache');
+  expect(result.state).toBe(state); expect(result.deletionAuthorized).toBe(false);
+  expect(JSON.stringify(result)).not.toContain('SECRET');
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('inspect_qoder_cache', { cachePath: '/explicit/cache' });
+});
+it.each(['state', 'recovery_plan', 'deletion_authorized', 'manual_review_required', 'installed'])('rejects inconsistent cache %s', async field => {
+  vi.mocked(invoke).mockResolvedValue({ state: 'incomplete', recovery_plan: 'preserve_and_review', deletion_authorized: false, manual_review_required: true, installed: false, [field]: 'SECRET' });
+  await expect(bridge.inspectQoderCache('/explicit/cache')).rejects.toThrow();
+});
+it.each(['', ' ', 'SECRET\npath', 'x'.repeat(4097), '字'.repeat(1366)])('blocks bad cache path before IPC', async path => {
+  await expect(bridge.inspectQoderCache(path)).rejects.toThrow(); expect(invoke).not.toHaveBeenCalled();
+});
+it.each(['/', '/?demo=1'])('never fakes cache observation in browser %s', async url => {
+  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__; window.history.replaceState({}, '', url);
+  await expect(bridge.inspectQoderCache('/explicit/cache')).rejects.toThrow(); expect(invoke).not.toHaveBeenCalled();
+});

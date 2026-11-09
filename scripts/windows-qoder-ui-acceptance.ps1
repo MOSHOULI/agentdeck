@@ -90,6 +90,16 @@ function Check-QoderReadonly {
     Assert-QwenHash $archive $before
     if (@(Get-ChildItem -LiteralPath $fixture -Force).Count -ne 1) { throw 'Read-only Qoder check created files' }
     Save-QwenEvidence 'qoder-invalid-archive-rejected'
+    # Existing synthetic directory ensures this is real unsupported-host handling,
+    # not a missing-path failure or a fabricated Linux success result.
+    $cacheMtime = (Get-Item -LiteralPath $fixture).LastWriteTimeUtc.Ticks
+    Set-QwenPath 'Qoder 缓存绝对目录' $fixture
+    Click-Qwen '只读诊断 Qoder 缓存'
+    Wait-QwenText '当前主机不支持 Qoder 缓存诊断；仅支持 Linux x86_64，没有读取缓存或获得清理授权。'
+    Assert-QwenHash $archive $before
+    if ((Get-Item -LiteralPath $fixture).LastWriteTimeUtc.Ticks -ne $cacheMtime -or @(Get-ChildItem -LiteralPath $fixture -Force).Count -ne 1) { throw 'Unsupported cache observation modified the fixture' }
+    Save-QwenEvidence 'qoder-cache-unsupported-host'
+    Record 'qoder-cache-unsupported-host' @{ existingDirectory = $true; unsupportedHost = $true; unchangedFiles = $true; linuxGuiSuccessNotTested = $true }
     Check-QoderRealArchive
     Click-Qwen '清除 Qoder 选择与结果'
     $deadline = [DateTime]::UtcNow.AddSeconds(10)

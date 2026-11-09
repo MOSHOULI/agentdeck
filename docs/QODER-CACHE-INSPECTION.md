@@ -33,3 +33,15 @@ Complete states rehash actual archive bytes (78,587,775) and, for unpacked state
 ## Validation boundary
 
 Offline tests cover unknown/malformed/duplicate records, partial files, swapped intent kinds, false completion, extra/pending names, symlink/hardlink/FIFO, unsafe modes, oversize, incorrect same-length digest, inaccessible/linked paths and no-write snapshots. The CLI parser requires an explicit cache and rejects mutation confirmation flags. Existing real staged and unpacked official caches can be inspected without executing Qoder; matching hashes and unchanged bytes/mtime/ctime do not imply runtime compatibility. No Windows/macOS cache management support is claimed.
+
+## Desktop read-only entry / 桌面只读入口
+
+The Qoder workspace accepts a separate explicit absolute cache directory. Its native IPC dispatches the existing core observer on a blocking worker; path bytes are capped at 4096 and control characters are rejected. Only Linux x86_64 can produce observations. Windows and other unsupported hosts return a distinct fixed unsupported-host result, not unknown ownership or simulated success. Browser/demo modes never dispatch or fabricate cache diagnostics.
+
+The UI strictly projects the five states and their corresponding preservation plan, requiring deletion/installed false and manual review true. Backend paths, names, limitations and arbitrary errors are not rendered. Cache changes, archive/target changes, Clear, Cancel and unmount invalidate pending results. Package checks, plans and cache diagnostics share one request/busy guard; other active workspaces block starting a Qoder read. Cancellation only discards its result; it does not abort file reading or free the request slot early. Clear also clears the cache path.
+
+Windows installed acceptance selects an existing synthetic directory through the actual UI, requires the explicit unsupported-host alert, and verifies unchanged bytes, directory members and modification time. This is unsupported-host/zero-write coverage, **not successful Linux GUI acceptance**. Linux core real-cache evidence and frontend mocked reports do not substitute for Linux installed GUI testing; this cloud environment lacks the required GTK runtime/development environment. No desktop cleanup, deletion, extraction, activation or execution action was added.
+
+桌面 Qoder 页面新增独立显式缓存绝对目录，通过阻塞工作线程调用现有 core；输入限制为 4096 字节并拒绝控制字符。只有 Linux x86_64 能产生诊断，其他主机返回明确不支持，不冒充未知归属或模拟成功；浏览器/演示模式不调用。
+
+前端严格校验五态与保留计划对应关系，删除/安装必须为 false、人工复核必须为 true，只呈现固定文案，不显示后端任意字段。改路径/目标、清除、取消、卸载均使迟到结果失效；缓存与计划/归档读取互斥，其他工作区忙碌时不启动。取消仅丢弃结果，不中止底层读取，也不提前释放忙碌。Windows 安装版用真实 UI 对存在目录核实明确不支持及零写，绝不当成 Linux GUI 成功验收；当前云端缺少 GTK，Linux 真实 GUI 仍未验证。没有增加任何清理、删除、修复、解包、激活或执行按钮。
