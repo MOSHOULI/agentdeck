@@ -68,7 +68,7 @@ function Assert-Sentinel {
         throw 'Synthetic user data was removed or changed'
     }
 }
-function Check-Gui([string]$stage) {
+function Check-Gui([string]$stage, [switch]$KeepOpen) {
     $script:running = Start-Process -FilePath (Join-Path $installDir 'agentdeck.exe') -WorkingDirectory $homeDir -PassThru
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
     $found = $false
@@ -107,7 +107,7 @@ function Check-Gui([string]$stage) {
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
     } catch { Record "$stage-screenshot-unavailable" $_.Exception.Message }
     Record $stage @{ nativeWebView = $true; agentListIpc = $true; processId = $script:running.Id }
-    Stop-App
+    if (-not $KeepOpen) { Stop-App }
 }
 try {
     # Installer registration is in the disposable runner's HKCU. Application state
@@ -121,6 +121,7 @@ try {
     $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--force-renderer-accessibility'
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+    . (Join-Path $PSScriptRoot 'windows-qwen-ui-acceptance.ps1')
     $sentinel = Join-Path $homeDir '.agentdeck\acceptance-user-data.txt'
     $sentinelValue = 'Synthetic data, must survive installation, upgrade and uninstall.'
     New-Item -ItemType Directory -Force -Path (Split-Path $sentinel) | Out-Null
@@ -129,7 +130,8 @@ try {
     Run-Installer $Installer
     Assert-Version
     Assert-Sentinel
-    Check-Gui 'clean-install'
+    Check-Gui 'clean-install' -KeepOpen
+    Check-QwenLifecycle
     Check-Gui 'restart'
     Run-Installer $Installer
     Assert-Version
@@ -156,7 +158,7 @@ try {
 } finally {
     if ($null -ne $running -and -not $running.HasExited) { Stop-Process -Id $running.Id -Force -ErrorAction SilentlyContinue }
     # Preserve runner-local evidence on failure; never delete a real user's data.
-    @{ passed = $passed; buildCommit = $ExpectedCommit; events = $events; limitations = @('Synthetic data only', 'No real Agent installation or authentication', 'GUI smoke, not complete interaction coverage', 'Published baseline is verified against its published checksum, not an independent signature') } |
+    @{ passed = $passed; buildCommit = $ExpectedCommit; events = $events; limitations = @('Synthetic data only', 'No real Agent installation or authentication', 'Synthetic Qwen single-field UI lifecycle only; not real Qwen execution or complete GUI coverage', 'Published baseline is verified against its published checksum, not an independent signature') } |
         ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'result.json') -Encoding utf8
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $originalEnv[$name]) }
 }
