@@ -1,0 +1,3 @@
+
+# Preserve exact pinned upstream fixture bytes on Windows checkouts.
+tests/fixtures/qwen-0.27.0/read-config-file.ts -text
