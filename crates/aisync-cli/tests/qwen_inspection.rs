@@ -49,6 +49,9 @@ impl Fixture {
         Self { root }
     }
     fn command(&self) -> Command {
+        self.action_command("inspect")
+    }
+    fn action_command(&self, action: &str) -> Command {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_aisync"));
         cmd.env_clear()
             .current_dir(&self.root)
@@ -66,7 +69,7 @@ impl Fixture {
                 cmd.env(key, value);
             }
         }
-        cmd.args(["qwen", "inspect", "--settings"])
+        cmd.args(["qwen", action, "--settings"])
             .arg(self.root.join("settings.json"));
         cmd
     }
@@ -170,4 +173,87 @@ fn fixture_roots_are_distinct_under_parallel_creation() {
         .collect();
     let roots: std::collections::BTreeSet<_> = fixtures.iter().map(|f| f.root.clone()).collect();
     assert_eq!(roots.len(), fixtures.len());
+}
+
+#[test]
+fn recovery_cli_no_receipt_is_read_only_and_redacted() {
+    let f = Fixture::new();
+    let before = snapshot(&f.root);
+    let output = f
+        .action_command("vim-recovery")
+        .arg("--runtime-manifest")
+        .arg(f.root.join("package.json"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    let text = String::from_utf8(output.stdout).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(report["state"], "no_receipt");
+    assert_eq!(report["changes_settings"], false);
+    for forbidden in ["SECRET", "PRIVATE", f.root.to_str().unwrap()] {
+        assert!(!text.contains(forbidden));
+    }
+    assert!(output.stderr.is_empty());
+    assert_eq!(before, snapshot(&f.root));
+}
+
+#[test]
+fn recovery_cli_invalid_receipt_does_not_write_or_expose_content() {
+    let f = Fixture::new();
+    fs::write(
+        f.root.join(".agentdeck-qwen-vim.json"),
+        r#"{"SECRET_RECEIPT":true}"#,
+    )
+    .unwrap();
+    let before = snapshot(&f.root);
+    let output = f
+        .action_command("vim-recovery")
+        .arg("--runtime-manifest")
+        .arg(f.root.join("package.json"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("SECRET"));
+    assert_eq!(before, snapshot(&f.root));
+}
+
+#[test]
+fn recovery_cli_observes_applied_and_conflict_without_mutation() {
+    let f = Fixture::new();
+    let settings = f.root.join("settings.json");
+    let manifest = f.root.join("package.json");
+    let preview = aisync_core::qwen::owned::preview(&settings, &manifest, true).unwrap();
+    aisync_core::qwen::owned::apply(&settings, &manifest, true, &preview.token).unwrap();
+    for conflict in [false, true] {
+        if conflict {
+            fs::write(
+                &settings,
+                r#"{"$version":4,"general":{"vimMode":false},"extra":"SECRET"}"#,
+            )
+            .unwrap();
+        }
+        let before = snapshot(&f.root);
+        let output = f
+            .action_command("vim-recovery")
+            .arg("--runtime-manifest")
+            .arg(&manifest)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output.stderr);
+        let text = String::from_utf8(output.stdout).unwrap();
+        let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            report["state"],
+            if conflict {
+                "conflict"
+            } else {
+                "restore_field"
+            }
+        );
+        assert_eq!(report["changes_settings"], !conflict);
+        assert!(!text.contains("SECRET"));
+        assert!(output.stderr.is_empty());
+        assert_eq!(before, snapshot(&f.root));
+    }
 }

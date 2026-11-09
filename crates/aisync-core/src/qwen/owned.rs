@@ -42,6 +42,30 @@ pub struct Preview {
     pub limitations: &'static str,
 }
 
+/// Read-only observation, not an authorization token or a guarantee of a later write.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryState {
+    NoReceipt,
+    RestoreField,
+    CleanupReceipt,
+    Conflict,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct RecoveryPreview {
+    pub field: &'static str,
+    pub state: RecoveryState,
+    pub changes_settings: bool,
+    pub limitations: &'static str,
+}
+
+#[derive(PartialEq)]
+enum RecoveryAction {
+    RestoreField,
+    CleanupReceipt,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Receipt {
@@ -248,16 +272,13 @@ pub fn apply(settings: &Path, manifest: &Path, after: bool, expected_token: &str
     Ok(true)
 }
 
-/// Restore only the backed-up field. Unrelated external edits are preserved.
-/// The receipt remains on any error; successful restoration removes it.
-pub fn restore(settings: &Path, manifest: &Path) -> Result<bool> {
-    let _initial = selection(settings, manifest)?;
-    let _lock = lock(settings)?;
-    let selected = selection(settings, manifest)?;
-    let receipt_path = sibling(settings, RECEIPT)?;
-    let receipt_bytes = read(&receipt_path, RECEIPT)?;
-    let value = parse::parse_json(&receipt_bytes).map_err(|_| EditError::Unsupported)?;
-    let mut receipt: Receipt = serde_json::from_value(value).map_err(|_| EditError::Unsupported)?;
+fn parse_receipt(bytes: &[u8]) -> Result<Receipt> {
+    let value = parse::parse_json(bytes).map_err(|_| EditError::Unsupported)?;
+    serde_json::from_value(value).map_err(|_| EditError::Unsupported)
+}
+
+// Shared with the mutating restore path: an observation never relaxes its checks.
+fn recovery_action(selected: &Selection, receipt: &Receipt) -> Result<RecoveryAction> {
     if receipt.format != 1
         || receipt.selection_binding != selected.binding
         || receipt.manifest_digest != digest(&selected.manifest)
@@ -275,8 +296,7 @@ pub fn restore(settings: &Path, manifest: &Path) -> Result<bool> {
             .as_ref()
             .ok_or(EditError::Unsupported)?;
         if digest(&selected.bytes) == *expected {
-            fs::remove_file(receipt_path).map_err(|_| EditError::Io)?;
-            return Ok(false);
+            return Ok(RecoveryAction::CleanupReceipt);
         }
         // A crash before restore replacement can be retried only against the
         // precise document we prepared, not any externally edited document.
@@ -286,14 +306,70 @@ pub fn restore(settings: &Path, manifest: &Path) -> Result<bool> {
     }
     // Receipt persisted but replacement never happened (or exact original restored).
     if digest(&selected.bytes) == receipt.before_digest && selected.before == receipt.before {
-        fs::remove_file(receipt_path).map_err(|_| EditError::Io)?;
-        return Ok(false);
+        return Ok(RecoveryAction::CleanupReceipt);
     }
     if receipt.phase == Phase::Prepared && digest(&selected.bytes) != receipt.after_digest {
         return Err(EditError::Drift);
     }
     if selected.before != Some(receipt.after) {
         return Err(EditError::Drift);
+    }
+    Ok(RecoveryAction::RestoreField)
+}
+
+/// Inspect only explicit selected files and their receipt, without creating a lock.
+/// Missing receipts are observations; malformed/unsafe files remain errors.
+/// Files may change concurrently: restore always rereads and validates under its lock.
+pub fn recovery_preview(settings: &Path, manifest: &Path) -> Result<RecoveryPreview> {
+    let selected = selection(settings, manifest)?;
+    let receipt_path = sibling(settings, RECEIPT)?;
+    let receipt_bytes = if absent(&receipt_path)? {
+        None
+    } else {
+        Some(read(&receipt_path, RECEIPT)?)
+    };
+    let state = if let Some(bytes) = &receipt_bytes {
+        let receipt = parse_receipt(bytes)?;
+        match recovery_action(&selected, &receipt) {
+            Ok(RecoveryAction::RestoreField) => RecoveryState::RestoreField,
+            Ok(RecoveryAction::CleanupReceipt) => RecoveryState::CleanupReceipt,
+            Err(EditError::Drift) => RecoveryState::Conflict,
+            Err(error) => return Err(error),
+        }
+    } else {
+        RecoveryState::NoReceipt
+    };
+    // Best-effort coherence only, not a lock or atomic snapshot.
+    if read(settings, "settings.json")? != selected.bytes
+        || read(manifest, "package.json")? != selected.manifest
+    {
+        return Err(EditError::Changed);
+    }
+    match receipt_bytes {
+        Some(bytes) if read(&receipt_path, RECEIPT)? != bytes => return Err(EditError::Changed),
+        None if !absent(&receipt_path)? => return Err(EditError::Changed),
+        _ => {}
+    }
+    Ok(RecoveryPreview {
+        field: "general.vimMode",
+        changes_settings: state == RecoveryState::RestoreField,
+        state,
+        limitations: "Read-only observation, not a restore authorization or write-readiness check. No lock is acquired or created. Concurrent changes can invalidate this result; restore checks again. Stop other editors before restoring. Not a cross-process transaction.",
+    })
+}
+
+/// Restore only the backed-up field. Unrelated external edits are preserved.
+/// The receipt remains on any error; successful restoration removes it.
+pub fn restore(settings: &Path, manifest: &Path) -> Result<bool> {
+    let _initial = selection(settings, manifest)?;
+    let _lock = lock(settings)?;
+    let selected = selection(settings, manifest)?;
+    let receipt_path = sibling(settings, RECEIPT)?;
+    let receipt_bytes = read(&receipt_path, RECEIPT)?;
+    let mut receipt = parse_receipt(&receipt_bytes)?;
+    if recovery_action(&selected, &receipt)? == RecoveryAction::CleanupReceipt {
+        fs::remove_file(receipt_path).map_err(|_| EditError::Io)?;
+        return Ok(false);
     }
     let mut updated = selected.document;
     set_field(&mut updated, receipt.before, !receipt.had_general);
