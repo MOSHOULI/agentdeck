@@ -7,6 +7,7 @@ import { Icon } from './Icon';
 import './VaultUpdate.css';
 
 type UpdateState =
+  | { kind: 'idle' }
   | { kind: 'checking' }
   | { kind: 'available'; summary: UpdateSummary }
   | { kind: 'noUpdate' }
@@ -17,7 +18,7 @@ type UpdateState =
 export const UpdatePanel: React.FC = () => {
   const mode = bridge.runtimeMode();
   const readOnly = mode !== 'native';
-  const [state, setState] = useState<UpdateState>({ kind: readOnly ? 'unavailable' : 'checking' });
+  const [state, setState] = useState<UpdateState>({ kind: readOnly ? 'unavailable' : 'idle' });
   const [version, setVersion] = useState('未知');
   const [checkedAt, setCheckedAt] = useState<Date | null>(null);
   const operation = useRef(false);
@@ -43,7 +44,6 @@ export const UpdatePanel: React.FC = () => {
   useEffect(() => {
     if (readOnly) return;
     bridge.getAppVersion().then((value) => setVersion(value.trim() || '未知')).catch(() => undefined);
-    void check();
   }, []);
 
   const onApply = async () => {
@@ -62,7 +62,7 @@ export const UpdatePanel: React.FC = () => {
   };
 
   const status = busy ? '正在应用更新' : ({
-    checking: '正在检查', available: '有可用更新', noUpdate: '检查完成',
+    idle: '尚未检查', checking: '正在检查', available: '有可用更新', noUpdate: '检查完成',
     error: '需要处理', applied: '已应用更新', unavailable: '尚未检查',
   } as const)[state.kind];
   const statusIcon = busy || checking ? 'refresh' : state.kind === 'error' ? 'alert'
@@ -94,6 +94,9 @@ export const UpdatePanel: React.FC = () => {
           <div><dt>上次检查成功</dt><dd>{checkedAt ? <time dateTime={checkedAt.toISOString()}>{checkedAt.toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</time> : '尚无记录'}</dd></div>
         </dl>
 
+        {state.kind === 'idle' && (
+          <div className="notice" role="status"><strong>尚未检查注册表更新。</strong><p>启动时不自动联网检查，不阻塞本地 Agent 管理。需要时点击“检查更新”；当前注册表是否最新尚未验证。</p></div>
+        )}
         {checking && <div className="empty-state update-checking" role="status"><Icon name="refresh" size={28} /><p>正在检查注册表更新…</p><span className="muted">获取发布清单并验证签名，请稍候。</span></div>}
         {state.kind === 'unavailable' && (
           <div className="notice notice-warning" role="status"><Icon name="info" /><div><strong>{mode === 'demo' ? '只读演示不会检查真实更新。' : '未连接桌面后端，无法检查更新。'}</strong><p>请在 AgentDeck 桌面应用中检查。当前注册表是否最新尚未验证。</p></div></div>
