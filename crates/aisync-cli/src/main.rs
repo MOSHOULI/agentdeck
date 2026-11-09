@@ -128,6 +128,16 @@ enum QwenAction {
         #[arg(long, required = true)]
         yes: bool,
     },
+    /// Inspect recovery state without writes or lock creation; not permission to restore.
+    #[command(
+        long_about = "Inspect explicitly selected Qwen settings and the field-only recovery receipt without writes, lock creation or Agent execution. Exit 0 means an observation was produced, including no_receipt or conflict; it is not a restore authorization or write-readiness guarantee. Invalid, unsafe or mismatched files return an error. Restore always rechecks under its lock."
+    )]
+    VimRecovery {
+        #[arg(long, value_parser = parse_qwen_settings)]
+        settings: PathBuf,
+        #[arg(long, value_parser = parse_qwen_manifest)]
+        runtime_manifest: PathBuf,
+    },
     /// Restore only the owned field, refusing detected drift; stop other editors first.
     VimRestore {
         #[arg(long, value_parser = parse_qwen_settings)]
@@ -432,6 +442,21 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 "{}",
                 serde_json::json!({"changed": changed, "field": "general.vimMode"})
             );
+        }
+        Commands::Qwen {
+            action:
+                QwenAction::VimRecovery {
+                    settings,
+                    runtime_manifest,
+                },
+        } => {
+            let report = qwen::owned::recovery_preview(&settings, &runtime_manifest)?;
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&report)?
+            )?;
         }
         Commands::Qwen {
             action:

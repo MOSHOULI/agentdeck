@@ -504,3 +504,243 @@ fn extended_posix_acl_is_not_silently_lost() {
     assert_eq!(fs::read(&f.settings).unwrap(), before);
     assert!(!linux_has_no_acl(&f.settings));
 }
+
+fn recovery_snapshot(f: &Fixture) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    fs::read_dir(&f.dir)
+        .unwrap()
+        .map(|entry| {
+            let path = entry.unwrap().path();
+            let bytes = fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect()
+}
+
+fn assert_recovery(f: &Fixture, expected: RecoveryState) {
+    let before = recovery_snapshot(f);
+    let report = recovery_preview(&f.settings, &f.manifest).unwrap();
+    assert_eq!(
+        report.changes_settings,
+        expected == RecoveryState::RestoreField
+    );
+    assert_eq!(report.state, expected);
+    let serialized = serde_json::to_string(&report).unwrap();
+    for forbidden in [
+        "SECRET",
+        "digest",
+        "selection_binding",
+        f.dir.to_str().unwrap(),
+    ] {
+        assert!(!serialized.contains(forbidden));
+    }
+    assert_eq!(before, recovery_snapshot(f));
+}
+
+#[test]
+fn recovery_without_receipt_never_creates_lock_or_files() {
+    let f = Fixture::new(r#"{"$version":4,"secret":"SECRET"}"#);
+    assert_recovery(&f, RecoveryState::NoReceipt);
+    assert!(!f.dir.join(LOCK).exists());
+}
+
+#[test]
+fn recovery_applied_and_unrelated_changes_agree_with_restore() {
+    let f = Fixture::new(r#"{"$version":4,"general":{"vimMode":false},"secret":"SECRET"}"#);
+    f.apply(true).unwrap();
+    assert_recovery(&f, RecoveryState::RestoreField);
+    let mut document = f.value();
+    document["unrelated"] = Value::String("SECRET".into());
+    fs::write(&f.settings, serde_json::to_vec(&document).unwrap()).unwrap();
+    assert_recovery(&f, RecoveryState::RestoreField);
+    assert!(restore(&f.settings, &f.manifest).unwrap());
+    assert_eq!(f.value()["unrelated"], "SECRET");
+}
+
+#[test]
+fn recovery_drift_reports_conflict_without_touching_receipt() {
+    let f = Fixture::new(r#"{"$version":4}"#);
+    f.apply(true).unwrap();
+    fs::write(&f.settings, r#"{"$version":4,"general":{"vimMode":false}}"#).unwrap();
+    assert_recovery(&f, RecoveryState::Conflict);
+    assert!(matches!(
+        restore(&f.settings, &f.manifest),
+        Err(EditError::Drift)
+    ));
+}
+
+#[test]
+fn recovery_prepared_phase_matches_restore_for_before_after_and_drift() {
+    for case in [0, 1, 2] {
+        let f = Fixture::new(r#"{"$version":4}"#);
+        let original = fs::read(&f.settings).unwrap();
+        f.apply(true).unwrap();
+        let mut receipt = parse_receipt(&fs::read(f.dir.join(RECEIPT)).unwrap()).unwrap();
+        receipt.phase = Phase::Prepared;
+        fs::write(f.dir.join(RECEIPT), serde_json::to_vec(&receipt).unwrap()).unwrap();
+        let state = match case {
+            0 => {
+                fs::write(&f.settings, original).unwrap();
+                RecoveryState::CleanupReceipt
+            }
+            1 => RecoveryState::RestoreField,
+            _ => {
+                let mut value = f.value();
+                value["unrelated"] = Value::Bool(true);
+                fs::write(&f.settings, serde_json::to_vec(&value).unwrap()).unwrap();
+                RecoveryState::Conflict
+            }
+        };
+        assert_recovery(&f, state);
+        match case {
+            0 => assert!(!restore(&f.settings, &f.manifest).unwrap()),
+            1 => assert!(restore(&f.settings, &f.manifest).unwrap()),
+            _ => assert!(matches!(
+                restore(&f.settings, &f.manifest),
+                Err(EditError::Drift)
+            )),
+        }
+    }
+}
+
+#[test]
+fn recovery_restoring_phase_matches_restore_for_prewrite_postwrite_and_drift() {
+    for case in [0, 1, 2] {
+        let f = Fixture::new(r#"{"$version":4}"#);
+        f.apply(true).unwrap();
+        let mut receipt = parse_receipt(&fs::read(f.dir.join(RECEIPT)).unwrap()).unwrap();
+        let mut restored = f.value();
+        set_field(&mut restored, receipt.before, !receipt.had_general);
+        let restored = encode(&restored).unwrap();
+        receipt.phase = Phase::Restoring;
+        receipt.restore_digest = Some(digest(&restored));
+        fs::write(f.dir.join(RECEIPT), serde_json::to_vec(&receipt).unwrap()).unwrap();
+        let state = match case {
+            0 => RecoveryState::RestoreField,
+            1 => {
+                fs::write(&f.settings, restored).unwrap();
+                RecoveryState::CleanupReceipt
+            }
+            _ => {
+                let mut value = f.value();
+                value["unrelated"] = Value::Bool(true);
+                fs::write(&f.settings, serde_json::to_vec(&value).unwrap()).unwrap();
+                RecoveryState::Conflict
+            }
+        };
+        assert_recovery(&f, state);
+        match case {
+            0 => assert!(restore(&f.settings, &f.manifest).unwrap()),
+            1 => assert!(!restore(&f.settings, &f.manifest).unwrap()),
+            _ => assert!(matches!(
+                restore(&f.settings, &f.manifest),
+                Err(EditError::Drift)
+            )),
+        }
+    }
+}
+
+#[test]
+fn recovery_invalid_receipt_or_manifest_remain_errors_with_zero_writes() {
+    let f = Fixture::new(r#"{"$version":4}"#);
+    f.apply(true).unwrap();
+    let valid = fs::read(f.dir.join(RECEIPT)).unwrap();
+    for malformed in [b"{\"SECRET\":1}".as_slice(), b"not json"] {
+        fs::write(f.dir.join(RECEIPT), malformed).unwrap();
+        let snapshot = recovery_snapshot(&f);
+        assert!(matches!(
+            recovery_preview(&f.settings, &f.manifest),
+            Err(EditError::Unsupported)
+        ));
+        assert_eq!(snapshot, recovery_snapshot(&f));
+    }
+    fs::write(f.dir.join(RECEIPT), valid).unwrap();
+    fs::write(
+        &f.manifest,
+        r#"{"name":"@qwen-code/qwen-code","version":"0.27.0","other":true}"#,
+    )
+    .unwrap();
+    let snapshot = recovery_snapshot(&f);
+    assert!(matches!(
+        recovery_preview(&f.settings, &f.manifest),
+        Err(EditError::Unsupported)
+    ));
+    assert_eq!(snapshot, recovery_snapshot(&f));
+}
+
+#[test]
+#[cfg(unix)]
+fn recovery_linked_receipt_is_rejected_without_reading_target() {
+    use std::os::unix::fs::symlink;
+    let f = Fixture::new(r#"{"$version":4}"#);
+    symlink(&f.settings, f.dir.join(RECEIPT)).unwrap();
+    assert!(matches!(
+        recovery_preview(&f.settings, &f.manifest),
+        Err(EditError::Unsupported)
+    ));
+    assert!(!f.dir.join(LOCK).exists());
+}
+
+#[test]
+fn recovery_copied_receipt_is_rejected_without_mutation() {
+    let original = Fixture::new(r#"{"$version":4}"#);
+    original.apply(true).unwrap();
+    let other = Fixture::new(r#"{"$version":4}"#);
+    fs::copy(&original.settings, &other.settings).unwrap();
+    fs::copy(original.dir.join(RECEIPT), other.dir.join(RECEIPT)).unwrap();
+    let snapshot = recovery_snapshot(&other);
+    assert!(matches!(
+        recovery_preview(&other.settings, &other.manifest),
+        Err(EditError::Unsupported)
+    ));
+    assert_eq!(snapshot, recovery_snapshot(&other));
+    assert!(!other.dir.join(LOCK).exists());
+}
+
+#[test]
+fn recovery_hardlinked_receipt_is_rejected_without_mutation() {
+    let f = Fixture::new(r#"{"$version":4}"#);
+    f.apply(true).unwrap();
+    fs::hard_link(f.dir.join(RECEIPT), f.dir.join("receipt-copy")).unwrap();
+    let snapshot = recovery_snapshot(&f);
+    assert!(matches!(
+        recovery_preview(&f.settings, &f.manifest),
+        Err(EditError::Unsupported)
+    ));
+    assert_eq!(snapshot, recovery_snapshot(&f));
+}
+
+#[test]
+fn recovery_does_not_acquire_or_mutate_existing_operation_lock() {
+    let f = Fixture::new(r#"{"$version":4}"#);
+    f.apply(true).unwrap();
+    let snapshot = recovery_snapshot(&f);
+    let held = lock(&f.settings).unwrap();
+    let report = recovery_preview(&f.settings, &f.manifest).unwrap();
+    assert_eq!(report.state, RecoveryState::RestoreField);
+    assert!(
+        report
+            .limitations
+            .contains("not a restore authorization or write-readiness")
+    );
+    drop(held);
+    assert_eq!(snapshot, recovery_snapshot(&f));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn recovery_fifo_receipt_is_rejected_without_open_blocking() {
+    use std::os::unix::ffi::OsStrExt;
+    unsafe extern "C" {
+        fn mkfifo(path: *const std::ffi::c_char, mode: u32) -> i32;
+    }
+    let f = Fixture::new(r#"{"$version":4}"#);
+    let path = f.dir.join(RECEIPT);
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { mkfifo(c_path.as_ptr(), 0o600) }, 0);
+    assert!(matches!(
+        recovery_preview(&f.settings, &f.manifest),
+        Err(EditError::Unsupported)
+    ));
+    assert!(!f.dir.join(LOCK).exists());
+    assert_eq!(fs::read_dir(&f.dir).unwrap().count(), 3);
+}

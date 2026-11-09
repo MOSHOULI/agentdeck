@@ -16,7 +16,9 @@ a pending preview. Inputs are locked during mutations; no automatic retry occurs
 2. `aisync qwen vim-preview --settings /absolute/settings.json --runtime-manifest /absolute/package.json --enabled true`
 3. Review the boolean before/after and limitations. Apply with the returned token:
    `aisync qwen vim-apply --settings /absolute/settings.json --runtime-manifest /absolute/package.json --enabled true --preview-token TOKEN --yes`
-4. `aisync qwen vim-restore --settings /absolute/settings.json --runtime-manifest /absolute/package.json --yes`
+4. Optionally inspect recovery first (read-only):
+   `aisync qwen vim-recovery --settings /absolute/settings.json --runtime-manifest /absolute/package.json`
+5. `aisync qwen vim-restore --settings /absolute/settings.json --runtime-manifest /absolute/package.json --yes`
 
 Absolute paths must select existing ordinary files; links, hardlinks, unsupported
 platforms, oversized/deep/duplicate-key JSON, BOM/comments, missing schema,
@@ -35,6 +37,17 @@ Restore changes only the owned field, preserves unrelated user changes, and
 refuses a different managed value. A prepared but uncommitted receipt permits
 recovery only against exact before/after images; restoring-state retries use
 exact document hashes. Failures retain the receipt for inspection/recovery.
+
+The CLI `vim-recovery` command reads the explicit files and sibling receipt without
+creating/acquiring a lock, initializing a directory or writing anything. It reports
+one fixed state: `no_receipt`, `restore_field`, `cleanup_receipt`, or `conflict`.
+`cleanup_receipt` means restoration would only remove a receipt for an already
+restored or never-applied exact document. `conflict` means detected drift prevents
+restoration. Unsafe, malformed or differently bound receipts remain errors.
+No raw receipt, digest, path, arbitrary key or configuration value is returned.
+This is a best-effort observation, not a restore token, permission check or atomic
+snapshot: a concurrent change can invalidate it, and restore still revalidates.
+The desktop restoration confirmation is unchanged; this new command is CLI-only.
 
 Atomic replacement preserves Unix mode and Windows destination ACL; Linux rejects
 extended POSIX ACLs, special mode bits and owner/group mismatches rather than
@@ -77,3 +90,10 @@ authentication, effective settings and GUI acceptance remain outstanding.
 本字段闭环测试使用合成文件与固定官方读取函数；另有[真实官方包启动检查](QWEN-DISTRIBUTION-SMOKE.md)验证版本/帮助，不涉及登录或完整运行时。多层设置可能
 覆盖该字段，尚未验证真实登录/GUI。协作锁和最后检查不能消除跨进程竞态，
 也无法检测改走又改回相同布尔值；不承诺断电或恶意同用户操作安全。
+
+可先运行 `aisync qwen vim-recovery --settings /绝对路径/settings.json --runtime-manifest /绝对路径/package.json`
+查看恢复状态。该 CLI 命令不创建/获取锁、不初始化目录、不写文件，只返回固定
+状态：无日志、可恢复字段、只需清理日志或检测到冲突。异常/不安全或路径绑定
+不符的日志仍报错，不返回日志内容、摘要哈希、路径或配置值。预览只是尽力保持
+一致的读取，不代表具备写权限或保证稍后能成功；恢复仍重新校验。桌面恢复确认
+流程不变，本次新增入口仅在 CLI。
