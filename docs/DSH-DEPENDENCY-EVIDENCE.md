@@ -91,6 +91,11 @@ not refresh, check current dist-tags or choose newer versions. A refresh needs
 an explicit new review of exact sources, bytes, identities, declared edges and
 hash constants, with the date, tests and documentation updated together.
 
+Git attributes mark all five hash-pinned JSON fixtures as `-text`, including the
+existing root review. Windows `core.autocrlf` must not rewrite their line endings:
+the embedded digests validate the original evidence bytes, not normalized JSON.
+No alternate platform digest or runtime newline normalization is accepted.
+
 ## Verification
 
 Core regressions verify fixture hashes, identities, parsed field shapes, root
@@ -102,7 +107,14 @@ This is evidence-report verification, not package execution, install testing or
 platform acceptance. Existing root verification, passive inspection and disabled
 DSH mutation capabilities remain unchanged.
 
+An offline Git regression checks out all five fixtures with `core.autocrlf=true`
+and `core.eol=crlf`, verifies their original bytes and hashes, and proves conversion
+is active using an unprotected control file. A negative case removes the attributes
+and reproduces digest changes in both multiline root fixtures. Linux and Windows
+CI run this regression before compilation.
+
 ```sh
+python -B scripts/test_dsh_evidence_checkout.py
 python scripts/run-isolated.py cargo test --locked -p aisync-core dependency_evidence
 python scripts/run-isolated.py cargo test --locked -p aisync-cli --test dsh_dependency_evidence
 ```
@@ -127,3 +139,7 @@ python scripts/run-isolated.py cargo test --locked -p aisync-cli --test dsh_depe
 核对材料变化，不能代替独立签名认证。上游源码 workspace 锁文件和构建许可不能直接
 当作 npm 发布包的安装锁或生命周期许可。快照不会自动刷新、追随 latest 或选择新版本；
 更新必须重新核查准确来源与原始字节，并同步更新摘要、日期、测试和文档。
+
+五份固定摘要 JSON（含既有根包核查记录）均使用 Git `-text` 属性保留原始字节，
+不接受 Windows 自动 CRLF 转换后的替代摘要，也不在运行时归一化。离线回归以真实
+Git checkout 验证 autocrlf 开启时摘要不变，并用无保护文件和移除属性的反例确认测试有效。
