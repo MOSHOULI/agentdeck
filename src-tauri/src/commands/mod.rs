@@ -17,3 +17,5 @@ pub fn health_check() -> String {
 }
 
 pub mod qwen;
+
+pub mod qoder;

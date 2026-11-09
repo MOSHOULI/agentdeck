@@ -55,9 +55,9 @@ it('omits the demo banner for a native runtime', async () => {
   expect(screen.queryByText(/未连接桌面后端 · 请在/)).not.toBeInTheDocument();
 });
 
-it('keeps all seven workspace trees mounted and retains local search state', async () => {
+it('keeps all eight workspace trees mounted and retains local search state', async () => {
   const view = await renderReadyApp(true);
-  expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(7);
+  expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(8);
   const agents = screen.getByRole('tabpanel', { name: /^Agent 管理/ });
   const search = within(agents).getByRole('searchbox', { name: '搜索 Agent' });
   fireEvent.change(search, { target: { value: 'OpenCode' } });

@@ -57,3 +57,16 @@ installed UI/IPC route, not real Qwen behavior; Windows CI must actually pass.
 Qwen 生命周期还通过真实点击检查四种恢复观察状态，核对整个合成目录文件名与
 字节哈希均不变，诊断不打开应用/撤销确认。此项验证已安装 UI/IPC，不代表真实
 Qwen 运行效果，仍须以 Windows CI 实际通过为准。
+
+## Qoder read-only workspace / Qoder 只读工作区
+
+Installed UI acceptance selects the explicit Linux baseline plan through native
+keyboard/UIAutomation, checks its fixed official archive filename, then verifies
+that a synthetic mismatching archive is rejected through real IPC with unchanged
+bytes and file count. Clearing the selected path is also checked. It performs no
+Qoder download, extraction, execution or installation; real matching archive success
+on Windows remains unverified by this smoke test.
+
+已安装UI通过原生键盘/UIAutomation选择明确Linux baseline计划并核固定包名，
+再经真实IPC拒绝合成摘要错误包，核对文件字节及数量不变，并测试清除路径。不下载、
+解包、执行或安装Qoder；此冒烟不证明真实匹配包在Windows上的成功验收。

@@ -54,3 +54,6 @@ can copy the reviewed Linux baseline archive into a new private cache. It does n
 change the no-write behavior of `distribution-plan` or `verify-package`, and does
 not enable installation or extraction. 另有需明确确认的[受控暂存命令](QODER-CONTROLLED-STAGING.md)，
 仅创建全新私有归档缓存，不改变前述两个命令的只读行为，也不启用安装或解包。
+
+The desktop now provides a separate [read-only plan and verification workspace](QODER-DESKTOP-VERIFICATION.md),
+without download, staging, extraction or installation actions. 桌面现有独立[只读分发计划与包校验](QODER-DESKTOP-VERIFICATION.md)，不开放下载、暂存、解包或安装。
