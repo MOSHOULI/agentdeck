@@ -33,3 +33,5 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Securit
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 libc = "0.2"
+tar = { version = "0.4", default-features = false }
+flate2 = "1.1"

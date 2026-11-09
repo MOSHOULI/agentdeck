@@ -48,7 +48,7 @@ pub fn stage_package(
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-mod linux {
+pub(crate) mod linux {
     use super::*;
     use crate::inspection::reader::{NativeSelectedFileReader, validate_path};
     use crate::qoder::distribution;
@@ -64,10 +64,10 @@ mod linux {
         path::Component,
     };
 
-    fn name(value: &OsStr) -> Result<CString, StagingError> {
+    pub(crate) fn name(value: &OsStr) -> Result<CString, StagingError> {
         CString::new(value.as_bytes()).map_err(|_| StagingError::InvalidDestination)
     }
-    fn open_at(
+    pub(crate) fn open_at(
         parent: &File,
         child: &OsStr,
         flags: i32,
@@ -88,7 +88,7 @@ mod linux {
         }
         Ok(unsafe { File::from_raw_fd(fd) })
     }
-    fn directory(path: &Path) -> Result<File, StagingError> {
+    pub(crate) fn directory(path: &Path) -> Result<File, StagingError> {
         let mut current = File::open("/").map_err(|_| StagingError::InvalidDestination)?;
         for part in path.components() {
             match part {
@@ -102,7 +102,7 @@ mod linux {
         }
         Ok(current)
     }
-    fn new_file(dir: &File, child: &str) -> Result<File, StagingError> {
+    pub(crate) fn new_file(dir: &File, child: &str) -> Result<File, StagingError> {
         open_at(
             dir,
             OsStr::new(child),
@@ -110,11 +110,15 @@ mod linux {
             0o600,
         )
     }
-    fn identity(file: &File) -> Result<(u64, u64), StagingError> {
+    pub(crate) fn identity(file: &File) -> Result<(u64, u64), StagingError> {
         let m = file.metadata().map_err(|_| StagingError::Incomplete)?;
         Ok((m.dev(), m.ino()))
     }
-    fn record(dir: &File, child: &str, value: &serde_json::Value) -> Result<(), StagingError> {
+    pub(crate) fn record(
+        dir: &File,
+        child: &str,
+        value: &serde_json::Value,
+    ) -> Result<(), StagingError> {
         let mut file = new_file(dir, child)?;
         file.write_all(
             serde_json::to_string_pretty(value)

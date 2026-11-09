@@ -88,6 +88,18 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum QoderAction {
+    /// Strictly unpack a pinned staged cache to a NEW private non-executable directory.
+    #[command(
+        long_about = "Linux x86_64 only: validate the explicit staged Qoder 1.1.85 baseline cache and extract its single pinned payload into a NEW private directory. Requires --yes. No execution, activation, PATH, login or configuration changes. Completion means extracted cache only, not installed. Records are not authorization; fixed archive and payload hashes are independently rechecked. Existing destinations are never overwritten. Failure may retain partial output; inspect before manual cleanup, never retry in place."
+    )]
+    UnpackCache {
+        #[arg(long)]
+        cache: PathBuf,
+        #[arg(long)]
+        destination: PathBuf,
+        #[arg(long)]
+        yes: bool,
+    },
     /// Stage a pinned archive in a NEW private directory; never unpack, install or execute.
     #[command(
         long_about = "Create a new explicit private archive cache, only for linux-amd64-baseline@1.1.85 on Linux x86_64. Requires --yes. Existing destinations are never reused or overwritten. Copies and hashes the same audited source handle, then rechecks the private copy. No unpacking, execution, PATH or configuration writes. Failure may retain an incomplete destination; inspect before manual cleanup. Completion means staged archive only, not installed/runtime-ready. Same-user hostile races and mount I/O deadlines are not solved."
@@ -417,6 +429,25 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             )?;
             use std::io::Write;
             writeln!(std::io::stdout().lock(), "{report}")?;
+        }
+        Commands::Qoder {
+            action:
+                QoderAction::UnpackCache {
+                    cache,
+                    destination,
+                    yes,
+                },
+        } => {
+            require_confirmation(yes)?;
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&qoder::unpacking::unpack_cache(
+                    &cache,
+                    &destination
+                )?)?
+            )?;
         }
         Commands::Qoder {
             action:

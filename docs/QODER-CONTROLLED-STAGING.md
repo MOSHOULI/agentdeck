@@ -68,3 +68,9 @@ PATH、配置或全局注册。其余平台分发计划和只读校验不变。
 完成记录亦不是对抗用户篡改的证明、执行授权或今后直接运行的凭据。失败返回非零且保留现场，不自动递归清理、
 续传或覆盖重试；可能在完成记录发布后才发生同步或 CLI 输出失败，须先检查。另选新目录
 可重新开始，旧目录手动清理另行处理。CLI 必须显式 --yes；不宣称断电安全。
+
+A separate [strict cache-unpack command](QODER-CONTROLLED-UNPACK.md) can now validate
+this completed cache and extract the fixed payload to another new non-executable
+private directory. `stage-package` itself still never extracts or installs.
+另有[严格缓存解包命令](QODER-CONTROLLED-UNPACK.md)，需再次明确确认，写入另一个全新
+非可执行私有目录；stage-package 本身仍不解包、不安装。

@@ -90,3 +90,24 @@ fn staging_requires_explicit_write_confirmation_before_creating_destination() {
     assert!(output.stdout.is_empty());
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn unpack_requires_confirmation_without_creating_any_output() {
+    let dir = std::env::temp_dir().join(format!(
+        "qoder-unpack-cli-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let output = Command::new(env!("CARGO_BIN_EXE_aisync"))
+        .args(["qoder", "unpack-cache", "--cache"])
+        .arg(&dir)
+        .arg("--destination")
+        .arg(dir.join("output"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(!dir.exists());
+}
