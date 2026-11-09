@@ -39,3 +39,10 @@ Reviewed 2026-11-08; rolling documentation, not a pinned binary release:
 - [BYOK wizard and prohibition on manual settings.json configuration](https://docs.qoder.com/cli/custom-models)
 
 No Magpie or CC Switch code was copied. Their separation of capability and ownership informed the design; this slice makes no claim to provide their configuration switching features.
+
+Separate from settings inspection, [native distribution planning and explicit archive
+verification](QODER-DISTRIBUTION.md) now pin the reviewed 1.1.85 artifacts. These offline
+commands do not enable installation, execution, configuration or restore support.
+
+另有独立的[原生分发计划与显式归档校验](QODER-DISTRIBUTION.md)，固定已审阅的
+1.1.85 包；不因此启用安装、执行、配置或恢复能力。

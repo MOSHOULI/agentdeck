@@ -49,7 +49,7 @@ Claude 保留既有只读安装检查及配置适配器，未新增验证原生�
 
 ## Qoder CLI
 
-[官方安装说明](https://docs.qoder.com/cli/installation) 首选原生独立安装器；`@qoder-ai/qodercli` 为旧 npm 兼容路线，需要 Node.js 20+，不作为新安装首选。命令为 `qoder`，Windows ARM64 不受支持。[自定义模型](https://docs.qoder.com/cli/custom-models) 使用 `/model` 向导。本条仅链接官方说明，不启用可执行文件检测、凭据注入、安装、配置或桌面管理。
+[官方安装说明](https://docs.qoder.com/cli/installation) 首选原生独立安装器；`@qoder-ai/qodercli` 为旧 npm 兼容路线，需要 Node.js 20+，不作为新安装首选。命令为 `qoder`，Windows ARM64 文档仍称不支持，但已审阅的 1.1.85 清单与安装脚本列出原生 ARM64 包，实际兼容性未验收。[自定义模型](https://docs.qoder.com/cli/custom-models) 使用 `/model` 向导。本条仅链接官方说明，不启用可执行文件检测、凭据注入、安装、配置或桌面管理。
 
 ## 其余既有条目：带日期的维护证据
 

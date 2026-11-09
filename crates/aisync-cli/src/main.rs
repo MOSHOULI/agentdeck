@@ -88,6 +88,21 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum QoderAction {
+    /// Print a pinned native distribution plan; never download, install or execute.
+    DistributionPlan {
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(qoder::distribution::TARGETS.iter().copied()))]
+        target: String,
+    },
+    /// Hash an explicit archive against pinned upstream SHA256. No unpacking or execution.
+    #[command(
+        long_about = "Check an explicit local archive against the fixed reviewed Qoder 1.1.85 target SHA256. Does not download, unpack, execute, install, modify PATH or configuration. Requires the official archive basename. Exit 0 means only a digest match; NOT independent signature verification, installation or runtime compatibility. Unknown target, unsupported/unsafe file, oversized input and mismatch exit nonzero. Only audited Windows/Linux readers are supported; access time may change and same-user races/mount I/O deadlines are not solved."
+    )]
+    VerifyPackage {
+        #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(qoder::distribution::TARGETS.iter().copied()))]
+        target: String,
+        #[arg(long, value_name = "ABSOLUTE_OFFICIAL_ARCHIVE")]
+        archive: PathBuf,
+    },
     /// Summarize selected scopes and repeated MCP names, without exposing names/values.
     #[command(
         long_about = "Read explicitly selected Qoder CLI settings and project MCP files. Emits fixed redacted section flags, server counts and potential cross-scope overlap only. No execution, discovery, initialization, writes, backup or BYOK editing. This is not effective configuration, version verification, a diff or apply readiness. Exit 0 means a report was produced (including unavailable/unsupported observations); invalid selections exit with an error."
@@ -388,6 +403,28 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             )?;
             use std::io::Write;
             writeln!(std::io::stdout().lock(), "{report}")?;
+        }
+        Commands::Qoder {
+            action: QoderAction::DistributionPlan { target },
+        } => {
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&qoder::distribution::plan(&target)?)?
+            )?;
+        }
+        Commands::Qoder {
+            action: QoderAction::VerifyPackage { target, archive },
+        } => {
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&qoder::distribution::verify_package(
+                    &target, &archive
+                )?)?
+            )?;
         }
         Commands::Qoder {
             action:

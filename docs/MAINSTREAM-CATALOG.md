@@ -49,7 +49,7 @@ Claude retains existing read-only installation inspection and configuration adap
 
 ## Qoder CLI
 
-[Official installation](https://docs.qoder.com/cli/installation) prefers a standalone native installer. `@qoder-ai/qodercli` is a legacy npm compatibility route requiring Node.js 20+, not the recommended new installer. The command is `qoder`; Windows ARM64 is unsupported. [Custom models](https://docs.qoder.com/cli/custom-models) use the `/model` wizard. This entry only links official instructions: no executable detection, credential injection, installation, configuration or desktop coverage is enabled.
+[Official installation](https://docs.qoder.com/cli/installation) prefers a standalone native installer. `@qoder-ai/qodercli` is a legacy npm compatibility route requiring Node.js 20+, not the recommended new installer. The command is `qoder`; Windows ARM64 documentation still says unsupported, but the reviewed 1.1.85 manifest and installer list a native ARM64 artifact; runtime compatibility remains unverified. [Custom models](https://docs.qoder.com/cli/custom-models) use the `/model` wizard. This entry only links official instructions: no executable detection, credential injection, installation, configuration or desktop coverage is enabled.
 
 ## Other existing entries: dated maintenance evidence
 

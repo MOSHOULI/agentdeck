@@ -80,6 +80,34 @@ impl NativeSelectedFileReader {
         path: &Path,
         expected: &str,
     ) -> Result<Vec<u8>, InspectionIssue> {
+        let mut bytes = Vec::new();
+        self.visit_named(path, expected, LIMITS.max_manifest_bytes as u64, |chunk| {
+            bytes.extend_from_slice(chunk)
+        })?;
+        Ok(bytes)
+    }
+
+    /// Dedicated archive hashing; callers cannot enlarge settings inspection limits.
+    pub(crate) fn hash_archive(
+        &self,
+        path: &Path,
+        expected: &str,
+    ) -> Result<(String, u64), InspectionIssue> {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        let size = self.visit_named(path, expected, 256 * 1024 * 1024, |chunk| {
+            hash.update(chunk)
+        })?;
+        Ok((format!("{:x}", hash.finalize()), size))
+    }
+
+    fn visit_named(
+        &self,
+        path: &Path,
+        expected: &str,
+        limit: u64,
+        mut visit: impl FnMut(&[u8]),
+    ) -> Result<u64, InspectionIssue> {
         validate_path(path, expected)?;
         // Refuse all platforms without the no-follow/non-blocking flags audited
         // below. Future ports need explicit review, not a weaker fallback open.
@@ -93,12 +121,12 @@ impl NativeSelectedFileReader {
             return Err(InspectionIssue::PlatformUnsupported);
         }
         let before = check_components(path)?;
-        check_file(&before)?;
+        check_file(&before, limit)?;
         let file = open_read_only(path).map_err(io_issue)?;
         #[cfg(windows)]
         let handle_identity = checked_handle_identity(&file)?;
         let opened = file.metadata().map_err(io_issue)?;
-        check_file(&opened)?;
+        check_file(&opened, limit)?;
         if !same_file(&before, &opened) {
             return Err(InspectionIssue::FileChanged);
         }
@@ -108,26 +136,47 @@ impl NativeSelectedFileReader {
         if !same_file(&opened, &rechecked) {
             return Err(InspectionIssue::FileChanged);
         }
-        let mut bytes = Vec::with_capacity(opened.len() as usize);
-        let mut bounded = (&file).take((LIMITS.max_manifest_bytes + 1) as u64);
-        bounded.read_to_end(&mut bytes).map_err(io_issue)?;
-        if bytes.len() > LIMITS.max_manifest_bytes {
-            return Err(InspectionIssue::FileTooLarge);
+        // Reopen only to compare pathname identity, never to consume different bytes.
+        #[cfg(windows)]
+        if checked_handle_identity(&open_read_only(path).map_err(io_issue)?)? != handle_identity {
+            return Err(InspectionIssue::FileChanged);
+        }
+        let mut bounded = (&file).take(limit + 1);
+        let mut buffer = [0u8; 64 * 1024];
+        let mut size = 0u64;
+        loop {
+            let count = bounded.read(&mut buffer).map_err(io_issue)?;
+            if count == 0 {
+                break;
+            }
+            size += count as u64;
+            if size > limit {
+                return Err(InspectionIssue::FileTooLarge);
+            }
+            visit(&buffer[..count]);
         }
         #[cfg(windows)]
         if checked_handle_identity(&file)? != handle_identity {
             return Err(InspectionIssue::FileChanged);
         }
         let after = file.metadata().map_err(io_issue)?;
-        check_file(&after)?;
+        check_file(&after, limit)?;
         if !same_file(&opened, &after)
             || opened.len() != after.len()
             || opened.modified().ok() != after.modified().ok()
-            || bytes.len() as u64 != after.len()
+            || size != after.len()
         {
             return Err(InspectionIssue::FileChanged);
         }
-        Ok(bytes)
+        let final_path = check_components(path)?;
+        if !same_file(&after, &final_path) {
+            return Err(InspectionIssue::FileChanged);
+        }
+        #[cfg(windows)]
+        if checked_handle_identity(&open_read_only(path).map_err(io_issue)?)? != handle_identity {
+            return Err(InspectionIssue::FileChanged);
+        }
+        Ok(size)
     }
 }
 
@@ -166,7 +215,7 @@ fn reject_link(metadata: &Metadata) -> Result<(), InspectionIssue> {
     Ok(())
 }
 
-fn check_file(metadata: &Metadata) -> Result<(), InspectionIssue> {
+fn check_file(metadata: &Metadata, limit: u64) -> Result<(), InspectionIssue> {
     reject_link(metadata)?;
     if !metadata.is_file() {
         return Err(InspectionIssue::NotRegularFile);
@@ -178,7 +227,7 @@ fn check_file(metadata: &Metadata) -> Result<(), InspectionIssue> {
             return Err(InspectionIssue::MultipleHardLinks);
         }
     }
-    if metadata.len() > LIMITS.max_manifest_bytes as u64 {
+    if metadata.len() > limit {
         return Err(InspectionIssue::FileTooLarge);
     }
     Ok(())
