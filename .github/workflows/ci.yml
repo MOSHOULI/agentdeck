@@ -77,6 +77,8 @@ jobs:
         run: python -B scripts/dsh_distribution_smoke.py --cli "$PWD/target/debug/aisync" --destination "$RUNNER_TEMP/dsh-root-package-smoke"
       - name: Qwen owned setting rejects extended POSIX ACLs
         run: python scripts/run-isolated.py cargo test --locked -p aisync-core extended_posix_acl_is_not_silently_lost -- --ignored
+      - name: Qwen owned setting refuses unpreserved Linux extended attributes
+        run: python scripts/run-isolated.py cargo test --locked -p aisync-core extended_attributes_ -- --ignored
       - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- health
       - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- agents
       - uses: actions/setup-node@v4

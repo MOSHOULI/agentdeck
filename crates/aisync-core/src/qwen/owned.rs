@@ -237,6 +237,9 @@ pub fn apply(settings: &Path, manifest: &Path, after: bool, expected_token: &str
     if token(&current, after) != expected_token {
         return Err(EditError::Changed);
     }
+    // Refuse metadata we cannot preserve before creating an ownership receipt.
+    #[cfg(unix)]
+    let _metadata_check = unix_replacement_source(settings).map_err(|_| EditError::Unsupported)?;
     let mut updated = current.document.clone();
     set_field(&mut updated, Some(after), false);
     let output = encode(&updated)?;
@@ -380,6 +383,9 @@ pub fn restore(settings: &Path, manifest: &Path) -> Result<bool> {
     {
         return Err(EditError::Changed);
     }
+    // Keep the applied receipt unchanged when settings metadata forbids replacement.
+    #[cfg(unix)]
+    let _metadata_check = unix_replacement_source(settings).map_err(|_| EditError::Unsupported)?;
     receipt.phase = Phase::Restoring;
     receipt.after_digest = digest(&selected.bytes);
     receipt.restore_digest = Some(digest(&output));
@@ -460,12 +466,18 @@ fn replace_named(path: &Path, bytes: &[u8], name: &str) -> Result<()> {
     {
         return Err(EditError::Unsupported);
     }
+    #[cfg(unix)]
+    let source_file = unix_replacement_source(path).map_err(|_| EditError::Unsupported)?;
     let temporary = sibling(
         path,
         &format!(".agentdeck-vim-{}.tmp", uuid::Uuid::new_v4()),
     )?;
     let mut file = private_file(&temporary)?;
     let mut write_temp = || -> Result<()> {
+        #[cfg(unix)]
+        if !linux_has_no_extended_attributes(&file) {
+            return Err(EditError::Unsupported);
+        }
         #[cfg(windows)]
         copy_dacl(path, &file)?;
         file.write_all(bytes)
@@ -477,13 +489,24 @@ fn replace_named(path: &Path, bytes: &[u8], name: &str) -> Result<()> {
         let _ = fs::remove_file(&temporary);
         return Err(error);
     }
+    #[cfg(windows)]
     drop(file);
     #[cfg(unix)]
     let result = (|| {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        let source = fs::metadata(path)?;
-        let target = fs::metadata(&temporary)?;
-        if source.uid() != target.uid()
+        let source = source_file.metadata()?;
+        let named_source = fs::symlink_metadata(path)?;
+        let target = file.metadata()?;
+        let named_target = fs::symlink_metadata(&temporary)?;
+        if source.dev() != named_source.dev()
+            || source.ino() != named_source.ino()
+            || target.dev() != named_target.dev()
+            || target.ino() != named_target.ino()
+            || source.nlink() != 1
+            || target.nlink() != 1
+            || !linux_has_no_extended_attributes(&source_file)
+            || !linux_has_no_extended_attributes(&file)
+            || source.uid() != target.uid()
             || source.gid() != target.gid()
             || source.permissions().mode() & 0o7000 != 0
             || !linux_has_no_acl(path)
@@ -491,7 +514,7 @@ fn replace_named(path: &Path, bytes: &[u8], name: &str) -> Result<()> {
         {
             return Err(std::io::Error::other("unsupported permission metadata"));
         }
-        fs::set_permissions(&temporary, source.permissions())?;
+        file.set_permissions(source.permissions())?;
         fs::rename(&temporary, path)
     })();
     #[cfg(windows)]
@@ -528,6 +551,57 @@ fn replace_named(path: &Path, bytes: &[u8], name: &str) -> Result<()> {
         let _ = fs::remove_file(&temporary);
     }
     result.map_err(|_| EditError::Io)
+}
+
+/// Atomic replacement does not preserve extended attributes. Inspect only the
+/// size of the visible attribute-name list, never names or values. A nonempty
+/// list or unexpected error fails closed; filesystems without xattr support have
+/// no attributes to copy. This is not proof about metadata hidden by host policy.
+#[cfg(unix)]
+fn linux_has_no_extended_attributes(file: &fs::File) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        unsafe extern "C" {
+            fn flistxattr(fd: i32, list: *mut std::ffi::c_char, size: usize) -> isize;
+        }
+        let count = unsafe { flistxattr(file.as_raw_fd(), std::ptr::null_mut(), 0) };
+        count == 0 || (count == -1 && std::io::Error::last_os_error().raw_os_error() == Some(95))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = file;
+        false
+    }
+}
+
+/// Pin an ordinary, singly linked source for the metadata checks. The selected
+/// reader still validates every ancestor/content; this does not close same-user
+/// races between the final check and rename.
+#[cfg(unix)]
+fn unix_replacement_source(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::unix::fs::MetadataExt;
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // O_NOFOLLOW | O_NONBLOCK, reviewed Linux x86_64/aarch64 values.
+        options.custom_flags(0o400000 | 0o4000);
+    }
+    let file = options.open(path)?;
+    let opened = file.metadata()?;
+    let named = fs::symlink_metadata(path)?;
+    if !opened.is_file()
+        || !named.is_file()
+        || opened.nlink() != 1
+        || opened.dev() != named.dev()
+        || opened.ino() != named.ino()
+        || !linux_has_no_extended_attributes(&file)
+    {
+        return Err(std::io::Error::other("unsupported replacement metadata"));
+    }
+    Ok(file)
 }
 
 #[cfg(unix)]

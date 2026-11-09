@@ -58,8 +58,15 @@ settles. Read-only diagnostics do not lock path inputs. Browser/demo mode never
 invokes this inspection. Raw errors and backend-provided prose are not rendered.
 
 Atomic replacement preserves Unix mode and Windows destination ACL; Linux rejects
-extended POSIX ACLs, special mode bits and owner/group mismatches rather than
-silently losing security metadata; temporary
+extended POSIX ACLs, visible extended attributes, special mode bits and owner/group
+mismatches rather than silently losing metadata. Linux queries only the attribute
+name-list size on opened source/temporary handles; it never reads attribute names
+or values, and rejects nonempty lists or unexpected query failures. Apply checks
+settings before creating a receipt; restore checks before changing receipt phase;
+replacement rechecks source and temporary inodes. A later failure can still leave
+a receipt for recovery. Read-only previews are not write-readiness checks.
+No security labels are copied or host policies changed. Metadata hidden from the
+process by host policy and actual SELinux-host behavior are not verified; temporary
 configuration content receives the source DACL before being written on Windows.
 File checks and advisory locks do **not** prevent a same-user hostile race or
 Qwen/other editors writing between final check and replacement. A change away
@@ -111,3 +118,23 @@ authentication, effective settings and GUI acceptance remain outstanding.
 诊断开始时清除待确认应用/撤销；路径、目标值、清除、取消、卸载界面使旧响应失效。
 取消仅丢弃结果，不中止读取，读取结束前其他操作仍互斥；只读期间路径可编辑。
 浏览器与演示模式不触发此读取。
+
+## Linux extended-attribute regression / Linux 扩展属性保护
+
+The unchanged CLI previously returned success while replacing the inode and
+dropping a synthetic `user.agentdeck-test` attribute, independently on apply and
+restore. Linux CI now explicitly runs four filesystem-capability tests covering
+apply refusal before receipt creation, restore refusal before phase transition,
+receipt replacement refusal, and fd-based temporary-inode inspection. Tests
+verify unchanged bytes, inode where relevant, and attribute values; they do not
+configure SELinux, change host security policy or execute Qwen.
+
+Linux 原子替换现在拒绝无法保留的可见扩展属性，不再静默丢失用户元数据。仅查询已打开
+文件句柄的属性名列表长度，不读取名称或值；非空或非预期错误均拒绝。apply 在创建
+所有权记录前检查，restore 在改变记录阶段前检查，实际替换前再次检查源文件和临时
+文件。普通只读预览不保证可以写入；后期失败仍可能保留恢复记录。测试只使用合成
+user.* 属性，没有更改 SELinux/主机安全策略，也不声称验证了隐藏元数据或全部安全标签。
+
+```sh
+python scripts/run-isolated.py cargo test --locked -p aisync-core extended_attributes_ -- --ignored
+```

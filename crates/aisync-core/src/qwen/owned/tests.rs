@@ -505,6 +505,146 @@ fn extended_posix_acl_is_not_silently_lost() {
     assert!(!linux_has_no_acl(&f.settings));
 }
 
+#[cfg(target_os = "linux")]
+fn set_test_xattr(path: &Path, value: &[u8]) {
+    use std::os::unix::ffi::OsStrExt;
+    unsafe extern "C" {
+        fn setxattr(
+            path: *const std::ffi::c_char,
+            name: *const std::ffi::c_char,
+            value: *const std::ffi::c_void,
+            size: usize,
+            flags: i32,
+        ) -> i32;
+    }
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    assert_eq!(
+        unsafe {
+            setxattr(
+                path.as_ptr(),
+                c"user.agentdeck-test".as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+            )
+        },
+        0,
+        "fixture filesystem must support user xattrs: {}",
+        std::io::Error::last_os_error()
+    );
+}
+
+#[cfg(target_os = "linux")]
+fn test_xattr(path: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    unsafe extern "C" {
+        fn getxattr(
+            path: *const std::ffi::c_char,
+            name: *const std::ffi::c_char,
+            value: *mut std::ffi::c_void,
+            size: usize,
+        ) -> isize;
+    }
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let mut value = vec![0u8; 64];
+    let length = unsafe {
+        getxattr(
+            path.as_ptr(),
+            c"user.agentdeck-test".as_ptr(),
+            value.as_mut_ptr().cast(),
+            value.len(),
+        )
+    };
+    assert!(length >= 0, "fixture xattr must remain unchanged");
+    value.truncate(length as usize);
+    value
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires user-xattr-capable filesystem; explicitly exercised in Linux CI"]
+fn extended_attributes_refuse_apply_before_receipt_without_metadata_loss() {
+    use std::os::unix::fs::MetadataExt;
+    let f = Fixture::new(r#"{"$version":4,"secret":"SECRET"}"#);
+    let original = fs::read(&f.settings).unwrap();
+    set_test_xattr(&f.settings, b"apply-sentinel");
+    let inode = fs::metadata(&f.settings).unwrap().ino();
+    // A read-only preview remains valid; it never promises write readiness.
+    assert!(preview(&f.settings, &f.manifest, true).is_ok());
+    assert!(matches!(f.apply(true), Err(EditError::Unsupported)));
+    assert_eq!(fs::read(&f.settings).unwrap(), original);
+    assert_eq!(fs::metadata(&f.settings).unwrap().ino(), inode);
+    assert_eq!(test_xattr(&f.settings), b"apply-sentinel");
+    assert!(!f.dir.join(RECEIPT).exists());
+    assert!(!fs::read_dir(&f.dir).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .path()
+            .extension()
+            .is_some_and(|e| e == "tmp")
+    }));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires user-xattr-capable filesystem; explicitly exercised in Linux CI"]
+fn extended_attributes_refuse_restore_before_receipt_transition() {
+    use std::os::unix::fs::MetadataExt;
+    let f = Fixture::new(r#"{"$version":4}"#);
+    f.apply(true).unwrap();
+    set_test_xattr(&f.settings, b"restore-sentinel");
+    let original = recovery_snapshot(&f);
+    let inode = fs::metadata(&f.settings).unwrap().ino();
+    assert!(matches!(
+        restore(&f.settings, &f.manifest),
+        Err(EditError::Unsupported)
+    ));
+    assert_eq!(recovery_snapshot(&f), original);
+    assert_eq!(fs::metadata(&f.settings).unwrap().ino(), inode);
+    assert_eq!(test_xattr(&f.settings), b"restore-sentinel");
+    assert_eq!(
+        parse_receipt(&fs::read(f.dir.join(RECEIPT)).unwrap())
+            .unwrap()
+            .phase,
+        Phase::Applied
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires user-xattr-capable filesystem; explicitly exercised in Linux CI"]
+fn extended_attributes_on_receipt_refuse_replacement_without_changing_settings() {
+    let f = Fixture::new(r#"{"$version":4}"#);
+    f.apply(true).unwrap();
+    let receipt = f.dir.join(RECEIPT);
+    set_test_xattr(&receipt, b"receipt-sentinel");
+    let original = recovery_snapshot(&f);
+    assert!(matches!(
+        restore(&f.settings, &f.manifest),
+        Err(EditError::Unsupported)
+    ));
+    assert_eq!(recovery_snapshot(&f), original);
+    assert_eq!(test_xattr(&receipt), b"receipt-sentinel");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires user-xattr-capable filesystem; explicitly exercised in Linux CI"]
+fn extended_attributes_are_checked_on_open_temporary_inode() {
+    let f = Fixture::new(r#"{"$version":4}"#);
+    let path = f.dir.join("metadata-test.tmp");
+    let file = private_file(&path).unwrap();
+    assert!(linux_has_no_extended_attributes(&file));
+    set_test_xattr(&path, b"temporary-sentinel");
+    assert!(!linux_has_no_extended_attributes(&file));
+    // Renaming the same inode does not change the fd-based observation.
+    let moved = f.dir.join("renamed.tmp");
+    fs::rename(&path, &moved).unwrap();
+    assert!(!linux_has_no_extended_attributes(&file));
+    assert_eq!(fs::metadata(&moved).unwrap().len(), 0);
+    assert_eq!(test_xattr(&moved), b"temporary-sentinel");
+}
+
 fn recovery_snapshot(f: &Fixture) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
     fs::read_dir(&f.dir)
         .unwrap()
