@@ -1,3 +1,4 @@
+import { scopeIds, validateScopeReport, type ScopePaths } from './qoderScopeContract';
 import { validateQoderWrite, type QoderWriteOperation } from './qoderContract';
 import { requireQoderTarget, validateQoderPlan, validateQoderVerification, validateQoderCacheObservation } from './qoderContract';
 import { qwenDemoSummary, validateQwenReport, validateQwenVimPreview, validateQwenMutation, validateQwenRecovery } from './qwenContract';
@@ -522,4 +523,11 @@ export async function writeQoderCache(operation: QoderWriteOperation, source: st
   useDemo(true);
   if (!confirmed || !['stage','unpack'].includes(operation) || [source,destination].some(p => typeof p !== 'string' || !p.startsWith('/') || !p.trim() || new TextEncoder().encode(p).length > 4096 || /[\x00-\x1f\x7f]/.test(p))) throw new Error('QODER_WRITE_INVALID_REQUEST');
   return validateQoderWrite(await invoke<unknown>('write_qoder_cache', { operation, target: 'linux-amd64-baseline', source, destination, confirmed: true }), operation);
+}
+
+export async function inspectQoderScopes(paths: ScopePaths) {
+  useDemo(true);
+  const captured = { ...paths };
+  if (!scopeIds.some(id=>!!captured[id]) || scopeIds.some(id=>typeof captured[id]!=='string' || new TextEncoder().encode(captured[id]).length>4096 || /[\x00-\x1f\x7f]/.test(captured[id]))) throw new Error('QODER_SCOPE_INVALID_SELECTION');
+  return validateScopeReport(await invoke<unknown>('inspect_qoder_scopes', {userSettings:captured.user_settings||null,projectSettings:captured.project_settings||null,localSettings:captured.local_settings||null,projectMcp:captured.project_mcp||null}),captured);
 }

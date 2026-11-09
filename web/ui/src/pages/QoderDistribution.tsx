@@ -1,3 +1,4 @@
+import { QoderScopeInspection } from './QoderScopeInspection';
 import { useEffect, useRef, useState } from 'react';
 import * as bridge from '../bridge';
 import { qoderTargets, qoderCacheLabels, qoderCacheRecoveryGuidance } from '../qoderContract';
@@ -150,5 +151,6 @@ export function QoderDistribution() {
       {writeError && <p role="alert">Qoder 缓存写入未确认完成。仅支持 Linux x86_64；目标不可存在，不安全来源会被拒绝。可能留下部分私有目录，请保留现场，不原地重试。</p>}
       {written && <section aria-label="Qoder 缓存写入结果"><p role="status">{qoderCacheLabels[written.state]}</p><p>未安装、未运行；没有删除授权。可另行只读诊断明确目标目录。</p></section>}
     </section>
+    <QoderScopeInspection />
   </div>;
 }
