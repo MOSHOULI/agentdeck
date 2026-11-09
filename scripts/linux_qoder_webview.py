@@ -184,6 +184,9 @@ def exercise(driver, paths, root, record, phase=lambda value: None):
     driver.wait(lambda: len(driver.elements(tab)) == 1)
     phase('click_qoder_tab')
     driver.click(tab)
+    phase('assert_registry_startup_idle')
+    if len(driver.elements("//*[@id='workspace-tab-updates' and @aria-label='注册表更新']")) != 1:
+        raise Failure('startup_registry_not_idle')
     before = snapshot(root)
     for kind, path in paths.items():
         phase(kind + '_type_path')
@@ -221,7 +224,7 @@ def failure_code(error):
                    'webdriver_command_failed', 'driver_response_schema', 'no_session', 'missing_or_ambiguous_control', 'ui_wait_expired',
                    'unsafe_fixture', 'fixture_size_changed', 'unexpected_cache_state',
                    'private_fixture_content_exposed', 'cache_fixture_changed',
-                   'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready'}
+                   'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready', 'startup_registry_not_idle'}
         return str(error) if str(error) in allowed else 'harness_failure'
     if isinstance(error, urllib.error.HTTPError):
         return 'webdriver_http_' + str(error.code) if 100 <= error.code <= 599 else 'webdriver_http_error'

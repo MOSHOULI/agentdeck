@@ -102,6 +102,10 @@ class Tests(unittest.TestCase):
             self.assertLess(phases.index('unknown_confirm_typed_path'),phases.index('unknown_click_inspect'))
             self.assertLess(phases.index('unknown_wait_inspect_enabled'),phases.index('unknown_click_inspect'))
             self.assertEqual([r['state'] for r in records],list(subject.LABELS))
+            startup=Fake(paths); original_elements=startup.elements
+            startup.elements=lambda xpath: [] if 'workspace-tab-updates' in xpath else original_elements(xpath)
+            with self.assertRaisesRegex(subject.Failure,'startup_registry_not_idle'):subject.exercise(startup,paths,root,[])
+            self.assertEqual(startup.inspect_clicks,0)
             wrong_value=Fake(paths);wrong_value.value=lambda xpath:'wrong'
             with self.assertRaises(subject.Failure):subject.exercise(wrong_value,paths,root,[])
             self.assertEqual(wrong_value.inspect_clicks,0)

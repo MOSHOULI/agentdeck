@@ -50,3 +50,15 @@ Failure classification also records a whitelisted Python exception class and the
 Protocol review: WebKit's official `Source/WebDriver/WebDriverService.cpp` implementation of `elementSendKeys` requires the `text` string; the existing request supplies that field (with a legacy `value` array that the implementation does not reject). Responses are wrapped in a JSON `value` field; a successful clear can return `value: null`, not an empty HTTP body. The diagnostic increment does not speculate by changing key input or sandbox settings before the concrete exception is known.
 
 失败补充白名单 Python 异常类型和输入子步骤；最近响应仅记录固定操作/HTTP 状态、空值及大小标记、JSON 结构类型，不记录原始字段或内容，且在诊断读页面前保存快照。空响应/非 JSON 仍失败。已核对官方 WebKit SendKeys 必须提供 text，当前请求符合，成功清空返回 value:null 而非空正文；没有在明确异常前猜改输入或 sandbox。
+
+### Confirmed startup blocker and product fix / 已证启动阻塞及产品修复
+
+Re-reading the complete failure source identified `进行中：注册表更新` and the registry tab's active-operation label. The input path had reached the native DOM correctly; the Qoder button was legitimately disabled by another workspace's pending registry check. This is not evidence of a React input-event defect or a sandbox failure. The update component previously mounted in `checking` state and automatically invoked `check_updates`. The backend fetches manifest and signature sequentially with existing 60-second HTTP request timeouts; a slow check can therefore outlast the harness's 20-second readiness wait. It is not an unbounded network call.
+
+The product now starts registry updates in an explicit **not checked** state. Mounting or showing the workspace does not start network checks or claim the registry is current. The user can click Check updates when wanted. Once explicitly started, check/apply operations retain their existing busy and duplicate guards until their real IPC promises settle, including when the workspace is hidden. No Promise race, fake cancellation, shortened write lifetime, or removal of cross-workspace busy coordination is introduced. Existing signature and payload verification is unchanged.
+
+Real GUI acceptance now asserts the registry tab is idle at startup before touching caches, while retaining exact path readback and the enabled-button gate. No Tab workaround or 150-second blind wait was added. Offline component regressions cover startup/rerender no network, not-checked messaging, explicit checks, hidden pending check/apply ownership, errors and duplicate guards. The next real CI run must verify this product fix.
+
+完整失败源码明确显示“进行中：注册表更新”，输入路径已正确进入原生 DOM，Qoder 按钮因另一工作区正在检查注册表而合法禁用，并非已证明 React 输入事件或 sandbox 出错。原组件挂载即自动检查；manifest 与签名串行 HTTP 请求各已有 60 秒超时，可能超过脚本 20 秒等待，不能称为无限挂死。
+
+产品改为启动“尚未检查”，挂载/展示不自动联网，也不声称最新；需要时由用户显式检查。一旦开始，检查/应用仍保持真实忙碌及重复操作防护，隐藏工作区不释放，直到 IPC 真正结算。没有假取消、Promise 超时抢先解锁、缩短写入寿命或绕跨工作区忙碌协调；签名和载荷校验不变。真实 GUI 新增注册表初始空闲断言，并保留精确路径/启用门禁，没有 Tab 猜测修复或盲等 150 秒。效果待下一次 CI 实跑确认。
