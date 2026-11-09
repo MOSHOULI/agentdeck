@@ -294,4 +294,88 @@ class Tests(unittest.TestCase):
             with (root/'oversize').open('wb') as f:f.truncate(65537)
             with self.assertRaises(subject.Failure):subject.snapshot(root)
 
+    def test_desktop_write_flow_requires_bound_confirmation_and_rejects_overwrite(self):
+        # Deliberately tiny mock caches test harness control flow, not Qoder
+        # integrity or real native UI. Real CI uses the unpatched verifier.
+        class Fake:
+            def __init__(self, fault=None):
+                self.values={};self.operation='stage';self.dialog=False;self.result=False;self.alert=False;self.read=False;self.fault=fault;self.confirmed=0
+            def one(self,xpath):return 'element'
+            def wait(self,predicate,seconds=20):
+                if not predicate():raise subject.Failure('ui_wait_expired')
+            def enabled(self,xpath):return True
+            def reset(self):self.dialog=False;self.result=False;self.alert=False;self.read=False
+            def type(self,xpath,text):
+                self.values[xpath]=text
+                if self.fault!='stale_confirmation':self.reset()
+            def value(self,xpath):return self.values.get(xpath,'')
+            def elements(self,xpath):
+                if "role='dialog'" in xpath:return [{}] if self.dialog else []
+                if '确认创建' in xpath:return [{}] if self.dialog else []
+                if '缓存写入结果' in xpath:return [{}] if self.result else []
+                if "role='alert'" in xpath:return [{}] if self.alert else []
+                if '缓存诊断结果' in xpath:return [{}] if self.read else []
+                return [{}]
+            def text(self,xpath):
+                if "role='dialog'" in xpath:
+                    source=self.values["//*[@id='qoder-write-source']"]
+                    destination=self.values["//*[@id='qoder-write-destination']"]
+                    if self.fault=='wrong_preview':destination='wrong'
+                    return '操作：'+('暂存归档' if self.operation=='stage' else '解包缓存')+'；固定目标：linux-amd64-baseline；版本：1.1.85 来源：'+source+' 全新目录：'+destination
+                if '缓存写入结果' in xpath:return subject.LABELS['staged' if self.operation=='stage' else 'unpacked']
+                if '缓存诊断结果' in xpath:
+                    kind='staged' if self.values["//*[@id='qoder-cache']"].endswith('desktop-staged') else 'unpacked'
+                    return subject.LABELS[kind]+' 保留缓存，不执行操作。 本报告不授权删除'
+                return 'safe visible text'
+            def click(self,xpath):
+                if '选择暂存' in xpath:self.reset();self.operation='stage'
+                elif '选择解包' in xpath:self.reset();self.operation='unpack'
+                elif '预览' in xpath:self.dialog=True
+                elif '取消 Qoder 写入' in xpath:
+                    self.dialog=False
+                    if self.fault=='cancel_writes':Path(self.values["//*[@id='qoder-write-destination']"]).mkdir(mode=0o700)
+                elif '确认创建' in xpath:
+                    if not self.dialog:raise AssertionError('write without preview')
+                    self.reset();self.confirmed+=1
+                    destination=Path(self.values["//*[@id='qoder-write-destination']"])
+                    if destination.exists():
+                        self.alert=True
+                        if self.fault=='overwrite':subject.write_private(destination/'unexpected',b'changed')
+                    elif self.fault=='false_success':self.alert=True
+                    else:
+                        destination.mkdir(mode=0o700);subject.write_private(destination/'archive.tar.gz',b'mock archive');self.result=True
+                elif '只读诊断' in xpath:self.reset();self.read=True
+                elif '清除 Qoder' in xpath:
+                    if self.fault!='clear_broken':self.reset()
+                else:raise AssertionError('unexpected action')
+        original_snapshot=subject.snapshot
+        def tiny_snapshot(root,exact=None):return original_snapshot(root)
+        for fault in (None,'wrong_preview','cancel_writes','stale_confirmation','overwrite','false_success','clear_broken'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
+                base=Path(tmp);source=base/'source';source.mkdir(mode=0o700);archive=source/'official.tar.gz';subject.write_private(archive,b'mock source')
+                root=base/'writes';root.mkdir(mode=0o700);records=[];driver=Fake(fault)
+                with patch.object(subject,'snapshot',side_effect=tiny_snapshot),patch.object(subject,'created_cache_contract',return_value={}):
+                    if fault:
+                        with self.assertRaises(subject.Failure):subject.exercise_cache_writes(driver,archive,root,records)
+                    else:
+                        subject.exercise_cache_writes(driver,archive,root,records)
+                        self.assertEqual([r['operation'] for r in records],['confirmation','stage','stage_existing','unpack','unpack_existing'])
+                        self.assertEqual(driver.confirmed,4)
+                        self.assertFalse(driver.dialog or driver.result or driver.alert or driver.read)
+                        self.assertFalse((root/'confirmation-invalidated').exists())
+
+    def test_desktop_output_verifier_rejects_missing_extra_or_executable_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            for name in ('incomplete.json','complete.json','archive.tar.gz'):subject.write_private(root/name,b'wrong')
+            # Wrong fixed archive size/hash is rejected without allocating a
+            # synthetic official-size package or weakening the real verifier.
+            with self.assertRaises((subject.Failure,subject.complete.PreparationFailure)):
+                subject.created_cache_contract(root,False)
+            subject.write_private(root/'qodercli',b'not executable');(root/'qodercli').chmod(0o700)
+            with self.assertRaises((subject.Failure,subject.complete.PreparationFailure)):
+                subject.created_cache_contract(root,True)
+            subject.write_private(root/'unexpected',b'extra')
+            with self.assertRaises(subject.Failure):subject.created_cache_contract(root,False)
+
 if __name__=='__main__':unittest.main()

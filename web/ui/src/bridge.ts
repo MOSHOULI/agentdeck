@@ -1,3 +1,4 @@
+import { validateQoderWrite, type QoderWriteOperation } from './qoderContract';
 import { requireQoderTarget, validateQoderPlan, validateQoderVerification, validateQoderCacheObservation } from './qoderContract';
 import { qwenDemoSummary, validateQwenReport, validateQwenVimPreview, validateQwenMutation, validateQwenRecovery } from './qwenContract';
 import type { QwenSummary } from './qwenContract';
@@ -515,4 +516,10 @@ export async function getMemoryCollectionStatus(): Promise<CollectionStatus> {
 export async function setMemoryCollectionEnabled(enabled: boolean): Promise<void> {
   useDemo(true);
   return invoke<void>('set_memory_collection_enabled', { enabled });
+}
+
+export async function writeQoderCache(operation: QoderWriteOperation, source: string, destination: string, confirmed: boolean) {
+  useDemo(true);
+  if (!confirmed || !['stage','unpack'].includes(operation) || [source,destination].some(p => typeof p !== 'string' || !p.startsWith('/') || !p.trim() || new TextEncoder().encode(p).length > 4096 || /[\x00-\x1f\x7f]/.test(p))) throw new Error('QODER_WRITE_INVALID_REQUEST');
+  return validateQoderWrite(await invoke<unknown>('write_qoder_cache', { operation, target: 'linux-amd64-baseline', source, destination, confirmed: true }), operation);
 }

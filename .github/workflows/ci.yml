@@ -276,8 +276,10 @@ jobs:
       - run: npm ci --prefix web/ui
       - name: Build real native Linux application, without packaging or test plugins
         run: npm exec --prefix web/ui -- tauri build --debug --no-bundle --ci -- --locked
-      - name: Real WebView click/type cache observation (sandbox retained)
-        timeout-minutes: 8
+      - name: Native Linux Qoder IPC regression tests
+        run: cargo test --locked -p agentdeck commands::qoder --lib
+      - name: Real WebView click/type cache observation and confirmed writes (sandbox retained)
+        timeout-minutes: 15
         run: |
           dbus-run-session -- xvfb-run -a python -B scripts/linux_qoder_webview.py \
             --application "$PWD/target/debug/agentdeck" \
