@@ -159,3 +159,23 @@ and all original gates remain unchanged pending fresh diagnostic evidence.
 首轮 #39 新增恢复检查已通过，但最终清除前滚轮进度等待失败；未记录数值，
 不能断言是小数残留或嵌套滚动。此次仅增加有界数值和固定元素只读诊断，
 不放宽归零或进度门禁，不重放输入，整体真实验收仍待通过。
+
+### Single observed-distance wheel candidate / 单次实测距离滚轮候选
+
+The next artifact measured initial scrollTop=708, first wheel reaching 108,
+and the second acknowledged wheel followed by 30 unchanged reads at 108.
+This is not fractional residue; the cause of the second gesture's lack of
+progress remains unknown. The compatibility candidate replaces the multistep
+sequence with exactly one wheel gesture, deltaY=-ceil(initial scrollTop), after
+validating a finite numeric initial value in [0, 1,000,000]. Already-zero needs
+no gesture. The real main element remains the origin with zero center offsets.
+The measured distance is not a guessed viewport coordinate or a DOM write.
+
+The three-second read-only wait still requires exact zero, rejects increasing
+or invalid scroll positions, and never issues another gesture on partial
+progress, stall, or HTTP failure. Cleanup and bounded numeric evidence remain.
+This is pending real-run validation, not a claim that the root cause is fixed.
+
+新证据是 708→108 后第二次滚轮无进度，不是小数残留，原因仍未知。候选改成一次
+基于严格校验实测 scrollTop 的滚轮距离，仍要求精确归零；部分进度/超时/请求失败
+均不再发送滚轮，不放宽清除门禁，真实运行结果待验证。

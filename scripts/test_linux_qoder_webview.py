@@ -302,14 +302,13 @@ class Tests(unittest.TestCase):
         def wait(predicate,seconds=20):
             if not predicate():raise subject.Failure('ui_wait_expired')
         driver.wait=wait
-        driver.command=Mock(side_effect=[900,None,300,None,0,None])
+        driver.command=Mock(side_effect=[900,None,0,None])
         driver.wheel_scroll_workspace_top()
         calls=[call.args for call in driver.command.call_args_list]
         action={'actions':[{'type':'wheel','id':'workspace-wheel','actions':[{
             'type':'scroll','origin':{subject.ELEMENT:'main'},'x':0,'y':0,
-            'deltaX':0,'deltaY':-600,'duration':200}]}]}
+            'deltaX':0,'deltaY':-900,'duration':200}]}]}
         self.assertEqual(calls,[('GET','/element/main/property/scrollTop'),('POST','/actions',action),
-            ('GET','/element/main/property/scrollTop'),('POST','/actions',action),
             ('GET','/element/main/property/scrollTop'),('DELETE','/actions')])
         driver.command=Mock(return_value=0);driver.wheel_scroll_workspace_top()
         self.assertEqual(driver.command.call_count,1)
@@ -322,10 +321,6 @@ class Tests(unittest.TestCase):
             with self.assertRaises(subject.Failure):driver.wheel_scroll_workspace_top()
             self.assertEqual(sum(call.args[0]=='POST' for call in driver.command.call_args_list),1)
             self.assertEqual(driver.command.call_args.args,('DELETE','/actions'))
-        outcomes=[900]+[item for i in range(12) for item in (None,899-i)]+[None]
-        driver.command=Mock(side_effect=outcomes)
-        with self.assertRaisesRegex(subject.Failure,'workspace_scroll_limit'):driver.wheel_scroll_workspace_top()
-        self.assertEqual(sum(call.args[0]=='POST' for call in driver.command.call_args_list),12)
         driver.last_response={'operation':'actions','status':400}
         driver.command=Mock(side_effect=[900,subject.Failure('driver_http_error'),ValueError('cleanup')])
         with self.assertRaisesRegex(subject.Failure,'driver_http_error'):driver.wheel_scroll_workspace_top()
@@ -340,13 +335,32 @@ class Tests(unittest.TestCase):
                 if predicate():return
             raise subject.Failure('ui_wait_expired')
         driver.wait=wait
-        driver.command=Mock(side_effect=[600.5,None,0.5,None,0.5,0.5,0.5,None])
+        driver.command=Mock(side_effect=[600.5,None,0.5,0.5,0.5,None])
         with self.assertRaisesRegex(subject.Failure,'ui_wait_expired'):driver.wheel_scroll_workspace_top()
         self.assertEqual(driver.wheel_diagnostic,{'initial':600.5,'steps':[
-            {'index':1,'before':600.5,'last':0.5,'polls':1,'posted':True,'progressed':True},
-            {'index':2,'before':0.5,'last':0.5,'polls':3,'posted':True,'progressed':False}]})
-        self.assertEqual(sum(call.args[0]=='POST' for call in driver.command.call_args_list),2)
+            {'index':1,'before':600.5,'last':0.5,'delta_y':-601,'polls':3,'posted':True,'progressed':True,'reached_zero':False}]})
+        self.assertEqual(sum(call.args[0]=='POST' for call in driver.command.call_args_list),1)
         self.assertEqual(driver.command.call_args.args,('DELETE','/actions'))
+
+    def test_single_wheel_observed_distance_and_settling(self):
+        for initial,delta in [(708,-708),(0.5,-1),(1000000,-1000000)]:
+            driver=subject.Driver();driver.one=Mock(return_value='main')
+            def wait(predicate,seconds=20):
+                for _ in range(3):
+                    if predicate():return
+                raise subject.Failure('ui_wait_expired')
+            driver.wait=wait
+            driver.command=Mock(side_effect=[initial,None,initial,initial/2,0,None])
+            driver.wheel_scroll_workspace_top()
+            posts=[call for call in driver.command.call_args_list if call.args[0]=='POST']
+            self.assertEqual(len(posts),1)
+            self.assertEqual(posts[0].args[2]['actions'][0]['actions'][0]['deltaY'],delta)
+            self.assertTrue(driver.wheel_diagnostic['steps'][0]['reached_zero'])
+        driver.command=Mock(side_effect=[708,None,108,108,108,None])
+        with self.assertRaisesRegex(subject.Failure,'ui_wait_expired'):driver.wheel_scroll_workspace_top()
+        self.assertEqual(sum(call.args[0]=='POST' for call in driver.command.call_args_list),1)
+        self.assertEqual(driver.wheel_diagnostic['steps'][0]['last'],108)
+        self.assertFalse(driver.wheel_diagnostic['steps'][0]['reached_zero'])
 
     def test_scroll_facts_are_bounded_read_only_numbers(self):
         driver=Mock();driver.one.return_value='element';driver.command.side_effect=[0.5,1500,600]*5

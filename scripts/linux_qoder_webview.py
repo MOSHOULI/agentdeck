@@ -113,32 +113,29 @@ class Driver:
         self.wheel_diagnostic['initial'] = current
         if current == 0:
             return
+        delta = -math.ceil(current)
         action = {'actions': [{'type': 'wheel', 'id': 'workspace-wheel', 'actions': [{
             'type': 'scroll', 'origin': {ELEMENT: element}, 'x': 0, 'y': 0,
-            'deltaX': 0, 'deltaY': -600, 'duration': 200}]}]}
+            'deltaX': 0, 'deltaY': delta, 'duration': 200}]}]}
+        step = {'index': 1, 'before': current, 'last': current, 'delta_y': delta,
+                'polls': 0, 'posted': False, 'progressed': False, 'reached_zero': False}
+        self.wheel_diagnostic['steps'].append(step)
         try:
-            for _ in range(12):
-                previous = current
-                step = {'index': len(self.wheel_diagnostic['steps']) + 1, 'before': previous,
-                        'last': previous, 'polls': 0, 'posted': False, 'progressed': False}
-                self.wheel_diagnostic['steps'].append(step)
-                # Element-center origin, not a guessed viewport coordinate. Each
-                # successful step must make observed progress before another.
-                self.command('POST', '/actions', action)
-                step['posted'] = True
-                def progressed():
-                    nonlocal current
-                    current = position()
-                    step['last'] = current
-                    step['polls'] = min(step['polls'] + 1, 1000)
-                    if current > previous: raise Failure('workspace_scroll_invalid')
-                    return current < previous
-                self.wait(progressed, seconds=3)
-                step['progressed'] = True
-                if current == 0:
-                    break
-            else:
-                raise Failure('workspace_scroll_limit')
+            # A single real wheel gesture sized from observed bounded scrollTop.
+            # No second gesture is issued, even if the first only partly scrolls.
+            self.command('POST', '/actions', action)
+            step['posted'] = True
+            def at_top():
+                nonlocal current
+                observed = position()
+                step['last'] = observed
+                step['polls'] = min(step['polls'] + 1, 1000)
+                if observed > current: raise Failure('workspace_scroll_invalid')
+                current = observed
+                step['progressed'] = current < step['before']
+                step['reached_zero'] = current == 0
+                return current == 0
+            self.wait(at_top, seconds=3)
         except Exception:
             failed_response = self.last_response
             try:
