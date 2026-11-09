@@ -14,28 +14,10 @@ function Assert-QoderSelectedTarget([string]$target) {
 }
 function Select-QoderTarget([string]$target) {
     $combo = Wait-QwenControl '明确分发目标（不是本机自动检测）' ([Windows.Automation.ControlType]::ComboBox)
-    $expand = $null
-    if ($combo.TryGetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$expand)) {
-        ([Windows.Automation.ExpandCollapsePattern]$expand).Expand()
-        $condition = [Windows.Automation.AndCondition]::new(
-            [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, $target),
-            [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::ListItem))
-        $options = $combo.FindAll([Windows.Automation.TreeScope]::Descendants, $condition)
-        if ($options.Count -gt 1) { throw 'Ambiguous Qoder target option' }
-        if ($options.Count -eq 1) {
-            $selection = $null
-            if ($options[0].TryGetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern, [ref]$selection)) {
-                ([Windows.Automation.SelectionItemPattern]$selection).Select()
-                ([Windows.Automation.ExpandCollapsePattern]$expand).Collapse()
-                Assert-QoderSelectedTarget $target
-                return
-            }
-        }
-        ([Windows.Automation.ExpandCollapsePattern]$expand).Collapse()
-    }
-    # Some WebView builds expose native select popups outside the combo subtree.
-    # Use real focused keyboard navigation then verify the app's visible selected
-    # target after each step, rather than assuming an option index or ordering.
+    # WebView's native select popup is outside the combo subtree and its provider
+    # advertises ExpandCollapse while rejecting Collapse. Do not call that pattern.
+    # Use real focused keyboard navigation, verifying exact selected state after
+    # each step rather than assuming an option index or ordering.
     Add-Type -AssemblyName System.Windows.Forms
     $combo.SetFocus()
     [Windows.Forms.SendKeys]::SendWait('{HOME}')
