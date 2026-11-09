@@ -33,6 +33,7 @@ class Driver:
     def __init__(self):
         self.client = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
         self.session = None
+        self.expected_input = None
 
     def request(self, method, path, body=None):
         # Only the local external driver. No external URL or script endpoint API.
@@ -68,9 +69,16 @@ class Driver:
         self.command('POST', '/element/' + self.one(xpath) + '/click', {})
 
     def type(self, xpath, text):
+        self.expected_input = text
         element = self.one(xpath)
         self.command('POST', '/element/' + element + '/clear', {})
         self.command('POST', '/element/' + element + '/value', {'text': text, 'value': list(text)})
+
+    def value(self, xpath):
+        return self.command('GET', '/element/' + self.one(xpath) + '/property/value')
+
+    def enabled(self, xpath):
+        return self.command('GET', '/element/' + self.one(xpath) + '/enabled') is True
 
     def text(self, xpath):
         return self.command('GET', '/element/' + self.one(xpath) + '/text')
@@ -130,8 +138,12 @@ def exercise(driver, paths, root, record, phase=lambda value: None):
     for kind, path in paths.items():
         phase(kind + '_type_path')
         driver.type("//*[@id='qoder-cache']", str(path))
+        phase(kind + '_confirm_typed_path')
+        driver.wait(lambda: driver.value("//*[@id='qoder-cache']") == str(path))
         phase(kind + '_wait_invalidation')
         driver.wait(lambda: not driver.elements("//section[@aria-label='Qoder 缓存诊断结果']"))
+        phase(kind + '_wait_inspect_enabled')
+        driver.wait(lambda: driver.enabled("//button[text()='只读诊断 Qoder 缓存']"))
         phase(kind + '_click_inspect')
         driver.click("//button[text()='只读诊断 Qoder 缓存']")
         phase(kind + '_wait_result')
@@ -175,6 +187,21 @@ def capture_failure_dom(driver, evidence):
     if not driver.session:
         report['session'] = 'unavailable'
     else:
+        # Retain only agreement/length/boolean facts, never an untrusted input value.
+        try:
+            value = driver.value("//*[@id='qoder-cache']")
+            report['cache_input'] = {
+                'state': 'observed',
+                'is_string': isinstance(value, str),
+                'matches_expected': isinstance(value, str) and value == driver.expected_input,
+                'length_at_most_4096': isinstance(value, str) and len(value.encode('utf-8')) <= 4096,
+            }
+        except Exception as error:
+            report['cache_input'] = {'state': 'unavailable', 'code': failure_code(error)}
+        try:
+            report['inspect_button'] = {'enabled': driver.enabled("//button[text()='只读诊断 Qoder 缓存']")}
+        except Exception as error:
+            report['inspect_button'] = {'state': 'unavailable', 'code': failure_code(error)}
         for name, read in [('body', lambda: driver.text('//body')), ('source', lambda: driver.command('GET', '/source'))]:
             try:
                 value = read()

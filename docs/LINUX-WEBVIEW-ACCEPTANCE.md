@@ -40,3 +40,7 @@ CI 安装官方 GTK/WebKit2GTK 4.1、匹配原生 driver 和 Xvfb，固定 crate
 Failures retain a fixed phase and sanitized failure code. Before closing an established session, standard read-only WebDriver body-text and page-source endpoints capture bounded diagnostic strings (at most 64 KiB each, subject to the existing 1 MiB response cap). The complete bounded response is checked for the synthetic private-content canary before any truncation; matching evidence is suppressed. No screenshot/JavaScript or direct IPC is used, no raw exception messages are retained, and diagnostics cannot turn a failure green. Initial CI showed an actual application launch with AT-SPI/DRI3 warnings but no confirmed sandbox denial; this diagnostic increment does not guess at or disable rendering/security settings.
 
 失败证据新增固定阶段及脱敏错误码；关闭会话前仅通过标准只读 WebDriver 读取页面文本和源码，各最多保留 64 KiB，并在截断前对完整有界响应检查内容金丝雀，命中即抑制。没有 JavaScript、直接 IPC、截图或原始异常消息，不会把失败变成成功。首次 CI 已启动真实应用，仅有 AT-SPI/DRI3 警告，未证实 sandbox 拒绝；本次只补定位，不猜测修改图形或安全设置。
+
+Typing is followed by a standard WebDriver `property/value` exact readback, and clicking inspection waits for the native `enabled` response to be true. A timeout in either precondition fails before clicking. Failure diagnostics retain only input agreement/type/length-bound booleans and button-enabled state, never an arbitrary input value. This distinguishes React/input readiness from IPC/result failures without JavaScript.
+
+输入后通过标准 WebDriver `property/value` 精确读回，诊断按钮必须由原生 `enabled` 确认为 true 才点击；任一前置等待超时即失败。诊断只记录输入是否相符、类型/长度边界和按钮启用布尔值，不转储任意输入，便于区分输入状态就绪问题与 IPC/结果问题。

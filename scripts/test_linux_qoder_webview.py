@@ -74,33 +74,45 @@ class Tests(unittest.TestCase):
     def test_exercise_asserts_all_three_states_and_fails_on_mutation(self):
         class Fake:
             def __init__(self, paths, mutate=False):
-                self.paths=paths; self.kind=None; self.visible=False; self.value=''; self.mutate=mutate
+                self.paths=paths; self.kind=None; self.visible=False; self.current_value=''; self.mutate=mutate; self.inspect_clicks=0
             def elements(self, xpath):
                 if '缓存诊断结果' in xpath: return [{}] if self.visible else []
                 return [{}]
             def wait(self, predicate, seconds=20):
                 if not predicate(): raise subject.Failure('predicate_failed')
             def type(self, xpath, text):
-                self.value=text;self.visible=False
+                self.current_value=text;self.visible=False
                 self.kind=next(k for k,p in self.paths.items() if str(p)==text)
             def click(self, xpath):
                 if '只读诊断' in xpath:
+                    self.inspect_clicks += 1
                     self.visible=True
                     if self.mutate: (self.paths[self.kind]/'new').write_text('changed')
-                if '清除' in xpath:self.visible=False;self.value=''
+                if '清除' in xpath:self.visible=False;self.current_value=''
             def text(self, xpath):
                 return subject.LABELS[self.kind] + ' 本报告不授权删除'
             def one(self, xpath):return 'control'
-            def command(self, *args):return self.value
+            def command(self, *args):return self.current_value
+            def value(self, xpath):return self.current_value
+            def enabled(self, xpath):return True
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);paths=subject.fixtures(root);records=[]
-            subject.exercise(Fake(paths),paths,root,records)
+            phases=[]
+            subject.exercise(Fake(paths),paths,root,records,phases.append)
+            self.assertLess(phases.index('unknown_confirm_typed_path'),phases.index('unknown_click_inspect'))
+            self.assertLess(phases.index('unknown_wait_inspect_enabled'),phases.index('unknown_click_inspect'))
             self.assertEqual([r['state'] for r in records],list(subject.LABELS))
+            wrong_value=Fake(paths);wrong_value.value=lambda xpath:'wrong'
+            with self.assertRaises(subject.Failure):subject.exercise(wrong_value,paths,root,[])
+            self.assertEqual(wrong_value.inspect_clicks,0)
+            disabled=Fake(paths);disabled.enabled=lambda xpath:False
+            with self.assertRaises(subject.Failure):subject.exercise(disabled,paths,root,[])
+            self.assertEqual(disabled.inspect_clicks,0)
             with self.assertRaises(subject.Failure):subject.exercise(Fake(paths,True),paths,root,[])
 
     def test_failure_dom_is_bounded_and_canary_checked_before_truncation(self):
         with tempfile.TemporaryDirectory() as tmp:
-            driver=Mock();driver.session='session'
+            driver=Mock();driver.session='session';driver.value.return_value='';driver.expected_input='';driver.enabled.return_value=True
             driver.text.return_value='visible application text'
             driver.command.return_value='x'*70000 + subject.CANARY
             subject.capture_failure_dom(driver,Path(tmp))
@@ -116,7 +128,7 @@ class Tests(unittest.TestCase):
 
     def test_failure_codes_never_include_raw_exception_or_backend_messages(self):
         with tempfile.TemporaryDirectory() as tmp:
-            driver=Mock();driver.session='session'
+            driver=Mock();driver.session='session';driver.value.return_value='';driver.expected_input='';driver.enabled.return_value=True
             driver.text.side_effect=ValueError('SECRET private message')
             driver.command.side_effect=subject.Failure('SECRET backend error')
             subject.capture_failure_dom(driver,Path(tmp))
@@ -127,6 +139,18 @@ class Tests(unittest.TestCase):
         driver=Mock();driver.session=None
         with tempfile.TemporaryDirectory() as tmp:
             subject.capture_failure_dom(driver,Path(tmp));driver.text.assert_not_called();driver.command.assert_not_called()
+
+    def test_control_diagnostics_do_not_dump_untrusted_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            driver=Mock();driver.session='session';driver.expected_input='/expected'
+            driver.value.return_value='SECRET-unexpected-input'
+            driver.enabled.return_value=False
+            driver.text.return_value='safe body';driver.command.return_value='safe source'
+            subject.capture_failure_dom(driver,Path(tmp))
+            text=(Path(tmp)/'failure-dom.json').read_text();report=json.loads(text)
+            self.assertNotIn('SECRET',text)
+            self.assertFalse(report['cache_input']['matches_expected'])
+            self.assertFalse(report['inspect_button']['enabled'])
 
     def test_oversize_or_symlink_fixture_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
