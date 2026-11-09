@@ -224,6 +224,13 @@ fn parse_qwen_manifest(value: &str) -> Result<PathBuf, String> {
 
 #[derive(Subcommand)]
 enum DshAction {
+    /// Fixed prerelease root npm archive plan, not an installation or resolved dependency tree.
+    DistributionPlan,
+    /// Verify fixed root tgz size/SHA256/SHA512; no unpack or execution.
+    VerifyPackage {
+        #[arg(long, value_name = "ABSOLUTE_TGZ")]
+        archive: PathBuf,
+    },
     /// Emit passive inventory as JSON. Exit 0 means a report was produced, not healthy or installed.
     #[command(
         long_about = "Emit passive DSH inventory as JSON using only explicit paths and allowed package manifests. Never executes DSH, Node, npm, or plugin code, and never creates a profile. Missing or blocked evidence and unknown versions remain observations in the JSON report. Exit 0 means the report was produced, not that DSH is installed, healthy, or active; invalid arguments exit 2 before inspection, and output failures exit 1."
@@ -422,6 +429,26 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     }
                 );
             }
+        }
+        Commands::Dsh {
+            action: DshAction::DistributionPlan,
+        } => {
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&dsh::distribution::plan())?
+            )?;
+        }
+        Commands::Dsh {
+            action: DshAction::VerifyPackage { archive },
+        } => {
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&dsh::distribution::verify_package(&archive)?)?
+            )?;
         }
         Commands::Dsh {
             action:

@@ -19,6 +19,7 @@
 //! write is requested; reading may update filesystem access times. Do not use this
 //! API as a security boundary for hostile, concurrently modified filesystems.
 
+pub mod distribution;
 mod parse;
 mod reader;
 mod types;
