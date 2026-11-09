@@ -1,3 +1,4 @@
+import { requireQoderTarget, validateQoderPlan, validateQoderVerification } from './qoderContract';
 import { qwenDemoSummary, validateQwenReport, validateQwenVimPreview, validateQwenMutation, validateQwenRecovery } from './qwenContract';
 import type { QwenSummary } from './qwenContract';
 /**
@@ -45,6 +46,17 @@ export async function inspectQwenVimRecovery(settingsPath: string, runtimeManife
 export async function restoreQwenVim(settingsPath: string, runtimeManifest: string) {
   qwenOwnedPaths(settingsPath, runtimeManifest);
   return validateQwenMutation(await invoke<unknown>('restore_qwen_vim', { settingsPath, runtimeManifest }));
+}
+
+/** Native, read-only Qoder distribution checks. Never stage/unpack/install. */
+export async function qoderDistributionPlan(target: string) {
+  useDemo(true); requireQoderTarget(target);
+  return validateQoderPlan(await invoke<unknown>('qoder_distribution_plan', { target }), target);
+}
+export async function verifyQoderPackage(target: string, archivePath: string) {
+  useDemo(true); requireQoderTarget(target);
+  if (typeof archivePath !== 'string' || !archivePath.trim() || new TextEncoder().encode(archivePath).length > 4096 || /[\x00-\x1f\x7f]/.test(archivePath)) throw new Error('请选择长度受限的有效包路径。');
+  return validateQoderVerification(await invoke<unknown>('verify_qoder_package', { target, archivePath }), target);
 }
 
 /** Independent of deployment: no registry read, discovery, or lifecycle command. */

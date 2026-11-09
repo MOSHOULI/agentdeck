@@ -12,6 +12,8 @@ pub fn run() {
         .manage(commands::memory::CollectionState::default())
         .invoke_handler(tauri::generate_handler![
             commands::health_check,
+            commands::qoder::qoder_distribution_plan,
+            commands::qoder::verify_qoder_package,
             commands::dsh::inspect_dsh_profile,
             commands::qwen::inspect_qwen_settings,
             commands::qwen::preview_qwen_vim,

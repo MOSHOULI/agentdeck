@@ -1,0 +1,55 @@
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import * as bridge from '../bridge';
+import { QoderDistribution } from './QoderDistribution';
+import { validateQoderPlan } from '../qoderContract';
+import { qoderRawPlan } from '../test-fixtures/qoder';
+import { useWorkspaceActivityStore } from '../stores/workspaceActivity';
+const plan = validateQoderPlan(qoderRawPlan(), 'linux-amd64-baseline');
+const result = { plan, bytes: 123 };
+beforeEach(() => { vi.spyOn(bridge, 'runtimeMode').mockReturnValue('native'); vi.spyOn(bridge, 'qoderDistributionPlan').mockResolvedValue(plan); vi.spyOn(bridge, 'verifyQoderPackage').mockResolvedValue(result); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+function fill() { fireEvent.change(screen.getByLabelText('明确分发目标（不是本机自动检测）'), { target: { value: plan.target } }); fireEvent.change(screen.getByLabelText('Qoder 官方归档绝对路径'), { target: { value: '/selected/archive' } }); }
+function verify() { fireEvent.click(screen.getByRole('button', { name: '只读校验 Qoder 归档' })); }
+function defer<T>() { let resolve!: (v: T) => void; let reject!: (v: Error) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { resolve, reject, promise }; }
+it('requires explicit target and renders all 11 variants with no install actions', async () => {
+  render(<QoderDistribution />); expect(screen.getAllByRole('option')).toHaveLength(12);
+  expect(screen.getByRole('button', { name: '查看 Qoder 分发计划' })).toBeDisabled();
+  fill(); fireEvent.click(screen.getByRole('button', { name: '查看 Qoder 分发计划' }));
+  expect(await screen.findByRole('region', { name: 'Qoder 分发计划结果' })).toHaveTextContent('未安装、未运行');
+  expect(bridge.qoderDistributionPlan).toHaveBeenCalledExactlyOnceWith(plan.target); expect(bridge.verifyQoderPackage).not.toHaveBeenCalled();
+  verify(); expect(await screen.findByRole('region', { name: 'Qoder 归档校验结果' })).toHaveTextContent('这不是安装成功');
+  expect(bridge.verifyQoderPackage).toHaveBeenCalledExactlyOnceWith(plan.target, '/selected/archive');
+});
+it.each(['target', 'path', 'clear', 'cancel', 'unmount'])('discards late success after %s and releases busy safely', async change => {
+  const work = defer<typeof result>(); vi.mocked(bridge.verifyQoderPackage).mockReturnValue(work.promise);
+  const view = render(<QoderDistribution />); fill(); verify(); verify();
+  expect(bridge.verifyQoderPackage).toHaveBeenCalledTimes(1); expect(useWorkspaceActivityStore.getState().busy.qoder).toBe(true);
+  expect(screen.getByRole('button', { name: '查看 Qoder 分发计划' })).toBeDisabled();
+  if (change === 'target') fireEvent.change(screen.getByRole('combobox'), { target: { value: 'windows-amd64-standard' } });
+  if (change === 'path') fireEvent.change(screen.getByLabelText('Qoder 官方归档绝对路径'), { target: { value: '/other/archive' } });
+  if (change === 'clear') fireEvent.click(screen.getByRole('button', { name: '清除 Qoder 选择与结果' }));
+  if (change === 'cancel') fireEvent.click(screen.getByRole('button', { name: '取消 Qoder 结果' }));
+  if (change === 'unmount') view.unmount();
+  await act(async () => { work.resolve(result); });
+  expect(screen.queryByRole('region', { name: 'Qoder 归档校验结果' })).not.toBeInTheDocument(); expect(useWorkspaceActivityStore.getState().busy.qoder).toBe(false);
+});
+it('suppresses late failure after cancel; a new request can succeed', async () => {
+  const work = defer<typeof result>(); vi.mocked(bridge.verifyQoderPackage).mockReturnValueOnce(work.promise);
+  render(<QoderDistribution />); fill(); verify(); fireEvent.click(screen.getByRole('button', { name: '取消 Qoder 结果' }));
+  await act(async () => { work.reject(new Error('SECRET')); }); expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  verify(); await screen.findByRole('region', { name: 'Qoder 归档校验结果' });
+});
+it('shows a fixed failure, never raw paths/errors or stale success', async () => {
+  render(<QoderDistribution />); fill(); verify(); await screen.findByRole('region', { name: 'Qoder 归档校验结果' });
+  vi.mocked(bridge.verifyQoderPackage).mockRejectedValue(new Error('SECRET /private'));
+  verify(); expect(await screen.findByRole('alert')).not.toHaveTextContent('SECRET'); expect(screen.queryByRole('region', { name: 'Qoder 归档校验结果' })).not.toBeInTheDocument();
+});
+it('changing inputs clears an already completed verification', async () => {
+  render(<QoderDistribution />); fill(); verify(); await screen.findByRole('region', { name: 'Qoder 归档校验结果' });
+  fireEvent.change(screen.getByLabelText('Qoder 官方归档绝对路径'), { target: { value: '/changed' } }); expect(screen.queryByRole('region', { name: 'Qoder 归档校验结果' })).not.toBeInTheDocument();
+});
+it.each(['demo', 'unavailable'] as const)('does not invoke IPC in %s', mode => {
+  vi.mocked(bridge.runtimeMode).mockReturnValue(mode); render(<QoderDistribution />);
+  expect(screen.getByRole('button', { name: '查看 Qoder 分发计划' })).toBeDisabled(); verify(); expect(bridge.verifyQoderPackage).not.toHaveBeenCalled(); expect(bridge.qoderDistributionPlan).not.toHaveBeenCalled();
+});

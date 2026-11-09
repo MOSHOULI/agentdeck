@@ -122,6 +122,7 @@ try {
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--force-renderer-accessibility'
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
     . (Join-Path $PSScriptRoot 'windows-qwen-ui-acceptance.ps1')
+    . (Join-Path $PSScriptRoot 'windows-qoder-ui-acceptance.ps1')
     $sentinel = Join-Path $homeDir '.agentdeck\acceptance-user-data.txt'
     $sentinelValue = 'Synthetic data, must survive installation, upgrade and uninstall.'
     New-Item -ItemType Directory -Force -Path (Split-Path $sentinel) | Out-Null
@@ -132,7 +133,8 @@ try {
     Assert-Sentinel
     Check-Gui 'clean-install' -KeepOpen
     Check-QwenLifecycle
-    Check-Gui 'restart'
+    Check-Gui 'restart' -KeepOpen
+    Check-QoderReadonly
     Run-Installer $Installer
     Assert-Version
     Assert-Sentinel
