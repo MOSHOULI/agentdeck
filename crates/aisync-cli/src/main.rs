@@ -88,6 +88,14 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum QoderAction {
+    /// Read-only cache state and preservation plan, never deletion or repair authorization.
+    #[command(
+        long_about = "Linux x86_64 only. Observe an explicit Qoder 1.1.85 baseline staged or unpacked cache. Fixed record contracts and complete archive/payload hashes are rechecked. No locks, writes, cleanup, execution or PATH changes. Exit zero reports an observation, including conflict/unknown ownership, not readiness or permission to delete. Reads may update access times; same-user races are not an atomic guarantee."
+    )]
+    InspectCache {
+        #[arg(long)]
+        cache: PathBuf,
+    },
     /// Strictly unpack a pinned staged cache to a NEW private non-executable directory.
     #[command(
         long_about = "Linux x86_64 only: validate the explicit staged Qoder 1.1.85 baseline cache and extract its single pinned payload into a NEW private directory. Requires --yes. No execution, activation, PATH, login or configuration changes. Completion means extracted cache only, not installed. Records are not authorization; fixed archive and payload hashes are independently rechecked. Existing destinations are never overwritten. Failure may retain partial output; inspect before manual cleanup, never retry in place."
@@ -429,6 +437,16 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             )?;
             use std::io::Write;
             writeln!(std::io::stdout().lock(), "{report}")?;
+        }
+        Commands::Qoder {
+            action: QoderAction::InspectCache { cache },
+        } => {
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&qoder::cache_inspection::inspect_cache(&cache)?)?
+            )?;
         }
         Commands::Qoder {
             action:
@@ -1283,6 +1301,36 @@ mod tests {
         )
         .unwrap();
         assert!(exported.get());
+    }
+
+    #[test]
+    fn qoder_cache_inspection_is_explicit_read_only() {
+        let cli = Cli::try_parse_from([
+            "aisync",
+            "qoder",
+            "inspect-cache",
+            "--cache",
+            "/selected/cache",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Qoder {
+                action: QoderAction::InspectCache { .. }
+            }
+        ));
+        assert!(Cli::try_parse_from(["aisync", "qoder", "inspect-cache"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "aisync",
+                "qoder",
+                "inspect-cache",
+                "--cache",
+                "/selected/cache",
+                "--yes"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

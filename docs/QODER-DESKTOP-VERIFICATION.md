@@ -68,3 +68,5 @@ x86_64/ARM64，macOS可看计划不等于支持本机文件校验。ARM64 Window
 All 11 fixed targets are individually labelled native radio controls in a responsive grid, with no default or automatic host selection. They are disabled in demo/unavailable mode. Changing a target invalidates results, including pending results; Clear deselects all targets. Windows installed acceptance selects the exact RadioButton through UI Automation SelectionItem and checks both its selected state and the displayed target, without keyboard-position guesses or direct IPC.
 
 11 个固定目标使用带完整名称的原生单选项，紧凑网格随宽度换行，不默认选择、不自动检测主机；演示或后端不可用时禁用。改目标使已有及迟到结果失效，清除后全部取消选择。Windows 安装版验收按精确名称通过 UI Automation SelectionItem 选择 RadioButton，同时核对选中状态与显示目标，不猜键盘位置、不直接调用 IPC。
+
+The Linux-only CLI also provides [read-only cache inspection](QODER-CACHE-INSPECTION.md), not desktop cleanup/activation. Linux CLI 另提供[缓存只读诊断](QODER-CACHE-INSPECTION.md)，桌面未开放清理或激活。

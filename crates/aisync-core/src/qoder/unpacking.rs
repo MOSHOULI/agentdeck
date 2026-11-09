@@ -43,7 +43,7 @@ pub fn unpack_cache(cache: &Path, destination: &Path) -> Result<UnpackedCache, U
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-mod linux {
+pub(crate) mod linux {
     use super::*;
     use crate::{
         inspection::reader::validate_path,
@@ -89,7 +89,7 @@ mod linux {
     fn failed<T>(_: T) -> UnpackError {
         UnpackError::Incomplete
     }
-    fn private_file(file: &File, max: u64) -> Result<std::fs::Metadata, UnpackError> {
+    pub(crate) fn private_file(file: &File, max: u64) -> Result<std::fs::Metadata, UnpackError> {
         let m = file.metadata().map_err(|_| UnpackError::InvalidCache)?;
         if !m.is_file()
             || m.uid() != unsafe { libc::geteuid() }
@@ -101,7 +101,7 @@ mod linux {
         }
         Ok(m)
     }
-    fn read_record<T: serde::de::DeserializeOwned>(
+    pub(crate) fn read_record<T: serde::de::DeserializeOwned>(
         dir: &File,
         child: &str,
     ) -> Result<(T, Vec<u8>), UnpackError> {
@@ -126,7 +126,7 @@ mod linux {
         let value = serde_json::from_slice(&bytes).map_err(|_| UnpackError::InvalidCache)?;
         Ok((value, bytes))
     }
-    fn validate_records(dir: &File) -> Result<(Vec<u8>, Vec<u8>), UnpackError> {
+    pub(crate) fn validate_records(dir: &File) -> Result<(Vec<u8>, Vec<u8>), UnpackError> {
         let (c, cb) = read_record::<Complete>(dir, "complete.json")?;
         let (i, ib) = read_record::<Intent>(dir, "incomplete.json")?;
         let p = distribution::plan(staging::TARGET).map_err(failed)?;
