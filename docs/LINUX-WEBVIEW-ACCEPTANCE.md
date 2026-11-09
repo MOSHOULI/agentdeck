@@ -94,3 +94,13 @@ Linux hosted x86_64 CI 新增下载同一固定官方包，Windows 原 guard 不
 同 checkout `--locked` 编译 CLI，在临时 HOME/XDG 中对两个全新目录真实运行 stage/unpack，各限时 120 秒且输出有界。必须验证退出码、严格报告、成员集、owner/链接/0700/0600、固定归档与载荷摘要后才启动 GUI；不能伪造 complete 记录或在失败时退化为仅三态通过。Qoder 不执行，载荷不赋执行位。大文件采用 64 KiB 流式 no-follow 读取与前后身份/metadata 核验，仅固定三条大文件路径按精确大小/SHA 放宽，其他记录仍限 64 KiB。
 
 真实 WebView 保留原三态并追加完整暂存/解包两态，必须显示精确文案、“保留缓存，不执行操作”和不授权删除；换路径失效、按钮启用、清除与完整零写检查全部保留。完整态结果等待上限 90 秒只为有界真实哈希留余量，不伪造完成。证据只含固定摘要/大小/要求权限和断言布尔，不上传包、载荷、缓存或 HOME。五态及清理全部完成后才标记完整 GUI 已验证，本地 CLI/snapshot 测试不能替代 GUI，也不证明 Qoder 运行兼容。
+
+## Explicit desktop cache writes / 桌面显式缓存写入
+
+The native Qoder workspace now offers **stage archive** and **unpack cache** for the fixed 1.1.85 `linux-amd64-baseline` contract, only on Linux x86_64. These are cache operations, not installation, activation, execution or PATH/configuration changes. A preview shows the selected operation, fixed target/version, source and new destination. Changing inputs discards confirmation. Only the explicit confirmation button invokes the native write command, whose bounded absolute paths, operation/target and `confirmed` flag are checked before filesystem work. Other hosts fail closed.
+
+A native Qoder-only `try_lock` lives inside the blocking worker until filesystem work finishes, even if its async caller disappears. This is not an application-wide atomic lock. Inputs/clear/cancel are unavailable during a write; the UI's separate busy owner survives component unmount until the IPC promise settles. No failed write is automatically retried, overwritten or cleaned up. Failure or uncertain completion can leave private partial output, requiring manual inspection and a new destination rather than in-place retry. Same-user hostile races, filesystem I/O deadlines and crash recovery remain core limitations; successful records do not grant execution or deletion authority.
+
+Linux x86_64 原生 Qoder 工作区新增固定 1.1.85 `linux-amd64-baseline` 的“暂存归档”和“解包缓存”。这不是安装、激活或执行，不改 PATH/配置。预览明确显示操作、固定目标/版本、来源与全新目标目录；更改输入即废弃确认。只有显式确认才调用写入 IPC，后端在访问文件前检查确认标志、固定操作/目标与有界绝对路径；其他主机失败关闭。
+
+原生锁仅协调 Qoder 缓存写入，位于实际阻塞任务内部，调用方消失也不会提前释放，不代表整个应用的原子锁。写入中不可更改输入、清除或取消；独立忙碌标记在组件卸载后仍保留至 IPC 真实结算。不自动重试、覆盖或清理失败结果。失败或完成状态不明时可能残留私有部分文件，应保留现场人工检查，不能原地重试。同用户恶意竞争、文件系统 I/O 时限和崩溃恢复仍有核心边界；记录不构成执行或删除授权。

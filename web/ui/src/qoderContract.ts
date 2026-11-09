@@ -56,3 +56,12 @@ export const qoderCacheLabels: Record<QoderCacheState, string> = {
   conflict: '缓存存在冲突或不安全状态；请保留现场，不覆盖或强制修复。',
   unknown_ownership: '无法确认缓存归属；请保留现场，不据此删除。',
 };
+
+export type QoderWriteOperation = 'stage' | 'unpack';
+export interface QoderWriteResult { operation: QoderWriteOperation; state: 'staged_archive_verified' | 'unpacked_payload_verified' }
+export function validateQoderWrite(value: unknown, operation: QoderWriteOperation): QoderWriteResult {
+  const report = object(value);
+  const state = operation === 'stage' ? 'staged_archive_verified' : 'unpacked_payload_verified';
+  if (report.operation !== operation || report.state !== state || report.target !== 'linux-amd64-baseline' || report.version !== '1.1.85' || report.installed !== false || report.executable !== false) throw invalid();
+  return { operation, state };
+}

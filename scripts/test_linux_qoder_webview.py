@@ -288,10 +288,166 @@ class Tests(unittest.TestCase):
             self.assertFalse(report['cache_input']['matches_expected'])
             self.assertFalse(report['inspect_button']['enabled'])
 
+    def test_w3c_error_diagnostics_are_fixed_enums_only(self):
+        for error in ['element click intercepted', 'element not interactable', 'invalid argument',
+                      'stale element reference', 'SECRET arbitrary', ['SECRET'], {'SECRET': True}, None]:
+            info=subject.response_shape(json.dumps({'value':{'error':error,'message':'SECRET','stacktrace':'SECRET'}}).encode())
+            expected=error if isinstance(error,str) and not error.startswith('SECRET') else 'unrecognized'
+            self.assertEqual(info['webdriver_error'],expected)
+            self.assertNotIn('SECRET',json.dumps(info))
+        self.assertNotIn('webdriver_error',subject.response_shape(b'{"value":null}'))
+
+    def test_workspace_wheel_protocol_progress_bounds_and_no_replay(self):
+        driver=subject.Driver();driver.one=Mock(return_value='main')
+        def wait(predicate,seconds=20):
+            if not predicate():raise subject.Failure('ui_wait_expired')
+        driver.wait=wait
+        driver.command=Mock(side_effect=[900,None,300,None,0,None])
+        driver.wheel_scroll_workspace_top()
+        calls=[call.args for call in driver.command.call_args_list]
+        action={'actions':[{'type':'wheel','id':'workspace-wheel','actions':[{
+            'type':'scroll','origin':{subject.ELEMENT:'main'},'x':0,'y':0,
+            'deltaX':0,'deltaY':-600,'duration':200}]}]}
+        self.assertEqual(calls,[('GET','/element/main/property/scrollTop'),('POST','/actions',action),
+            ('GET','/element/main/property/scrollTop'),('POST','/actions',action),
+            ('GET','/element/main/property/scrollTop'),('DELETE','/actions')])
+        driver.command=Mock(return_value=0);driver.wheel_scroll_workspace_top()
+        self.assertEqual(driver.command.call_count,1)
+        for value in [True,'0',None,-1,1000001,float('nan'),float('inf')]:
+            driver.command=Mock(return_value=value)
+            with self.assertRaises(subject.Failure):driver.wheel_scroll_workspace_top()
+            self.assertEqual(driver.command.call_count,1)
+        for value in [900,901,True,float('nan')]:
+            driver.command=Mock(side_effect=[900,None,value,None])
+            with self.assertRaises(subject.Failure):driver.wheel_scroll_workspace_top()
+            self.assertEqual(sum(call.args[0]=='POST' for call in driver.command.call_args_list),1)
+            self.assertEqual(driver.command.call_args.args,('DELETE','/actions'))
+        outcomes=[900]+[item for i in range(12) for item in (None,899-i)]+[None]
+        driver.command=Mock(side_effect=outcomes)
+        with self.assertRaisesRegex(subject.Failure,'workspace_scroll_limit'):driver.wheel_scroll_workspace_top()
+        self.assertEqual(sum(call.args[0]=='POST' for call in driver.command.call_args_list),12)
+        driver.last_response={'operation':'actions','status':400}
+        driver.command=Mock(side_effect=[900,subject.Failure('driver_http_error'),ValueError('cleanup')])
+        with self.assertRaisesRegex(subject.Failure,'driver_http_error'):driver.wheel_scroll_workspace_top()
+        self.assertEqual(driver.command.call_count,3)
+        self.assertEqual(driver.command.call_args.args,('DELETE','/actions'))
+        self.assertEqual(driver.last_response,{'operation':'actions','status':400})
+
+    def test_actions_endpoint_is_exact_and_session_bound(self):
+        driver=subject.Driver();driver.session='known';driver.connection=Mock()
+        for method,path in [('GET','/session/known/actions'),('POST','/session/other/actions'),
+                            ('POST','/session/known/actions/extra'),('POST','/actions')]:
+            with self.assertRaisesRegex(subject.Failure,'forbidden_driver_endpoint'):driver.request(method,path,{})
+        driver.connection.request.assert_not_called()
+
+    def test_clear_geometry_is_read_only_and_bounded(self):
+        good={'x':-100,'y':0.5,'width':1000,'height':600,'SECRET':'discard'}
+        driver=Mock();driver.one.return_value='element'
+        driver.command.side_effect=[True,False,good,good]
+        report=subject.capture_clear_geometry(driver)
+        self.assertTrue(report['enabled']);self.assertFalse(report['displayed'])
+        self.assertEqual(report['element_rect'],{'x':-100,'y':0.5,'width':1000,'height':600})
+        self.assertNotIn('SECRET',json.dumps(report))
+        self.assertEqual([call.args for call in driver.command.call_args_list],[
+            ('GET','/element/element/enabled'),('GET','/element/element/displayed'),
+            ('GET','/element/element/rect'),('GET','/window/rect')])
+        for bad in [None,[],{},dict(good,x=True),dict(good,x='SECRET'),dict(good,x=float('nan')),
+                    dict(good,y=float('inf')),dict(good,x=10**1000),dict(good,width=-1),dict(good,height=1000001)]:
+            with self.subTest(bad=bad),self.assertRaises(subject.Failure):subject.bounded_rect(bad)
+        driver.command.side_effect=['SECRET',1,{'SECRET':True},ValueError('SECRET')]
+        report=subject.capture_clear_geometry(driver)
+        self.assertNotIn('SECRET',json.dumps(report))
+        self.assertTrue(all(value['state']=='unavailable' for value in report.values()))
+
     def test_oversize_or_symlink_fixture_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);subject.fixtures(root)
             with (root/'oversize').open('wb') as f:f.truncate(65537)
             with self.assertRaises(subject.Failure):subject.snapshot(root)
+
+    def test_desktop_write_flow_requires_bound_confirmation_and_rejects_overwrite(self):
+        # Deliberately tiny mock caches test harness control flow, not Qoder
+        # integrity or real native UI. Real CI uses the unpatched verifier.
+        class Fake:
+            def __init__(self, fault=None):
+                self.values={};self.operation='stage';self.dialog=False;self.result=False;self.alert=False;self.read=False;self.fault=fault;self.confirmed=0
+            def wheel_scroll_workspace_top(self):pass
+            def one(self,xpath):return 'element'
+            def wait(self,predicate,seconds=20):
+                if not predicate():raise subject.Failure('ui_wait_expired')
+            def enabled(self,xpath):return True
+            def reset(self):self.dialog=False;self.result=False;self.alert=False;self.read=False
+            def type(self,xpath,text):
+                self.values[xpath]=text
+                if self.fault!='stale_confirmation':self.reset()
+            def value(self,xpath):return self.values.get(xpath,'')
+            def elements(self,xpath):
+                if "role='dialog'" in xpath:return [{}] if self.dialog else []
+                if '确认创建' in xpath:return [{}] if self.dialog else []
+                if '缓存写入结果' in xpath:return [{}] if self.result else []
+                if "role='alert'" in xpath:return [{}] if self.alert else []
+                if '缓存诊断结果' in xpath:return [{}] if self.read else []
+                return [{}]
+            def text(self,xpath):
+                if "role='dialog'" in xpath:
+                    source=self.values["//*[@id='qoder-write-source']"]
+                    destination=self.values["//*[@id='qoder-write-destination']"]
+                    if self.fault=='wrong_preview':destination='wrong'
+                    return '操作：'+('暂存归档' if self.operation=='stage' else '解包缓存')+'；固定目标：linux-amd64-baseline；版本：1.1.85 来源：'+source+' 全新目录：'+destination
+                if '缓存写入结果' in xpath:return subject.LABELS['staged' if self.operation=='stage' else 'unpacked']
+                if '缓存诊断结果' in xpath:
+                    kind='staged' if self.values["//*[@id='qoder-cache']"].endswith('desktop-staged') else 'unpacked'
+                    return subject.LABELS[kind]+' 保留缓存，不执行操作。 本报告不授权删除'
+                return 'safe visible text'
+            def click(self,xpath):
+                if '选择暂存' in xpath:self.reset();self.operation='stage'
+                elif '选择解包' in xpath:self.reset();self.operation='unpack'
+                elif '预览' in xpath:self.dialog=True
+                elif '取消 Qoder 写入' in xpath:
+                    self.dialog=False
+                    if self.fault=='cancel_writes':Path(self.values["//*[@id='qoder-write-destination']"]).mkdir(mode=0o700)
+                elif '确认创建' in xpath:
+                    if not self.dialog:raise AssertionError('write without preview')
+                    self.reset();self.confirmed+=1
+                    destination=Path(self.values["//*[@id='qoder-write-destination']"])
+                    if destination.exists():
+                        self.alert=True
+                        if self.fault=='overwrite':subject.write_private(destination/'unexpected',b'changed')
+                    elif self.fault=='false_success':self.alert=True
+                    else:
+                        destination.mkdir(mode=0o700);subject.write_private(destination/'archive.tar.gz',b'mock archive');self.result=True
+                elif '只读诊断' in xpath:self.reset();self.read=True
+                elif '清除 Qoder' in xpath:
+                    if self.fault!='clear_broken':self.reset()
+                else:raise AssertionError('unexpected action')
+        original_snapshot=subject.snapshot
+        def tiny_snapshot(root,exact=None):return original_snapshot(root)
+        for fault in (None,'wrong_preview','cancel_writes','stale_confirmation','overwrite','false_success','clear_broken'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
+                base=Path(tmp);source=base/'source';source.mkdir(mode=0o700);archive=source/'official.tar.gz';subject.write_private(archive,b'mock source')
+                root=base/'writes';root.mkdir(mode=0o700);records=[];driver=Fake(fault)
+                with patch.object(subject,'snapshot',side_effect=tiny_snapshot),patch.object(subject,'created_cache_contract',return_value={}):
+                    if fault:
+                        with self.assertRaises(subject.Failure):subject.exercise_cache_writes(driver,archive,root,records)
+                    else:
+                        subject.exercise_cache_writes(driver,archive,root,records)
+                        self.assertEqual([r['operation'] for r in records],['confirmation','stage','stage_existing','unpack','unpack_existing'])
+                        self.assertEqual(driver.confirmed,4)
+                        self.assertFalse(driver.dialog or driver.result or driver.alert or driver.read)
+                        self.assertFalse((root/'confirmation-invalidated').exists())
+
+    def test_desktop_output_verifier_rejects_missing_extra_or_executable_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            for name in ('incomplete.json','complete.json','archive.tar.gz'):subject.write_private(root/name,b'wrong')
+            # Wrong fixed archive size/hash is rejected without allocating a
+            # synthetic official-size package or weakening the real verifier.
+            with self.assertRaises((subject.Failure,subject.complete.PreparationFailure)):
+                subject.created_cache_contract(root,False)
+            subject.write_private(root/'qodercli',b'not executable');(root/'qodercli').chmod(0o700)
+            with self.assertRaises((subject.Failure,subject.complete.PreparationFailure)):
+                subject.created_cache_contract(root,True)
+            subject.write_private(root/'unexpected',b'extra')
+            with self.assertRaises(subject.Failure):subject.created_cache_contract(root,False)
 
 if __name__=='__main__':unittest.main()

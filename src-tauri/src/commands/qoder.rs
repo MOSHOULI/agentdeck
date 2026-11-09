@@ -1,4 +1,4 @@
-//! Fixed Qoder distribution plan and explicit archive verification only.
+//! Fixed Qoder distribution checks and explicitly confirmed private cache writes.
 use aisync_core::qoder::distribution::{self, DistributionPlan, VerifiedPackage};
 #[tauri::command]
 pub async fn qoder_distribution_plan(target: String) -> Result<DistributionPlan, String> {
@@ -49,9 +49,178 @@ pub async fn inspect_qoder_cache(
     .await
     .map_err(|_| "Qoder 缓存诊断未完成。".to_string())?
 }
+// This lock covers only native Qoder cache writes, not all application modules.
+static CACHE_WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[derive(Debug, serde::Serialize)]
+pub struct CacheWriteResult {
+    operation: String,
+    state: &'static str,
+    target: &'static str,
+    version: &'static str,
+    installed: bool,
+    executable: bool,
+}
+fn validate_write(
+    operation: &str,
+    target: &str,
+    source: &str,
+    destination: &str,
+    confirmed: bool,
+) -> Result<(), String> {
+    if !confirmed
+        || !matches!(operation, "stage" | "unpack")
+        || target != "linux-amd64-baseline"
+        || [source, destination].iter().any(|p| {
+            p.trim().is_empty()
+                || p.len() > 4096
+                || p.chars().any(char::is_control)
+                || !std::path::Path::new(p).is_absolute()
+        })
+    {
+        return Err("QODER_WRITE_INVALID_REQUEST".into());
+    }
+    if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        return Err("QODER_WRITE_UNSUPPORTED_HOST".into());
+    }
+    Ok(())
+}
+#[tauri::command]
+pub async fn write_qoder_cache(
+    operation: String,
+    target: String,
+    source: String,
+    destination: String,
+    confirmed: bool,
+) -> Result<CacheWriteResult, String> {
+    validate_write(&operation, &target, &source, &destination, confirmed)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        // Acquire INSIDE the blocking task: dropping its async caller cannot
+        // release this guard while the actual filesystem operation continues.
+        let _guard = CACHE_WRITE
+            .try_lock()
+            .map_err(|_| "QODER_WRITE_BUSY".to_string())?;
+        let state = if operation == "stage" {
+            aisync_core::qoder::staging::stage_package(
+                &target,
+                std::path::Path::new(&source),
+                std::path::Path::new(&destination),
+            )
+            .map_err(|_| "QODER_WRITE_UNCONFIRMED_PARTIAL_POSSIBLE".to_string())?;
+            "staged_archive_verified"
+        } else {
+            aisync_core::qoder::unpacking::unpack_cache(
+                std::path::Path::new(&source),
+                std::path::Path::new(&destination),
+            )
+            .map_err(|_| "QODER_WRITE_UNCONFIRMED_PARTIAL_POSSIBLE".to_string())?;
+            "unpacked_payload_verified"
+        };
+        Ok(CacheWriteResult {
+            operation,
+            state,
+            target: "linux-amd64-baseline",
+            version: "1.1.85",
+            installed: false,
+            executable: false,
+        })
+    })
+    .await
+    .map_err(|_| "QODER_WRITE_UNCONFIRMED_PARTIAL_POSSIBLE".to_string())?
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cache_writes_require_confirmation_and_fixed_bounded_request() {
+        for (operation, target, source, destination, confirmed) in [
+            ("stage", "linux-amd64-baseline", "/source", "/new", false),
+            ("execute", "linux-amd64-baseline", "/source", "/new", true),
+            ("stage", "other", "/source", "/new", true),
+            ("stage", "linux-amd64-baseline", "relative", "/new", true),
+            (
+                "unpack",
+                "linux-amd64-baseline",
+                "/source",
+                "/SECRET\nnew",
+                true,
+            ),
+        ] {
+            assert_eq!(
+                validate_write(operation, target, source, destination, confirmed).unwrap_err(),
+                "QODER_WRITE_INVALID_REQUEST"
+            );
+        }
+        assert_eq!(
+            validate_write(
+                "stage",
+                "linux-amd64-baseline",
+                &"x".repeat(4097),
+                "/new",
+                true
+            )
+            .unwrap_err(),
+            "QODER_WRITE_INVALID_REQUEST"
+        );
+    }
+    #[test]
+    fn unconfirmed_native_command_does_not_create_destination() {
+        let destination = std::env::temp_dir().join(format!(
+            "qoder-unconfirmed-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        assert!(!destination.exists());
+        let result = tauri::async_runtime::block_on(write_qoder_cache(
+            "stage".into(),
+            "linux-amd64-baseline".into(),
+            std::env::temp_dir()
+                .join("not-read")
+                .to_string_lossy()
+                .into_owned(),
+            destination.to_string_lossy().into_owned(),
+            false,
+        ));
+        assert_eq!(result.unwrap_err(), "QODER_WRITE_INVALID_REQUEST");
+        assert!(!destination.exists());
+    }
+    #[test]
+    fn native_write_lock_rejects_concurrent_commands_and_releases() {
+        let guard = CACHE_WRITE.try_lock().unwrap();
+        assert!(CACHE_WRITE.try_lock().is_err());
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        for operation in ["stage", "unpack"] {
+            let result = tauri::async_runtime::block_on(write_qoder_cache(
+                operation.into(),
+                "linux-amd64-baseline".into(),
+                "/not-read".into(),
+                "/not-created".into(),
+                true,
+            ));
+            assert_eq!(result.unwrap_err(), "QODER_WRITE_BUSY");
+        }
+        drop(guard);
+        assert!(CACHE_WRITE.try_lock().is_ok());
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    #[test]
+    fn native_write_unsupported_before_core_io() {
+        assert_eq!(
+            validate_write(
+                "stage",
+                "linux-amd64-baseline",
+                &std::env::temp_dir().join("qoder-no-read").to_string_lossy(),
+                &std::env::temp_dir()
+                    .join("qoder-no-write")
+                    .to_string_lossy(),
+                true
+            )
+            .unwrap_err(),
+            "QODER_WRITE_UNSUPPORTED_HOST"
+        );
+    }
     #[test]
     fn cache_invalid_paths_are_bounded_and_redacted() {
         tauri::async_runtime::block_on(async {

@@ -58,3 +58,25 @@ it.each(['/', '/?demo=1'])('never fakes cache observation in browser %s', async 
   delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__; window.history.replaceState({}, '', url);
   await expect(bridge.inspectQoderCache('/explicit/cache')).rejects.toThrow(); expect(invoke).not.toHaveBeenCalled();
 });
+
+it.each(['stage','unpack'] as const)('strict write %s response is projected and flags cannot grant execution', async operation => {
+  const state=operation === 'stage' ? 'staged_archive_verified' : 'unpacked_payload_verified';
+  const raw={operation,state,target:'linux-amd64-baseline',version:'1.1.85',installed:false,executable:false,path:'SECRET'};
+  vi.mocked(invoke).mockResolvedValue(raw);
+  expect(await bridge.writeQoderCache(operation,'/source','/new',true)).toEqual({operation,state});
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('write_qoder_cache',{operation,target:'linux-amd64-baseline',source:'/source',destination:'/new',confirmed:true});
+  for (const patch of [{installed:true},{executable:true},{version:'latest'},{operation:'execute'},{state:'incomplete'},{target:'other'}]) {
+    vi.mocked(invoke).mockResolvedValue({...raw,...patch});
+    await expect(bridge.writeQoderCache(operation,'/source','/new',true)).rejects.toThrow();
+  }
+});
+it('write rejects missing confirmation, relative or unbounded input and demo without invoking', async () => {
+  await expect(bridge.writeQoderCache('stage','/source','/new',false)).rejects.toThrow();
+  for (const path of ['relative','/bad\npath','/'+ 'x'.repeat(4096), '/' + '界'.repeat(1400)]) await expect(bridge.writeQoderCache('stage',path,'/new',true)).rejects.toThrow();
+  await expect(bridge.writeQoderCache('execute' as 'stage','/source','/new',true)).rejects.toThrow();
+  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+  await expect(bridge.writeQoderCache('stage','/source','/new',true)).rejects.toThrow();
+  window.history.replaceState({},'', '/?demo=1');
+  await expect(bridge.writeQoderCache('stage','/source','/new',true)).rejects.toThrow();
+  expect(invoke).not.toHaveBeenCalled();
+});

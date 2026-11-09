@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import http.client
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -44,9 +45,11 @@ class Driver:
         # its pooled native client, so do not send urllib's forced close header.
         if method not in {'GET', 'POST', 'DELETE'} or not path.startswith('/') or path.startswith('//') or any(ord(c) < 32 or ord(c) == 127 for c in path) or any(token in path for token in ('execute', 'script')):
             raise Failure('forbidden_driver_endpoint')
+        if 'actions' in path.split('/') and (not self.session or path != '/session/' + self.session + '/actions' or method not in {'POST', 'DELETE'}):
+            raise Failure('forbidden_driver_endpoint')
         payload = None if body is None else json.dumps(body).encode()
         operation = path.rsplit('/', 1)[-1]
-        allowed_operations = {'status', 'session', 'elements', 'click', 'clear', 'value', 'enabled', 'text', 'source'}
+        allowed_operations = {'status', 'session', 'elements', 'click', 'clear', 'value', 'enabled', 'displayed', 'rect', 'actions', 'text', 'source'}
         self.last_response = {'operation': operation if operation in allowed_operations else 'other', 'method': method, 'received': False}
         try:
             self.connection.request(method, path, body=payload, headers={'Content-Type': 'application/json', 'Content-Length': str(len(payload) if payload is not None else 0)})
@@ -97,6 +100,45 @@ class Driver:
     def click(self, xpath):
         self.command('POST', '/element/' + self.one(xpath) + '/click', {})
 
+    def wheel_scroll_workspace_top(self):
+        element = self.one("//main[@id='workspace-content']")
+        def position():
+            value = self.command('GET', '/element/' + element + '/property/scrollTop')
+            if type(value) not in (int, float) or not 0 <= value <= 1_000_000:
+                raise Failure('workspace_scroll_invalid')
+            return value
+        current = position()
+        if current == 0:
+            return
+        action = {'actions': [{'type': 'wheel', 'id': 'workspace-wheel', 'actions': [{
+            'type': 'scroll', 'origin': {ELEMENT: element}, 'x': 0, 'y': 0,
+            'deltaX': 0, 'deltaY': -600, 'duration': 200}]}]}
+        try:
+            for _ in range(12):
+                previous = current
+                # Element-center origin, not a guessed viewport coordinate. Each
+                # successful step must make observed progress before another.
+                self.command('POST', '/actions', action)
+                def progressed():
+                    nonlocal current
+                    current = position()
+                    if current > previous: raise Failure('workspace_scroll_invalid')
+                    return current < previous
+                self.wait(progressed, seconds=3)
+                if current == 0:
+                    break
+            else:
+                raise Failure('workspace_scroll_limit')
+        except Exception:
+            failed_response = self.last_response
+            try:
+                self.command('DELETE', '/actions')  # cleanup only; never resend scroll
+            except Exception:
+                pass
+            self.last_response = failed_response
+            raise
+        self.command('DELETE', '/actions')
+
     def type(self, xpath, text):
         self.expected_input = text
         self.input_stage = 'locate_input'
@@ -126,7 +168,7 @@ class Driver:
 
 
 def response_shape(raw):
-    # Classify structure only: never keys, strings, IDs, URLs or backend messages.
+    # Classify structure and fixed W3C error enums only; never retain backend messages.
     info = {'empty': len(raw) == 0, 'within_limit': len(raw) <= 1_048_576}
     if not info['within_limit']: return info
     try: value = json.loads(raw)
@@ -144,7 +186,14 @@ def response_shape(raw):
         info['has_value'] = 'value' in value
         if 'value' in value:
             info['value_type'] = kind(value['value'])
-            if isinstance(value['value'], dict): info['has_error'] = 'error' in value['value']
+            if isinstance(value['value'], dict):
+                info['has_error'] = 'error' in value['value']
+                error = value['value'].get('error')
+                allowed = {'element click intercepted', 'element not interactable', 'stale element reference',
+                           'invalid argument', 'no such element', 'no such window', 'invalid session id',
+                           'unknown error', 'timeout', 'unsupported operation', 'unknown command'}
+                if 'error' in value['value']:
+                    info['webdriver_error'] = error if isinstance(error, str) and error in allowed else 'unrecognized'
     return info
 
 
@@ -239,6 +288,133 @@ def exercise(driver, paths, root, record, phase=lambda value: None, exact=None):
         raise Failure('clear_or_final_zero_write_failed')
 
 
+
+def created_cache_contract(directory, unpack):
+    """Audit only the known files created by the actual native write command."""
+    members = {'incomplete.json', 'complete.json', 'archive.tar.gz'}
+    exact = {directory / 'archive.tar.gz': (complete.pinned.SIZE, complete.pinned.SHA256)}
+    if unpack:
+        members.add('qodercli')
+        exact[directory / 'qodercli'] = (complete.PAYLOAD_BYTES, complete.PAYLOAD_SHA256)
+    m = directory.lstat()
+    if not stat.S_ISDIR(m.st_mode) or m.st_uid != os.geteuid() or stat.S_IMODE(m.st_mode) != 0o700 or {p.name for p in directory.iterdir()} != members:
+        raise Failure('desktop_write_output_invalid')
+    # snapshot enforces regular owner-only, single-link files; exact entries are
+    # the only size exceptions. The payload remains data, never executable.
+    snapshot(directory, exact)
+    return exact
+
+
+def exercise_cache_writes(driver, archive, root, records, phase=lambda value: None):
+    source_input = "//*[@id='qoder-write-source']"
+    destination_input = "//*[@id='qoder-write-destination']"
+    preview = "//button[text()='预览 Qoder 缓存写入']"
+    confirm = "//button[text()='确认创建 Qoder 缓存']"
+    dialog = "//*[@role='dialog' and @aria-label='确认 Qoder 缓存写入']"
+    result = "//section[@aria-label='Qoder 缓存写入结果']"
+    alert = "//*[@role='alert' and starts-with(text(),'Qoder 缓存写入未确认完成。')]"
+    read_result = "//section[@aria-label='Qoder 缓存诊断结果']"
+    staged, unpacked = root / 'desktop-staged', root / 'desktop-unpacked'
+    unused = root / 'confirmation-invalidated'
+    for path in (staged, unpacked, unused):
+        if path.exists() or path.is_symlink(): raise Failure('desktop_destination_not_new')
+    source_contract = {archive: (complete.pinned.SIZE, complete.pinned.SHA256)}
+    original_source = snapshot(archive.parent, source_contract)
+    exact = {}
+
+    def form(operation, source, destination):
+        driver.wait(lambda: driver.enabled(source_input))
+        driver.click("//button[text()='" + ('选择暂存归档' if operation == 'stage' else '选择解包缓存') + "']")
+        for selector, value in ((source_input, source), (destination_input, destination)):
+            driver.type(selector, str(value))
+            driver.wait(lambda s=selector, v=str(value): driver.value(s) == v)
+        if driver.elements(dialog) or driver.elements(confirm):
+            raise Failure('desktop_confirmation_not_invalidated')
+        driver.wait(lambda: not driver.elements(result) and not driver.elements(alert))
+
+    def open_preview(operation, source, destination):
+        driver.wait(lambda: driver.enabled(preview))
+        driver.click(preview)
+        driver.wait(lambda: len(driver.elements(dialog)) == 1)
+        text = driver.text(dialog)
+        required = ['操作：' + ('暂存归档' if operation == 'stage' else '解包缓存'),
+                    '固定目标：linux-amd64-baseline', '版本：1.1.85',
+                    '来源：' + str(source), '全新目录：' + str(destination)]
+        if any(value not in text for value in required):
+            raise Failure('desktop_confirmation_details_mismatch')
+
+    phase('desktop_confirmation_negative_paths')
+    form('stage', archive, staged)
+    initial = snapshot(root)
+    open_preview('stage', archive, staged)
+    driver.click("//button[text()='取消 Qoder 写入确认']")
+    driver.wait(lambda: not driver.elements(dialog))
+    if snapshot(root) != initial or staged.exists():
+        raise Failure('desktop_unconfirmed_write')
+    open_preview('stage', archive, staged)
+    driver.type(destination_input, str(unused))
+    driver.wait(lambda: driver.value(destination_input) == str(unused))
+    driver.wait(lambda: not driver.elements(dialog) and not driver.elements(confirm))
+    if snapshot(root) != initial or unused.exists():
+        raise Failure('desktop_unconfirmed_write')
+    records.append({'operation': 'confirmation', 'cancel_and_input_change_no_write': True})
+
+    for operation, source, destination, kind in [('stage', archive, staged, 'staged'), ('unpack', staged, unpacked, 'unpacked')]:
+        phase('desktop_' + operation + '_confirm')
+        form(operation, source, destination)
+        open_preview(operation, source, destination)
+        preserved_source = snapshot(source, exact) if operation == 'unpack' else original_source
+        driver.wait(lambda: driver.enabled(confirm))
+        driver.click(confirm)  # Never replay a possibly completed write.
+        phase('desktop_' + operation + '_wait_completion')
+        driver.wait(lambda: bool(driver.elements(result) or driver.elements(alert)), seconds=120)
+        if driver.elements(alert) or LABELS[kind] not in driver.text(result):
+            raise Failure('desktop_write_not_confirmed')
+        driver.wait(lambda: driver.enabled(source_input))
+        exact.update(created_cache_contract(destination, operation == 'unpack'))
+        if (snapshot(source, exact) if operation == 'unpack' else snapshot(archive.parent, source_contract)) != preserved_source:
+            raise Failure('desktop_write_modified_source')
+        phase('desktop_' + operation + '_diagnose_zero_write')
+        before = snapshot(root, exact)
+        driver.type("//*[@id='qoder-cache']", str(destination))
+        driver.wait(lambda: driver.value("//*[@id='qoder-cache']") == str(destination))
+        driver.wait(lambda: not driver.elements(read_result))
+        driver.wait(lambda: driver.enabled("//button[text()='只读诊断 Qoder 缓存']"))
+        driver.click("//button[text()='只读诊断 Qoder 缓存']")
+        driver.wait(lambda: len(driver.elements(read_result)) == 1, seconds=90)
+        text = driver.text(read_result)
+        if any(value not in text for value in (LABELS[kind], '保留缓存，不执行操作。', '本报告不授权删除')) or snapshot(root, exact) != before:
+            raise Failure('desktop_diagnosis_or_zero_write_failed')
+        records.append({'operation': operation, 'real_webview_write_and_diagnosis': True, 'fixed_files_hashes_modes_verified': True, 'diagnosis_zero_write': True})
+
+        phase('desktop_' + operation + '_reject_existing_destination')
+        form(operation, source, destination)
+        open_preview(operation, source, destination)
+        before = snapshot(root, exact)
+        driver.wait(lambda: driver.enabled(confirm))
+        driver.click(confirm)
+        driver.wait(lambda: bool(driver.elements(alert) or driver.elements(result)), seconds=120)
+        if not driver.elements(alert) or driver.elements(result):
+            raise Failure('desktop_existing_destination_not_rejected')
+        driver.wait(lambda: driver.enabled(source_input))
+        if snapshot(root, exact) != before or snapshot(archive.parent, source_contract) != original_source:
+            raise Failure('desktop_existing_destination_changed')
+        records.append({'operation': operation + '_existing', 'rejected_without_overwrite': True})
+    phase('desktop_clear_and_final_zero_write')
+    before = snapshot(root, exact)
+    retained_inputs = [driver.value(path) for path in (source_input, destination_input, "//*[@id='qoder-cache']")]
+    driver.wheel_scroll_workspace_top()
+    if retained_inputs != [driver.value(path) for path in (source_input, destination_input, "//*[@id='qoder-cache']")]:
+        raise Failure('workspace_scroll_changed_inputs')
+    driver.wait(lambda: driver.enabled("//button[text()='清除 Qoder 选择与结果']"))
+    driver.click("//button[text()='清除 Qoder 选择与结果']")
+    driver.wait(lambda: not driver.elements(result) and not driver.elements(alert) and not driver.elements(read_result) and not driver.elements(dialog))
+    if snapshot(root, exact) != before or snapshot(archive.parent, source_contract) != original_source or unused.exists():
+        raise Failure('desktop_final_zero_write_failed')
+    if CANARY in driver.text('//body'):
+        raise Failure('private_fixture_content_exposed')
+
+
 def failure_code(error):
     if isinstance(error, complete.PreparationFailure): return 'complete_cache_preparation_failed'
     if isinstance(error, Failure):
@@ -246,11 +422,49 @@ def failure_code(error):
                    'webdriver_command_failed', 'driver_response_schema', 'driver_http_error', 'driver_incomplete_response', 'no_session', 'missing_or_ambiguous_control', 'ui_wait_expired',
                    'unsafe_fixture', 'fixture_size_changed', 'unexpected_cache_state',
                    'private_fixture_content_exposed', 'cache_fixture_changed',
-                   'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready', 'startup_registry_not_idle', 'incomplete_gui_coverage'}
+                   'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready', 'startup_registry_not_idle', 'incomplete_gui_coverage', 'desktop_write_output_invalid', 'desktop_destination_not_new',
+                   'desktop_confirmation_not_invalidated', 'desktop_confirmation_details_mismatch', 'desktop_unconfirmed_write',
+                   'desktop_write_not_confirmed', 'desktop_write_modified_source', 'desktop_diagnosis_or_zero_write_failed',
+                   'desktop_existing_destination_not_rejected', 'desktop_existing_destination_changed', 'desktop_final_zero_write_failed', 'workspace_scroll_limit', 'workspace_scroll_invalid', 'workspace_scroll_changed_inputs'}
         return str(error) if str(error) in allowed else 'harness_failure'
     if isinstance(error, (ConnectionError, http.client.HTTPException)): return 'webdriver_transport_error'
     if isinstance(error, TimeoutError): return 'webdriver_timeout'
     return 'unexpected_harness_error'
+
+
+def bounded_rect(value):
+    # Geometry is diagnostic only, not a click target or permission to replay.
+    if not isinstance(value, dict): raise Failure('harness_failure')
+    result = {}
+    for key in ('x', 'y', 'width', 'height'):
+        number = value.get(key)
+        if type(number) not in (int, float) or not -1_000_000 <= number <= 1_000_000 or not math.isfinite(number):
+            raise Failure('harness_failure')
+        if key in ('width', 'height') and number < 0: raise Failure('harness_failure')
+        result[key] = number
+    return result
+
+
+def capture_clear_geometry(driver):
+    report = {}
+    try:
+        element = driver.one("//button[text()='清除 Qoder 选择与结果']")
+        if not isinstance(element, str): raise Failure('harness_failure')
+    except Exception as error:
+        return {'state': 'unavailable', 'code': failure_code(error)}
+    for name, path in [('enabled', '/element/' + element + '/enabled'),
+                       ('displayed', '/element/' + element + '/displayed'),
+                       ('element_rect', '/element/' + element + '/rect'), ('window_rect', '/window/rect')]:
+        try:
+            value = driver.command('GET', path)
+            if name in ('enabled', 'displayed'):
+                if type(value) is not bool: raise Failure('harness_failure')
+                report[name] = value
+            else:
+                report[name] = bounded_rect(value)
+        except Exception as error:
+            report[name] = {'state': 'unavailable', 'code': failure_code(error)}
+    return report
 
 
 def capture_failure_dom(driver, evidence):
@@ -260,6 +474,7 @@ def capture_failure_dom(driver, evidence):
     if not driver.session:
         report['session'] = 'unavailable'
     else:
+        report['clear_geometry'] = capture_clear_geometry(driver)
         # Retain only agreement/length/boolean facts, never an untrusted input value.
         try:
             value = driver.value("//*[@id='qoder-cache']")
@@ -316,7 +531,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
     env = dict(os.environ, HOME=str(home))
     for key, name in [('XDG_CONFIG_HOME', 'config'), ('XDG_CACHE_HOME', 'cache'), ('XDG_DATA_HOME', 'data'), ('XDG_STATE_HOME', 'state'), ('XDG_RUNTIME_DIR', 'runtime')]:
         directory = home / name; directory.mkdir(mode=0o700); env[key] = str(directory)
-    client = Driver(); process = None; records = []; passed = False
+    client = Driver(); process = None; records = []; write_records = []; passed = False
     log = bytearray(); logger = None
     diagnostic = {'phase': 'start_driver', 'failure_code': None}
     def phase(value): diagnostic['phase'] = value
@@ -345,6 +560,11 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         exercise(client, paths, fixture_root, records, phase, exact)
         if [entry.get('state') for entry in records] != ['unknown','incomplete','conflict','staged','unpacked']:
             raise Failure('incomplete_gui_coverage')
+        readonly_before = snapshot(fixture_root, exact)
+        write_root = temporary / 'desktop-writes'; write_root.mkdir(mode=0o700)
+        exercise_cache_writes(client, archive, write_root, write_records, phase)
+        if [entry.get('operation') for entry in write_records] != ['confirmation', 'stage', 'stage_existing', 'unpack', 'unpack_existing'] or snapshot(fixture_root, exact) != readonly_before:
+            raise Failure('incomplete_gui_coverage')
         phase('acceptance_complete')
         passed = True
     except Exception as error:
@@ -372,7 +592,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         if CANARY.encode() in retained:
             retained = b'Synthetic private content suppressed.\n'; passed = False
         (evidence / 'driver.log').write_bytes(retained)
-        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_directory_mode': '0700'}, indent=2))
+        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'desktop_write_checks': write_records, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_directory_mode': '0700'}, indent=2))
     if not passed:
         raise Failure('acceptance_not_confirmed')
 
