@@ -5,6 +5,7 @@ import hashlib
 import json
 import multiprocessing
 import os
+import platform
 from pathlib import Path
 import stat
 import sys
@@ -27,8 +28,11 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise DownloadFailure('redirect_rejected')
 
 def _guard_destination(directory):
-    if (os.environ.get('GITHUB_ACTIONS'), os.environ.get('RUNNER_ENVIRONMENT'), os.environ.get('RUNNER_OS')) != ('true', 'github-hosted', 'Windows'):
-        raise DownloadFailure('requires_disposable_github_windows_runner')
+    hosted = (os.environ.get('GITHUB_ACTIONS'), os.environ.get('RUNNER_ENVIRONMENT')) == ('true', 'github-hosted')
+    windows = os.environ.get('RUNNER_OS') == 'Windows'
+    linux = os.environ.get('RUNNER_OS') == 'Linux' and sys.platform == 'linux' and platform.machine() == 'x86_64'
+    if not hosted or not (windows or linux):
+        raise DownloadFailure('requires_hosted_windows_or_linux_x64_runner')
     root = os.environ.get('RUNNER_TEMP')
     if not root or not directory.is_absolute():
         raise DownloadFailure('requires_absolute_runner_temp_destination')

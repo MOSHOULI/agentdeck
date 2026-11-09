@@ -7,10 +7,12 @@ import json
 import os
 from pathlib import Path
 import signal
+import stat
 import subprocess
 import tempfile
 import threading
 import time
+import qoder_complete_fixtures as complete
 
 ELEMENT = 'element-6066-11e4-a52e-4f735466cecf'
 CANARY = 'QODER-SYNTHETIC-PRIVATE-CONTENT-NOT-FOR-UI'
@@ -18,6 +20,8 @@ LABELS = {
     'unknown': '无法确认缓存归属；请保留现场，不据此删除。',
     'incomplete': '缓存未完成；部分字节未获得完整性结论，请保留现场。',
     'conflict': '缓存存在冲突或不安全状态；请保留现场，不覆盖或强制修复。',
+    'staged': '暂存归档与固定契约一致；未安装、未运行。',
+    'unpacked': '解包缓存的归档与载荷符合固定契约；未安装、未运行。',
 }
 
 class Failure(Exception):
@@ -161,7 +165,7 @@ def write_private(path, content):
 
 def fixtures(root):
     paths = {}
-    for kind in LABELS:
+    for kind in ('unknown', 'incomplete', 'conflict'):
         directory = root / kind
         directory.mkdir(mode=0o700)
         paths[kind] = directory
@@ -175,21 +179,26 @@ def fixtures(root):
     return paths
 
 
-def snapshot(root):
+def snapshot(root, exact=None):
+    exact = exact or {}
     result = {}
     for path in [root, *sorted(root.rglob('*'))]:
         m = path.lstat()
         if path.is_symlink() or not (path.is_file() or path.is_dir()):
             raise Failure('unsafe_fixture')
-        if path.is_file() and m.st_size > 65536:
-            raise Failure('fixture_size_changed')
-        digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+        if path.is_dir() and (m.st_uid != os.geteuid() or stat.S_IMODE(m.st_mode) != 0o700):
+            raise Failure('unsafe_fixture')
+        contract = exact.get(path)
+        try:
+            digest = complete.file_digest(path,contract[0] if contract else 65536,contract) if path.is_file() else None
+        except complete.PreparationFailure:
+            raise Failure('unsafe_fixture') from None
         result[str(path.relative_to(root))] = (m.st_ino, m.st_mode, m.st_uid, m.st_nlink, m.st_size,
                                              m.st_mtime_ns, m.st_ctime_ns, digest)
     return result
 
 
-def exercise(driver, paths, root, record, phase=lambda value: None):
+def exercise(driver, paths, root, record, phase=lambda value: None, exact=None):
     tab = "//*[@role='tab' and @aria-label='Qoder 分发与校验']"
     phase('wait_qoder_tab')
     driver.wait(lambda: len(driver.elements(tab)) == 1)
@@ -198,7 +207,7 @@ def exercise(driver, paths, root, record, phase=lambda value: None):
     phase('assert_registry_startup_idle')
     if len(driver.elements("//*[@id='workspace-tab-updates' and @aria-label='注册表更新']")) != 1:
         raise Failure('startup_registry_not_idle')
-    before = snapshot(root)
+    before = snapshot(root, exact)
     for kind, path in paths.items():
         phase(kind + '_type_path')
         driver.type("//*[@id='qoder-cache']", str(path))
@@ -211,31 +220,33 @@ def exercise(driver, paths, root, record, phase=lambda value: None):
         phase(kind + '_click_inspect')
         driver.click("//button[text()='只读诊断 Qoder 缓存']")
         phase(kind + '_wait_result')
-        driver.wait(lambda: len(driver.elements("//section[@aria-label='Qoder 缓存诊断结果']")) == 1)
+        driver.wait(lambda: len(driver.elements("//section[@aria-label='Qoder 缓存诊断结果']")) == 1, seconds=90 if kind in ('staged', 'unpacked') else 20)
         phase(kind + '_assert_result_and_zero_write')
         text = driver.text("//section[@aria-label='Qoder 缓存诊断结果']")
-        if LABELS[kind] not in text or '本报告不授权删除' not in text:
+        required_plan = '保留缓存，不执行操作。' if kind in ('staged','unpacked') else '保留现场，人工检查。'
+        if LABELS[kind] not in text or '本报告不授权删除' not in text or required_plan not in text:
             raise Failure('unexpected_cache_state')
         if CANARY in driver.text('//body'):
             raise Failure('private_fixture_content_exposed')
-        if before != snapshot(root):
+        if before != snapshot(root, exact):
             raise Failure('cache_fixture_changed')
-        record.append({'state': kind, 'real_webview_click_and_ipc': True, 'unchanged_bytes_metadata_members': True})
+        record.append({'state': kind, 'real_webview_click_and_ipc': True, 'unchanged_bytes_metadata_members': True, 'complete_pinned_cache': kind in ('staged','unpacked')})
     phase('clear_and_assert')
     driver.click("//button[text()='清除 Qoder 选择与结果']")
     driver.wait(lambda: not driver.elements("//section[@aria-label='Qoder 缓存诊断结果']"))
     value = driver.command('GET', '/element/' + driver.one("//*[@id='qoder-cache']") + '/property/value')
-    if value != '' or before != snapshot(root):
+    if value != '' or before != snapshot(root, exact):
         raise Failure('clear_or_final_zero_write_failed')
 
 
 def failure_code(error):
+    if isinstance(error, complete.PreparationFailure): return 'complete_cache_preparation_failed'
     if isinstance(error, Failure):
         allowed = {'driver_redirect_forbidden', 'forbidden_driver_endpoint', 'driver_response_limit',
                    'webdriver_command_failed', 'driver_response_schema', 'driver_http_error', 'driver_incomplete_response', 'no_session', 'missing_or_ambiguous_control', 'ui_wait_expired',
                    'unsafe_fixture', 'fixture_size_changed', 'unexpected_cache_state',
                    'private_fixture_content_exposed', 'cache_fixture_changed',
-                   'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready', 'startup_registry_not_idle'}
+                   'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready', 'startup_registry_not_idle', 'incomplete_gui_coverage'}
         return str(error) if str(error) in allowed else 'harness_failure'
     if isinstance(error, (ConnectionError, http.client.HTTPException)): return 'webdriver_transport_error'
     if isinstance(error, TimeoutError): return 'webdriver_timeout'
@@ -287,13 +298,14 @@ def capture_log(stream, output):
         output.extend(chunk); kept += len(chunk)
 
 
-def guarded_run(application, driver_binary, native_driver, evidence):
+def guarded_run(application, driver_binary, native_driver, evidence, cli=None, archive=None):
     if (os.environ.get('GITHUB_ACTIONS'), os.environ.get('RUNNER_ENVIRONMENT'), os.environ.get('RUNNER_OS')) != ('true', 'github-hosted', 'Linux'):
         raise Failure('requires_hosted_linux_ci')
     for name in ('WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS', 'WEBKIT_FORCE_SANDBOX'):
         if name in os.environ:
             raise Failure('sandbox_override_forbidden')
-    for binary in (application, driver_binary, native_driver):
+    if cli is None or archive is None: raise Failure('complete_cache_inputs_required')
+    for binary in (application, driver_binary, native_driver, cli):
         if not binary.is_absolute() or not binary.is_file() or not os.access(binary, os.X_OK):
             raise Failure('missing_explicit_executable')
     evidence.mkdir(exist_ok=False)
@@ -309,6 +321,10 @@ def guarded_run(application, driver_binary, native_driver, evidence):
     diagnostic = {'phase': 'start_driver', 'failure_code': None}
     def phase(value): diagnostic['phase'] = value
     try:
+        phase('prepare_official_complete_caches')
+        completed_paths,exact=complete.prepare(cli,archive,fixture_root,env)
+        paths.update(completed_paths)
+        phase('start_driver')
         process = subprocess.Popen([str(driver_binary), '--native-driver', str(native_driver), '--native-host', '127.0.0.1'], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
         logger = threading.Thread(target=capture_log, args=(process.stdout, log), daemon=True)
         logger.start()
@@ -326,7 +342,9 @@ def guarded_run(application, driver_binary, native_driver, evidence):
         phase('create_session')
         session = client.request('POST', '/session', {'capabilities': {'alwaysMatch': {'browserName': 'wry', 'tauri:options': {'application': str(application)}}}})
         client.session = session['sessionId']
-        exercise(client, paths, fixture_root, records, phase)
+        exercise(client, paths, fixture_root, records, phase, exact)
+        if [entry.get('state') for entry in records] != ['unknown','incomplete','conflict','staged','unpacked']:
+            raise Failure('incomplete_gui_coverage')
         phase('acceptance_complete')
         passed = True
     except Exception as error:
@@ -354,17 +372,17 @@ def guarded_run(application, driver_binary, native_driver, evidence):
         if CANARY.encode() in retained:
             retained = b'Synthetic private content suppressed.\n'; passed = False
         (evidence / 'driver.log').write_bytes(retained)
-        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'synthetic_partial_states_only': True, 'complete_cache_gui_not_tested': True, 'qoder_executed': False, 'sandbox_overrides': False}, indent=2))
+        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_directory_mode': '0700'}, indent=2))
     if not passed:
         raise Failure('acceptance_not_confirmed')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    for name in ('application', 'driver', 'native-driver', 'evidence'):
+    for name in ('application', 'driver', 'native-driver', 'evidence', 'cli', 'archive'):
         parser.add_argument('--' + name, type=Path, required=True)
     args = parser.parse_args()
     try:
-        guarded_run(args.application, args.driver, args.native_driver, args.evidence)
+        guarded_run(args.application, args.driver, args.native_driver, args.evidence, args.cli, args.archive)
     except Exception:
         # Do not dump backend bodies, fixture contents or arbitrary paths.
         print('Linux real WebView acceptance failed; inspect CI driver/platform evidence.', file=__import__('sys').stderr)
