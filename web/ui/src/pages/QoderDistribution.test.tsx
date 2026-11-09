@@ -53,3 +53,14 @@ it.each(['demo', 'unavailable'] as const)('does not invoke IPC in %s', mode => {
   vi.mocked(bridge.runtimeMode).mockReturnValue(mode); render(<QoderDistribution />);
   expect(screen.getByRole('button', { name: '查看 Qoder 分发计划' })).toBeDisabled(); verify(); expect(bridge.verifyQoderPackage).not.toHaveBeenCalled(); expect(bridge.qoderDistributionPlan).not.toHaveBeenCalled();
 });
+
+it('renders selected identity and archive name as complete accessible text nodes', async () => {
+  render(<QoderDistribution />);
+  expect(screen.getByText('当前分发目标：未选择').childNodes).toHaveLength(1);
+  fill();
+  expect(screen.getByText('当前分发目标：linux-amd64-baseline').childNodes).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: '查看 Qoder 分发计划' }));
+  const name = await screen.findByText('官方归档名：qodercli-linux-x64-baseline.tar.gz');
+  expect(name.childNodes).toHaveLength(1);
+  expect(name.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+});

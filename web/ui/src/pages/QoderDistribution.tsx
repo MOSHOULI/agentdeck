@@ -34,6 +34,7 @@ export function QoderDistribution() {
       <select id="qoder-target" className="control" value={target} disabled={!native} onChange={event => { clearResult(); setTarget(event.target.value); }}>
         <option value="">请选择目标</option>{qoderTargets.map(id => <option value={id} key={id}>{id}</option>)}
       </select>
+      <p aria-live="polite">{`当前分发目标：${target || '未选择'}`}</p>
       <label htmlFor="qoder-archive">Qoder 官方归档绝对路径</label>
       <input id="qoder-archive" className="control" value={path} maxLength={4096} disabled={!native} autoComplete="off" spellCheck={false} onChange={event => { clearResult(); setPath(event.target.value); }} />
       <p className="muted">须使用该目标的官方文件名；每包最多 256 MiB。读取边界仅审阅 Windows 与 Linux x86_64/ARM64；macOS 等主机的计划可查看，但文件校验失败关闭。哈希一致不代表运行兼容。</p>
@@ -47,7 +48,7 @@ export function QoderDistribution() {
     {busy && <p role="status">正在处理。取消或修改输入仅丢弃结果，不中止底层读取；完成前不会开始另一个请求。</p>}
     {error && <p role="alert">未能确认 Qoder 分发计划或包摘要。请检查目标、官方文件名、文件权限和支持的读取平台；没有获得校验成功结论。</p>}
     {plan && <section className="panel" aria-label="Qoder 分发计划结果">
-      <h2>固定分发计划：{plan.target}</h2><p>版本：{plan.version}</p><p>官方归档名：{plan.archiveName}</p>
+      <h2>固定分发计划：{plan.target}</h2><p>版本：{plan.version}</p><p>{`官方归档名：${plan.archiveName}`}</p>
       <p style={{ overflowWrap: 'anywhere' }}>官方包地址（仅展示，不自动下载）：<code>{plan.url}</code></p>
       <p style={{ overflowWrap: 'anywhere' }}>官方包 SHA256：<code>{plan.sha256}</code></p><p style={{ overflowWrap: 'anywhere' }}>已审阅清单 SHA256：<code>{plan.manifestHash}</code></p>
       <p>运行时声明：{plan.runtime}；变体：{plan.variant}。</p><p>{plan.requirements}</p>
