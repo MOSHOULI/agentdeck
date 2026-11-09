@@ -45,9 +45,11 @@ class Driver:
         # its pooled native client, so do not send urllib's forced close header.
         if method not in {'GET', 'POST', 'DELETE'} or not path.startswith('/') or path.startswith('//') or any(ord(c) < 32 or ord(c) == 127 for c in path) or any(token in path for token in ('execute', 'script')):
             raise Failure('forbidden_driver_endpoint')
+        if 'actions' in path.split('/') and (not self.session or path != '/session/' + self.session + '/actions' or method not in {'POST', 'DELETE'}):
+            raise Failure('forbidden_driver_endpoint')
         payload = None if body is None else json.dumps(body).encode()
         operation = path.rsplit('/', 1)[-1]
-        allowed_operations = {'status', 'session', 'elements', 'click', 'clear', 'value', 'enabled', 'displayed', 'rect', 'text', 'source'}
+        allowed_operations = {'status', 'session', 'elements', 'click', 'clear', 'value', 'enabled', 'displayed', 'rect', 'actions', 'text', 'source'}
         self.last_response = {'operation': operation if operation in allowed_operations else 'other', 'method': method, 'received': False}
         try:
             self.connection.request(method, path, body=payload, headers={'Content-Type': 'application/json', 'Content-Length': str(len(payload) if payload is not None else 0)})
@@ -98,23 +100,44 @@ class Driver:
     def click(self, xpath):
         self.command('POST', '/element/' + self.one(xpath) + '/click', {})
 
-    def keyboard_scroll_workspace_top(self):
-        # Standard element Send Keys focuses this tabindex=-1 main. NULL alone
-        # first establishes focus without typing/clicking a child control.
+    def wheel_scroll_workspace_top(self):
         element = self.one("//main[@id='workspace-content']")
-        path = '/element/' + element + '/value'
-        self.command('POST', path, {'text': '\ue000', 'value': ['\ue000']})
-        active = self.command('GET', '/element/active')
-        if not isinstance(active, dict) or active.get(ELEMENT) != element:
-            raise Failure('workspace_focus_not_confirmed')
-        keys = '\ue009\ue011\ue000'  # Control + Home, then explicit modifier release.
-        self.command('POST', path, {'text': keys, 'value': list(keys)})
-        def at_top():
+        def position():
             value = self.command('GET', '/element/' + element + '/property/scrollTop')
             if type(value) not in (int, float) or not 0 <= value <= 1_000_000:
                 raise Failure('workspace_scroll_invalid')
-            return value == 0
-        self.wait(at_top)
+            return value
+        current = position()
+        if current == 0:
+            return
+        action = {'actions': [{'type': 'wheel', 'id': 'workspace-wheel', 'actions': [{
+            'type': 'scroll', 'origin': {ELEMENT: element}, 'x': 0, 'y': 0,
+            'deltaX': 0, 'deltaY': -600, 'duration': 200}]}]}
+        try:
+            for _ in range(12):
+                previous = current
+                # Element-center origin, not a guessed viewport coordinate. Each
+                # successful step must make observed progress before another.
+                self.command('POST', '/actions', action)
+                def progressed():
+                    nonlocal current
+                    current = position()
+                    if current > previous: raise Failure('workspace_scroll_invalid')
+                    return current < previous
+                self.wait(progressed, seconds=3)
+                if current == 0:
+                    break
+            else:
+                raise Failure('workspace_scroll_limit')
+        except Exception:
+            failed_response = self.last_response
+            try:
+                self.command('DELETE', '/actions')  # cleanup only; never resend scroll
+            except Exception:
+                pass
+            self.last_response = failed_response
+            raise
+        self.command('DELETE', '/actions')
 
     def type(self, xpath, text):
         self.expected_input = text
@@ -380,7 +403,7 @@ def exercise_cache_writes(driver, archive, root, records, phase=lambda value: No
     phase('desktop_clear_and_final_zero_write')
     before = snapshot(root, exact)
     retained_inputs = [driver.value(path) for path in (source_input, destination_input, "//*[@id='qoder-cache']")]
-    driver.keyboard_scroll_workspace_top()
+    driver.wheel_scroll_workspace_top()
     if retained_inputs != [driver.value(path) for path in (source_input, destination_input, "//*[@id='qoder-cache']")]:
         raise Failure('workspace_scroll_changed_inputs')
     driver.wait(lambda: driver.enabled("//button[text()='清除 Qoder 选择与结果']"))
@@ -402,7 +425,7 @@ def failure_code(error):
                    'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready', 'startup_registry_not_idle', 'incomplete_gui_coverage', 'desktop_write_output_invalid', 'desktop_destination_not_new',
                    'desktop_confirmation_not_invalidated', 'desktop_confirmation_details_mismatch', 'desktop_unconfirmed_write',
                    'desktop_write_not_confirmed', 'desktop_write_modified_source', 'desktop_diagnosis_or_zero_write_failed',
-                   'desktop_existing_destination_not_rejected', 'desktop_existing_destination_changed', 'desktop_final_zero_write_failed', 'workspace_focus_not_confirmed', 'workspace_scroll_invalid', 'workspace_scroll_changed_inputs'}
+                   'desktop_existing_destination_not_rejected', 'desktop_existing_destination_changed', 'desktop_final_zero_write_failed', 'workspace_scroll_limit', 'workspace_scroll_invalid', 'workspace_scroll_changed_inputs'}
         return str(error) if str(error) in allowed else 'harness_failure'
     if isinstance(error, (ConnectionError, http.client.HTTPException)): return 'webdriver_transport_error'
     if isinstance(error, TimeoutError): return 'webdriver_timeout'

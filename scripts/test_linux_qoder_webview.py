@@ -297,29 +297,48 @@ class Tests(unittest.TestCase):
             self.assertNotIn('SECRET',json.dumps(info))
         self.assertNotIn('webdriver_error',subject.response_shape(b'{"value":null}'))
 
-    def test_workspace_keyboard_scroll_protocol_focus_release_and_no_replay(self):
+    def test_workspace_wheel_protocol_progress_bounds_and_no_replay(self):
         driver=subject.Driver();driver.one=Mock(return_value='main')
-        driver.wait=lambda predicate: self.assertTrue(predicate())
-        driver.command=Mock(side_effect=[None,{subject.ELEMENT:'main'},None,0])
-        driver.keyboard_scroll_workspace_top()
-        self.assertEqual([call.args for call in driver.command.call_args_list],[
-            ('POST','/element/main/value',{'text':'\ue000','value':['\ue000']}),
-            ('GET','/element/active'),
-            ('POST','/element/main/value',{'text':'\ue009\ue011\ue000','value':['\ue009','\ue011','\ue000']}),
-            ('GET','/element/main/property/scrollTop')])
-        for active in [None,{}, {subject.ELEMENT:'input'}]:
-            driver.command=Mock(side_effect=[None,active])
-            with self.assertRaises(subject.Failure):driver.keyboard_scroll_workspace_top()
-            self.assertEqual(driver.command.call_count,2)
+        def wait(predicate,seconds=20):
+            if not predicate():raise subject.Failure('ui_wait_expired')
+        driver.wait=wait
+        driver.command=Mock(side_effect=[900,None,300,None,0,None])
+        driver.wheel_scroll_workspace_top()
+        calls=[call.args for call in driver.command.call_args_list]
+        action={'actions':[{'type':'wheel','id':'workspace-wheel','actions':[{
+            'type':'scroll','origin':{subject.ELEMENT:'main'},'x':0,'y':0,
+            'deltaX':0,'deltaY':-600,'duration':200}]}]}
+        self.assertEqual(calls,[('GET','/element/main/property/scrollTop'),('POST','/actions',action),
+            ('GET','/element/main/property/scrollTop'),('POST','/actions',action),
+            ('GET','/element/main/property/scrollTop'),('DELETE','/actions')])
+        driver.command=Mock(return_value=0);driver.wheel_scroll_workspace_top()
+        self.assertEqual(driver.command.call_count,1)
         for value in [True,'0',None,-1,1000001,float('nan'),float('inf')]:
-            driver.command=Mock(side_effect=[None,{subject.ELEMENT:'main'},None,value])
-            with self.assertRaises(subject.Failure):driver.keyboard_scroll_workspace_top()
-        for failure_at in [0,2]:
-            outcomes=[None,{subject.ELEMENT:'main'},None,0]
-            outcomes[failure_at]=subject.Failure('driver_http_error')
-            driver.command=Mock(side_effect=outcomes)
-            with self.assertRaises(subject.Failure):driver.keyboard_scroll_workspace_top()
-            self.assertEqual(driver.command.call_count,failure_at+1)
+            driver.command=Mock(return_value=value)
+            with self.assertRaises(subject.Failure):driver.wheel_scroll_workspace_top()
+            self.assertEqual(driver.command.call_count,1)
+        for value in [900,901,True,float('nan')]:
+            driver.command=Mock(side_effect=[900,None,value,None])
+            with self.assertRaises(subject.Failure):driver.wheel_scroll_workspace_top()
+            self.assertEqual(sum(call.args[0]=='POST' for call in driver.command.call_args_list),1)
+            self.assertEqual(driver.command.call_args.args,('DELETE','/actions'))
+        outcomes=[900]+[item for i in range(12) for item in (None,899-i)]+[None]
+        driver.command=Mock(side_effect=outcomes)
+        with self.assertRaisesRegex(subject.Failure,'workspace_scroll_limit'):driver.wheel_scroll_workspace_top()
+        self.assertEqual(sum(call.args[0]=='POST' for call in driver.command.call_args_list),12)
+        driver.last_response={'operation':'actions','status':400}
+        driver.command=Mock(side_effect=[900,subject.Failure('driver_http_error'),ValueError('cleanup')])
+        with self.assertRaisesRegex(subject.Failure,'driver_http_error'):driver.wheel_scroll_workspace_top()
+        self.assertEqual(driver.command.call_count,3)
+        self.assertEqual(driver.command.call_args.args,('DELETE','/actions'))
+        self.assertEqual(driver.last_response,{'operation':'actions','status':400})
+
+    def test_actions_endpoint_is_exact_and_session_bound(self):
+        driver=subject.Driver();driver.session='known';driver.connection=Mock()
+        for method,path in [('GET','/session/known/actions'),('POST','/session/other/actions'),
+                            ('POST','/session/known/actions/extra'),('POST','/actions')]:
+            with self.assertRaisesRegex(subject.Failure,'forbidden_driver_endpoint'):driver.request(method,path,{})
+        driver.connection.request.assert_not_called()
 
     def test_clear_geometry_is_read_only_and_bounded(self):
         good={'x':-100,'y':0.5,'width':1000,'height':600,'SECRET':'discard'}
@@ -352,7 +371,7 @@ class Tests(unittest.TestCase):
         class Fake:
             def __init__(self, fault=None):
                 self.values={};self.operation='stage';self.dialog=False;self.result=False;self.alert=False;self.read=False;self.fault=fault;self.confirmed=0
-            def keyboard_scroll_workspace_top(self):pass
+            def wheel_scroll_workspace_top(self):pass
             def one(self,xpath):return 'element'
             def wait(self,predicate,seconds=20):
                 if not predicate():raise subject.Failure('ui_wait_expired')

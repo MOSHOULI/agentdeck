@@ -114,3 +114,25 @@ Protocol basis (not proof of this runner's outcome):
 候选方案使用标准键盘输入聚焦原滚动容器，核验焦点后发送 Ctrl+Home 并释放修饰键；
 等待滚动位置归零且输入未变，再点击原清除按钮。离线协议测试不是此 GTK/WebView
 真实运行成功证明，仍须完整真实 GUI 门禁通过。
+
+### Bounded wheel candidate / 有界真实滚轮候选
+
+The keyboard candidate completed focus/Send Keys but timed out because the
+observed main scrollTop did not reach zero. It is not retained as a fallback
+or rerun unchanged. The replacement sends W3C wheel actions with the real main
+element as origin and zero center offsets, deltaY=-600 and duration=200 ms.
+At most 12 successful steps are allowed; each must show strictly decreasing,
+finite bounded scrollTop within three seconds before another step. Zero is
+required before the unchanged original Clear click. A failed wheel is never
+replayed. DELETE /actions only releases input state; cleanup cannot convert
+failure to success or replace the original failure evidence.
+
+Official upstream support evidence, inspected 2026-11-09 (main branch, not a
+claim about the exact runner binary):
+- [OptionsGTK.cmake](https://github.com/WebKit/WebKit/blob/main/Source/cmake/OptionsGTK.cmake) enables WEBDRIVER_WHEEL_INTERACTIONS.
+- [Session.cpp](https://github.com/WebKit/WebKit/blob/main/Source/WebDriver/Session.cpp) forwards Wheel/Scroll with Element origin and node handle.
+- [WebAutomationSessionGtk.cpp](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/Automation/gtk/WebAutomationSessionGtk.cpp) maps wheel interaction to GTK wheel events.
+
+键盘方案已真实失败：焦点与发送协议通过，但滚动未归零。改为官方协议滚轮，
+元素中心零偏移不是猜测屏幕坐标；每步必须下降、最多 12 步，异常不重放。
+上游源码支持不等于当前 runner 成功，仍需完整真实 GUI 验收。
