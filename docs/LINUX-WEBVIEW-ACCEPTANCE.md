@@ -34,3 +34,9 @@ The dot cloud has no WebKit development library, WebKitWebDriver or Xvfb, so onl
 仅验证三种合成缓存态：未知归属、未完成和冲突。真实输入路径/点击按钮，核对固定状态文案和不授权删除边界；换路径使旧结论消失，清除使结果和输入归零。前后全目录成员、SHA256、inode/owner/mode/nlink/size/mtime/ctime 不变，atime 可因读取改变。新建临时 HOME/XDG 只是测试数据分离，不声称安全沙盒。合成文件内容金丝雀不得出现在页面或上传日志；不上传缓存、不运行 Qoder。
 
 CI 安装官方 GTK/WebKit2GTK 4.1、匹配原生 driver 和 Xvfb，固定 crates.io driver 版本；日志与响应有界，步骤限时。禁止禁用 WebKit sandbox、修改 sysctl/AppArmor 或绕过 namespace 限制；启动失败必须红灯，不跳过成绿。发布依赖此门禁。当前 dot 云端缺 WebKit/Xvfb，离线测试不是 Linux GUI 成功证据，必须等待 CI 实跑。完整真实缓存已有 CLI 验收但不包含在本轮 GUI 范围，也不声称 Linux 安装包生命周期已验收。
+
+### Failure diagnostics / 失败定位
+
+Failures retain a fixed phase and sanitized failure code. Before closing an established session, standard read-only WebDriver body-text and page-source endpoints capture bounded diagnostic strings (at most 64 KiB each, subject to the existing 1 MiB response cap). The complete bounded response is checked for the synthetic private-content canary before any truncation; matching evidence is suppressed. No screenshot/JavaScript or direct IPC is used, no raw exception messages are retained, and diagnostics cannot turn a failure green. Initial CI showed an actual application launch with AT-SPI/DRI3 warnings but no confirmed sandbox denial; this diagnostic increment does not guess at or disable rendering/security settings.
+
+失败证据新增固定阶段及脱敏错误码；关闭会话前仅通过标准只读 WebDriver 读取页面文本和源码，各最多保留 64 KiB，并在截断前对完整有界响应检查内容金丝雀，命中即抑制。没有 JavaScript、直接 IPC、截图或原始异常消息，不会把失败变成成功。首次 CI 已启动真实应用，仅有 AT-SPI/DRI3 警告，未证实 sandbox 拒绝；本次只补定位，不猜测修改图形或安全设置。

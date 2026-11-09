@@ -98,6 +98,36 @@ class Tests(unittest.TestCase):
             self.assertEqual([r['state'] for r in records],list(subject.LABELS))
             with self.assertRaises(subject.Failure):subject.exercise(Fake(paths,True),paths,root,[])
 
+    def test_failure_dom_is_bounded_and_canary_checked_before_truncation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            driver=Mock();driver.session='session'
+            driver.text.return_value='visible application text'
+            driver.command.return_value='x'*70000 + subject.CANARY
+            subject.capture_failure_dom(driver,Path(tmp))
+            report=json.loads((Path(tmp)/'failure-dom.json').read_text())
+            self.assertEqual(report['body']['text'],'visible application text')
+            self.assertEqual(report['source']['state'],'private_content_suppressed')
+            driver.command.assert_called_once_with('GET','/source')
+            driver.command.return_value='x'*70000
+            subject.capture_failure_dom(driver,Path(tmp))
+            report=json.loads((Path(tmp)/'failure-dom.json').read_text())
+            self.assertTrue(report['source']['truncated'])
+            self.assertEqual(len(report['source']['text']),65536)
+
+    def test_failure_codes_never_include_raw_exception_or_backend_messages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            driver=Mock();driver.session='session'
+            driver.text.side_effect=ValueError('SECRET private message')
+            driver.command.side_effect=subject.Failure('SECRET backend error')
+            subject.capture_failure_dom(driver,Path(tmp))
+            text=(Path(tmp)/'failure-dom.json').read_text()
+            self.assertNotIn('SECRET',text)
+            self.assertIn('unexpected_harness_error',text)
+            self.assertEqual(subject.failure_code(subject.Failure('ui_wait_expired')),'ui_wait_expired')
+        driver=Mock();driver.session=None
+        with tempfile.TemporaryDirectory() as tmp:
+            subject.capture_failure_dom(driver,Path(tmp));driver.text.assert_not_called();driver.command.assert_not_called()
+
     def test_oversize_or_symlink_fixture_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);subject.fixtures(root)

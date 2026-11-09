@@ -120,16 +120,23 @@ def snapshot(root):
     return result
 
 
-def exercise(driver, paths, root, record):
+def exercise(driver, paths, root, record, phase=lambda value: None):
     tab = "//*[@role='tab' and @aria-label='Qoder 分发与校验']"
+    phase('wait_qoder_tab')
     driver.wait(lambda: len(driver.elements(tab)) == 1)
+    phase('click_qoder_tab')
     driver.click(tab)
     before = snapshot(root)
     for kind, path in paths.items():
+        phase(kind + '_type_path')
         driver.type("//*[@id='qoder-cache']", str(path))
+        phase(kind + '_wait_invalidation')
         driver.wait(lambda: not driver.elements("//section[@aria-label='Qoder 缓存诊断结果']"))
+        phase(kind + '_click_inspect')
         driver.click("//button[text()='只读诊断 Qoder 缓存']")
+        phase(kind + '_wait_result')
         driver.wait(lambda: len(driver.elements("//section[@aria-label='Qoder 缓存诊断结果']")) == 1)
+        phase(kind + '_assert_result_and_zero_write')
         text = driver.text("//section[@aria-label='Qoder 缓存诊断结果']")
         if LABELS[kind] not in text or '本报告不授权删除' not in text:
             raise Failure('unexpected_cache_state')
@@ -138,11 +145,49 @@ def exercise(driver, paths, root, record):
         if before != snapshot(root):
             raise Failure('cache_fixture_changed')
         record.append({'state': kind, 'real_webview_click_and_ipc': True, 'unchanged_bytes_metadata_members': True})
+    phase('clear_and_assert')
     driver.click("//button[text()='清除 Qoder 选择与结果']")
     driver.wait(lambda: not driver.elements("//section[@aria-label='Qoder 缓存诊断结果']"))
     value = driver.command('GET', '/element/' + driver.one("//*[@id='qoder-cache']") + '/property/value')
     if value != '' or before != snapshot(root):
         raise Failure('clear_or_final_zero_write_failed')
+
+
+def failure_code(error):
+    if isinstance(error, Failure):
+        allowed = {'driver_redirect_forbidden', 'forbidden_driver_endpoint', 'driver_response_limit',
+                   'webdriver_command_failed', 'no_session', 'missing_or_ambiguous_control', 'ui_wait_expired',
+                   'unsafe_fixture', 'fixture_size_changed', 'unexpected_cache_state',
+                   'private_fixture_content_exposed', 'cache_fixture_changed',
+                   'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready'}
+        return str(error) if str(error) in allowed else 'harness_failure'
+    if isinstance(error, urllib.error.HTTPError):
+        return 'webdriver_http_' + str(error.code) if 100 <= error.code <= 599 else 'webdriver_http_error'
+    if isinstance(error, urllib.error.URLError): return 'webdriver_transport_error'
+    if isinstance(error, TimeoutError): return 'webdriver_timeout'
+    return 'unexpected_harness_error'
+
+
+def capture_failure_dom(driver, evidence):
+    # Read-only standard WebDriver endpoints, never executeScript. Inspect the
+    # full bounded response for the canary BEFORE truncating retained evidence.
+    report = {}
+    if not driver.session:
+        report['session'] = 'unavailable'
+    else:
+        for name, read in [('body', lambda: driver.text('//body')), ('source', lambda: driver.command('GET', '/source'))]:
+            try:
+                value = read()
+                if not isinstance(value, str): raise Failure('harness_failure')
+                encoded = value.encode('utf-8')
+                if CANARY in value:
+                    report[name] = {'state': 'private_content_suppressed'}
+                else:
+                    report[name] = {'state': 'captured', 'truncated': len(encoded) > 65536,
+                                    'text': encoded[:65536].decode('utf-8', errors='ignore')}
+            except Exception as error:
+                report[name] = {'state': 'unavailable', 'code': failure_code(error)}
+    (evidence / 'failure-dom.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
 
 
 def capture_log(stream, output):
@@ -172,10 +217,13 @@ def guarded_run(application, driver_binary, native_driver, evidence):
         directory = home / name; directory.mkdir(mode=0o700); env[key] = str(directory)
     client = Driver(); process = None; records = []; passed = False
     log = bytearray(); logger = None
+    diagnostic = {'phase': 'start_driver', 'failure_code': None}
+    def phase(value): diagnostic['phase'] = value
     try:
         process = subprocess.Popen([str(driver_binary), '--native-driver', str(native_driver), '--native-host', '127.0.0.1'], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
         logger = threading.Thread(target=capture_log, args=(process.stdout, log), daemon=True)
         logger.start()
+        phase('driver_readiness')
         # A bounded startup probe only; session/command failures never skip.
         deadline = time.monotonic() + 15
         while True:
@@ -186,10 +234,16 @@ def guarded_run(application, driver_binary, native_driver, evidence):
             except (urllib.error.URLError, ConnectionError):
                 if time.monotonic() > deadline: raise Failure('driver_not_ready') from None
                 time.sleep(0.2)
+        phase('create_session')
         session = client.request('POST', '/session', {'capabilities': {'alwaysMatch': {'browserName': 'wry', 'tauri:options': {'application': str(application)}}}})
         client.session = session['sessionId']
-        exercise(client, paths, fixture_root, records)
+        exercise(client, paths, fixture_root, records, phase)
+        phase('acceptance_complete')
         passed = True
+    except Exception as error:
+        diagnostic['failure_code'] = failure_code(error)
+        capture_failure_dom(client, evidence)
+        raise
     finally:
         if client.session:
             try: client.command('DELETE', '')
@@ -207,7 +261,7 @@ def guarded_run(application, driver_binary, native_driver, evidence):
         if CANARY.encode() in retained:
             retained = b'Synthetic private content suppressed.\n'; passed = False
         (evidence / 'driver.log').write_bytes(retained)
-        (evidence / 'result.json').write_text(json.dumps({'passed': passed, 'checks': records, 'synthetic_partial_states_only': True, 'complete_cache_gui_not_tested': True, 'qoder_executed': False, 'sandbox_overrides': False}, indent=2))
+        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'synthetic_partial_states_only': True, 'complete_cache_gui_not_tested': True, 'qoder_executed': False, 'sandbox_overrides': False}, indent=2))
     if not passed:
         raise Failure('acceptance_not_confirmed')
 
