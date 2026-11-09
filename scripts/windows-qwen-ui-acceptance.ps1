@@ -88,6 +88,16 @@ function Assert-QwenDocument([string]$settings, [bool]$enabled) {
         $doc.general.other -ne 'preserve-me' -or $doc.security.Count -ne 1 -or
         $doc.security.token -ne 'SYNTHETIC-NOT-A-CREDENTIAL') { throw 'Wrong Qwen settings semantics' }
 }
+function Check-QwenRecoveryObservation([string]$fixture, [string]$label, [string]$stage) {
+    $before = @(Get-ChildItem -LiteralPath $fixture -Force | Sort-Object Name | ForEach-Object { "$($_.Name):$((Get-FileHash -LiteralPath $_.FullName).Hash)" }) | ConvertTo-Json -Compress
+    Click-Qwen '只读检查 Vim 恢复状态'
+    Wait-QwenText $label
+    $after = @(Get-ChildItem -LiteralPath $fixture -Force | Sort-Object Name | ForEach-Object { "$($_.Name):$((Get-FileHash -LiteralPath $_.FullName).Hash)" }) | ConvertTo-Json -Compress
+    if ($before -ne $after) { throw 'Read-only recovery observation changed fixture files' }
+    Assert-QwenNoConfirmation
+    Save-QwenEvidence $stage
+    Record $stage @{ readOnly = $true; noAuthorization = $true }
+}
 function Check-QwenLifecycle {
     $fixture = Join-Path $homeDir 'Qwen 合成 配置'
     New-Item -ItemType Directory -Path $fixture | Out-Null
@@ -101,6 +111,7 @@ function Check-QwenLifecycle {
     $originalHash = (Get-FileHash -LiteralPath $settings).Hash
     $manifestHash = (Get-FileHash -LiteralPath $manifest).Hash
     Open-QwenFixture $settings $manifest
+    Check-QwenRecoveryObservation $fixture '未发现所有权记录；不代表配置从未被修改。' 'qwen-recovery-no-receipt'
     Enable-QwenVim
     Click-Qwen '预览 Vim 变更'
     $null = Wait-QwenControl '确认应用 Vim 变更' ([Windows.Automation.ControlType]::Button)
@@ -159,6 +170,8 @@ function Check-QwenLifecycle {
     Save-QwenEvidence 'qwen-ui-apply'
     Record 'qwen-ui-apply' @{ fieldEnabled = $true; unrelatedFieldsPreserved = $true; receiptCreated = $true }
 
+    Check-QwenRecoveryObservation $fixture '观察到可撤销的受管字段；尚未执行撤销。' 'qwen-recovery-restore-field'
+
     # Close/relaunch the actual installed app: recovery must not depend on UI memory.
     Stop-App
     Check-Gui 'qwen-owned-restart' -KeepOpen
@@ -185,6 +198,11 @@ function Check-QwenLifecycle {
     Assert-QwenHash $manifest $manifestHash
     Save-QwenEvidence 'qwen-restore-conflict'
     Record 'qwen-restore-conflict' @{ externalEditPreserved = $true; receiptPreserved = $true }
+
+    Check-QwenRecoveryObservation $fixture '受管字段存在冲突，当前观察不支持撤销。' 'qwen-recovery-conflict'
+    [IO.File]::WriteAllText($settings, $original)
+    Check-QwenRecoveryObservation $fixture '字段处于原状态，仅待清理所有权记录；尚未清理。' 'qwen-recovery-cleanup-receipt'
+    if (-not (Test-Path -LiteralPath $receipt)) { throw 'Observation removed receipt' }
 
     # Only the isolated fixture is reset to its exact applied image; no real user repair.
     [IO.File]::WriteAllText($settings, $applied)

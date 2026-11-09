@@ -47,7 +47,15 @@ restoration. Unsafe, malformed or differently bound receipts remain errors.
 No raw receipt, digest, path, arbitrary key or configuration value is returned.
 This is a best-effort observation, not a restore token, permission check or atomic
 snapshot: a concurrent change can invalidate it, and restore still revalidates.
-The desktop restoration confirmation is unchanged; this new command is CLI-only.
+The desktop “只读检查 Vim 恢复状态” button now exposes the same observation through
+native IPC with a strict fixed-field response projection. `no_receipt` does not
+prove the configuration was never changed. No observation authorizes restore or
+cleans a receipt: the separate restore confirmation and core revalidation remain.
+Starting a diagnosis clears pending apply/restore confirmations; path changes,
+clear/cancel, target changes and unmount discard old results. Cancelling discards
+the response, not the filesystem read; other operations remain blocked until it
+settles. Read-only diagnostics do not lock path inputs. Browser/demo mode never
+invokes this inspection. Raw errors and backend-provided prose are not rendered.
 
 Atomic replacement preserves Unix mode and Windows destination ACL; Linux rejects
 extended POSIX ACLs, special mode bits and owner/group mismatches rather than
@@ -95,5 +103,11 @@ authentication, effective settings and GUI acceptance remain outstanding.
 查看恢复状态。该 CLI 命令不创建/获取锁、不初始化目录、不写文件，只返回固定
 状态：无日志、可恢复字段、只需清理日志或检测到冲突。异常/不安全或路径绑定
 不符的日志仍报错，不返回日志内容、摘要哈希、路径或配置值。预览只是尽力保持
-一致的读取，不代表具备写权限或保证稍后能成功；恢复仍重新校验。桌面恢复确认
-流程不变，本次新增入口仅在 CLI。
+一致的读取，不代表具备写权限或保证稍后能成功；恢复仍重新校验。
+
+桌面“只读检查 Vim 恢复状态”现通过原生 IPC 显示同一观察，严格校验状态与布尔值，
+只保留固定字段，不渲染后端说明、原始错误或动态内容。“无记录”不代表从未修改；
+“仅清理记录”可能是原本从未应用，不自动删除记录。撤销仍需单独确认和后端复查。
+诊断开始时清除待确认应用/撤销；路径、目标值、清除、取消、卸载界面使旧响应失效。
+取消仅丢弃结果，不中止读取，读取结束前其他操作仍互斥；只读期间路径可编辑。
+浏览器与演示模式不触发此读取。

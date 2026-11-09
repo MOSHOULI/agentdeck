@@ -42,6 +42,20 @@ pub async fn preview_qwen_vim(
     .map_err(|_| "Qwen 预览未完成。".to_string())?
 }
 
+/// Observation only: does not acquire a lock or authorize a later restore.
+#[tauri::command]
+pub async fn inspect_qwen_vim_recovery(
+    settings_path: String,
+    runtime_manifest: String,
+) -> Result<qwen::owned::RecoveryPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        qwen::owned::recovery_preview(Path::new(&settings_path), Path::new(&runtime_manifest))
+            .map_err(edit_error)
+    })
+    .await
+    .map_err(|_| "Qwen 恢复诊断未完成。".to_string())?
+}
+
 #[tauri::command]
 pub async fn apply_qwen_vim(
     settings_path: String,
@@ -228,6 +242,95 @@ mod tests {
             assert_eq!(value["changed"], true);
             assert!(restore_qwen_vim(s.clone(), m.clone()).await.is_err());
         });
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(any(
+        windows,
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    ))]
+    #[test]
+    fn native_recovery_observes_all_states_without_writes() {
+        use qwen::owned::RecoveryState;
+        let root = std::env::temp_dir().join(format!(
+            "qwen-recovery-ipc-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let settings = root.join("settings.json");
+        let manifest = root.join("package.json");
+        let receipt = root.join(".agentdeck-qwen-vim.json");
+        let original = br#"{"$version":4,"general":{"vimMode":false},"unrelated":"SECRET"}"#;
+        std::fs::write(&settings, original).unwrap();
+        std::fs::write(
+            &manifest,
+            br#"{"name":"@qwen-code/qwen-code","version":"0.27.0"}"#,
+        )
+        .unwrap();
+        let snapshot = || -> std::collections::BTreeMap<_, _> {
+            std::fs::read_dir(&root)
+                .unwrap()
+                .map(|entry| {
+                    let entry = entry.unwrap();
+                    (entry.file_name(), std::fs::read(entry.path()).unwrap())
+                })
+                .collect()
+        };
+        let observe = |expected| {
+            let before = snapshot();
+            let report = tauri::async_runtime::block_on(inspect_qwen_vim_recovery(
+                settings.to_string_lossy().into_owned(),
+                manifest.to_string_lossy().into_owned(),
+            ))
+            .unwrap();
+            assert_eq!(report.state, expected);
+            assert_eq!(
+                report.changes_settings,
+                expected == RecoveryState::RestoreField
+            );
+            let serialized = serde_json::to_string(&report).unwrap();
+            assert!(!serialized.contains("SECRET"));
+            assert!(!serialized.contains("digest"));
+            assert!(!serialized.contains(&root.to_string_lossy().to_string()));
+            assert_eq!(snapshot(), before);
+        };
+        observe(RecoveryState::NoReceipt);
+        assert_eq!(snapshot().len(), 2); // No lock, receipt, or initialization.
+        let preview = qwen::owned::preview(&settings, &manifest, true).unwrap();
+        qwen::owned::apply(&settings, &manifest, true, &preview.token).unwrap();
+        observe(RecoveryState::RestoreField);
+        std::fs::write(
+            &settings,
+            br#"{"$version":4,"general":{"vimMode":false},"unrelated":"SECRET","external":true}"#,
+        )
+        .unwrap();
+        observe(RecoveryState::Conflict);
+        std::fs::write(&settings, original).unwrap();
+        observe(RecoveryState::CleanupReceipt);
+        assert!(receipt.exists()); // Observation must never clean the receipt.
+        std::fs::write(&receipt, b"SECRET invalid receipt").unwrap();
+        let before = snapshot();
+        let error = tauri::async_runtime::block_on(inspect_qwen_vim_recovery(
+            settings.to_string_lossy().into_owned(),
+            manifest.to_string_lossy().into_owned(),
+        ))
+        .unwrap_err();
+        assert!(!error.contains("SECRET"));
+        assert_eq!(snapshot(), before);
+        assert!(
+            tauri::async_runtime::block_on(inspect_qwen_vim_recovery(
+                "SECRET/settings.json".into(),
+                "SECRET/package.json".into()
+            ))
+            .is_err()
+        );
+        assert_eq!(snapshot(), before);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

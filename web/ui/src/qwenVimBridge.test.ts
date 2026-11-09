@@ -44,3 +44,25 @@ describe('Qwen owned setting bridge', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 });
+
+describe('Qwen read-only recovery bridge', () => {
+  it.each(['no_receipt', 'restore_field', 'cleanup_receipt', 'conflict'])('projects %s without dynamic data', async state => {
+    vi.mocked(invoke).mockResolvedValue({ field: 'general.vimMode', state, changes_settings: state === 'restore_field', limitations: 'SECRET', path: 'SECRET', digest: 'SECRET' });
+    expect(await bridge.inspectQwenVimRecovery('/settings.json', '/package.json')).toEqual({ field: 'general.vimMode', state, changesSettings: state === 'restore_field' });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('inspect_qwen_vim_recovery', { settingsPath: '/settings.json', runtimeManifest: '/package.json' });
+  });
+  it.each([null, {}, { field: 'SECRET', state: 'no_receipt', changes_settings: false }, { field: 'general.vimMode', state: 'SECRET', changes_settings: false }, { field: 'general.vimMode', state: 'conflict', changes_settings: true }, { field: 'general.vimMode', state: 'restore_field', changes_settings: false }, { field: 'general.vimMode', state: 'no_receipt', changes_settings: 'false' }])('rejects incompatible recovery responses', async response => {
+    vi.mocked(invoke).mockResolvedValue(response);
+    await expect(bridge.inspectQwenVimRecovery('/settings.json', '/package.json')).rejects.toThrow('响应不兼容');
+  });
+  it.each(['', '\u0000bad', 'x'.repeat(4097)])('rejects invalid path before reading', async path => {
+    await expect(bridge.inspectQwenVimRecovery(path, '/package.json')).rejects.toThrow();
+    await expect(bridge.inspectQwenVimRecovery('/settings.json', path)).rejects.toThrow();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+  it.each(['/', '/?demo=1'])('does not read outside native mode', async url => {
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__; window.history.replaceState({}, '', url);
+    await expect(bridge.inspectQwenVimRecovery('/settings.json', '/package.json')).rejects.toThrow();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});
