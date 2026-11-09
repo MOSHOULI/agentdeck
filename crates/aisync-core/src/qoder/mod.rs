@@ -2,6 +2,7 @@
 //! No effective-config claim, automatic discovery, execution, BYOK editing or writes.
 pub mod distribution;
 pub mod staging;
+pub mod unpacking;
 pub use crate::inspection::types::{InspectionIssue, InspectionLimits};
 use crate::inspection::{
     parse,
