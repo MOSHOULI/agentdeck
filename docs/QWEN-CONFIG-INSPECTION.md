@@ -24,7 +24,7 @@ Settings can be layered across defaults, system defaults, user, project, system 
 
 退出码 0 只表示生成了报告，缺失或不支持也可产生报告。链接、重解析点、特殊文件及过大输入会被拒绝；未审查平台关闭读取。文件检查不能完全消除同权限进程的并发替换竞态，读取也可能更新访问时间。
 
-此摘要不验证登录、实际安装、恢复资格或应用安全性，现有写入能力保持关闭。后续恢复能力需要记录字段归属、原值、外部漂移，并明确确认后才能应用，不能整文件覆盖其他管理器或用户的设置。
+此摘要不验证登录、实际安装、恢复资格或应用安全性，也不授权写入。同页另有独立的 [Vim 单字段管理](QWEN-OWNED-SETTING.md)，需要单独预览和确认；通用配置编辑仍未开放。
 
 ## Audited official sources / 已核查官方来源
 
@@ -39,8 +39,8 @@ All sources pinned to Qwen commit `6c3d5355de2be05b8d1ab61f4699f52c02c42068`, re
 
 The **Qwen 配置检查** workspace exposes the same narrow inspector without a shell. Enter explicit absolute `settings.json` and runtime `package.json` paths, then inspect. Both paths are required. Editing or clearing either selection invalidates pending results; repeated submissions cannot start another concurrent read. Clear discards results, not an already-running filesystem read. Paths are held only in component memory, including while switching workspaces, and are cleared on unmount or by the clear button. No path is persisted to storage.
 
-Only fixed section labels/statuses reach the view. Raw backend errors, configuration values, arbitrary keys and backend-provided explanatory text are not displayed. Browser-only use is unavailable unless `?demo=1` is explicitly selected; that mode returns labeled synthetic data and never invokes the native reader. This workspace does not add editing, backup or recovery. The application outside this operation may still maintain its own data.
+Only fixed section labels/statuses reach the summary view. Raw backend errors, configuration values, arbitrary keys and backend-provided explanatory text are not displayed. Browser-only use is unavailable unless `?demo=1` is explicitly selected; that mode returns labeled synthetic data and never invokes the native reader. This summary operation does not edit, back up or restore files. A separate [owned Vim preference editor](QWEN-OWNED-SETTING.md) on the same page provides the narrowly scoped confirmed operation. The application outside this operation may still maintain its own data.
 
 桌面左侧的 **Qwen 配置检查** 使用同一只读检查器，无需终端。填写明确的 settings.json 和运行时 package.json 绝对路径后点击检查；两项均必填。修改或清除路径会作废尚未完成的结果；重复提交不会并发读取。清除不取消已发起的文件读取，只丢弃其结果。路径仅保存在组件内存中（切换工作区时仍保留），清除按钮或组件卸载后移除，不写入持久存储。
 
-界面只显示固定分区标签和状态，不显示后端原始错误、配置值、动态键或任意说明文本。普通浏览器无法读取文件；显式 `?demo=1` 仅返回标注清楚的合成数据。此工作区未增加编辑、备份或恢复功能；应用的其他操作仍可能维护自身数据。
+摘要只显示固定分区标签和状态，不显示后端原始错误、配置值、动态键或任意说明文本。普通浏览器无法读取文件；显式 `?demo=1` 仅返回标注清楚的合成数据。此摘要操作不编辑、备份或恢复配置；同页独立的 Vim 单字段管理需单独确认，详见上方链接。应用的其他操作仍可能维护自身数据。
