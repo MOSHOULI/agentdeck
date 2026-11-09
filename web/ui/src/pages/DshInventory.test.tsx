@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import * as bridge from '../bridge';
 import { dshDemoReport } from '../dshContract';
 import type { DshIssue } from '../dshContract';
@@ -34,7 +34,8 @@ describe('DSH inventory workspace', () => {
     submit();
     await screen.findByRole('region', { name: 'DSH 声明盘点结果' });
     expect(bridge.inspectDshProfile).toHaveBeenCalledExactlyOnceWith('/explicit/profile', null);
-    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(within(screen.getByRole('form', { name: 'DSH 盘点路径' })).getAllByRole('button')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: /安装|执行|下载/ })).not.toBeInTheDocument();
     expect(screen.getByText('全部关闭')).toBeInTheDocument();
     expect(screen.getAllByText('未知')).toHaveLength(3);
     expect(screen.getByText('未知 / 未知')).toBeInTheDocument();
@@ -60,6 +61,7 @@ describe('DSH inventory workspace', () => {
     fillProfile('/changed/profile');
     expect(screen.getByText(/路径已更改，旧结果已清除/)).toBeInTheDocument();
     await act(async () => { pending.resolve(result()); await pending.promise; });
+    expect(useWorkspaceActivityStore.getState().busy.dsh).toBe(false);
     expect(screen.queryByRole('region', { name: 'DSH 声明盘点结果' })).not.toBeInTheDocument();
     expect(useWorkspaceActivityStore.getState().busy.dsh).toBe(false);
     vi.mocked(bridge.inspectDshProfile).mockResolvedValue(result());
@@ -90,13 +92,14 @@ describe('DSH inventory workspace', () => {
     await act(async () => { pending.reject(new Error('old failure')); await pending.promise.catch(() => undefined); });
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
-  it('removes its activity owner on unmount and ignores late completion', async () => {
+  it('retains its activity owner through unmount until settlement and ignores late completion', async () => {
     const pending = deferred();
     vi.mocked(bridge.inspectDshProfile).mockReturnValue(pending.promise);
     const view = render(<StrictMode><DshInventory /></StrictMode>); fillProfile(); submit();
     view.unmount();
-    expect(useWorkspaceActivityStore.getState().busy.dsh).toBe(false);
+    expect(useWorkspaceActivityStore.getState().busy.dsh).toBe(true);
     await act(async () => { pending.resolve(result()); await pending.promise; });
+    expect(useWorkspaceActivityStore.getState().busy.dsh).toBe(false);
     expect(screen.queryByRole('region', { name: 'DSH 声明盘点结果' })).not.toBeInTheDocument();
   });
   it.each(['missing', 'corrupt', 'unreadable', 'unsupported'] as const)('keeps %s separate from installed state', async (status) => {

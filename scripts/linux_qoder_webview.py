@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import qoder_complete_fixtures as complete
+import dsh_distribution_smoke as dsh_pinned
 
 ELEMENT = 'element-6066-11e4-a52e-4f735466cecf'
 CANARY = 'QODER-SYNTHETIC-PRIVATE-CONTENT-NOT-FOR-UI'
@@ -246,6 +247,23 @@ def scope_fixtures(root):
     paths = {'user': user / 'settings.json', 'project_mcp': project / '.mcp.json'}
     write_private(paths['user'], ('// synthetic read-only fixture\n' + json.dumps(settings)).encode())
     write_private(paths['project_mcp'], json.dumps(mcp).encode())
+    return paths
+
+
+def dsh_fixtures(root, archive):
+    complete.file_digest(archive, dsh_pinned.SIZE, (dsh_pinned.SIZE, dsh_pinned.SHA256))
+    with os.fdopen(os.open(archive, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as source:
+        metadata = os.fstat(source.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_size != dsh_pinned.SIZE:
+            raise Failure('unsafe_fixture')
+        data = source.read(dsh_pinned.SIZE + 1)
+    dsh_pinned.validate_archive(data)
+    paths = {}
+    for kind in ('valid', 'corrupt'):
+        directory = root / kind; directory.mkdir(mode=0o700)
+        paths[kind] = directory / dsh_pinned.NAME
+        content = data if kind == 'valid' else CANARY.encode() + data[len(CANARY):]
+        write_private(paths[kind], content)
     return paths
 
 
@@ -499,6 +517,49 @@ def exercise_scopes(driver, paths, root, records, phase=lambda _: None):
     records.append({'scope': 'input_invalidation_and_clear', 'old_result_invalidated': True, 'zero_write': True})
 
 
+def exercise_dsh_root(driver, paths, root, records, phase=lambda _: None):
+    before = snapshot(root)
+    tab = "//*[@role='tab' and @aria-label='DSH 声明盘点']"
+    field = "//*[@id='dsh-root-archive']"
+    plan = "//section[@aria-label='DSH 根包计划结果']"
+    verified = "//section[@aria-label='DSH 根归档校验结果']"
+    alert = "//*[@role='alert' and starts-with(text(),'DSH 根包未确认。')]"
+    verify_button = "//button[text()='只读校验 DSH 根归档']"
+    phase('dsh_root_plan_and_valid_archive')
+    driver.wait(lambda: len(driver.elements(tab)) == 1); driver.click(tab)
+    driver.wait(lambda: driver.enabled(field)); driver.type(field, str(paths['valid']))
+    driver.wait(lambda: driver.value(field) == str(paths['valid']))
+    driver.click("//button[text()='查看 DSH 根包计划']")
+    driver.wait(lambda: len(driver.elements(plan)) == 1)
+    text = driver.text(plan)
+    if any(value not in text for value in (dsh_pinned.VERSION, dsh_pinned.NAME, dsh_pinned.URL, dsh_pinned.SHA256, dsh_pinned.SRI, '预发布', '90 个直接依赖，其中 8 项范围', '未验证独立签名')):
+        raise Failure('dsh_gui_plan_invalid')
+    driver.wait(lambda: driver.enabled(verify_button)); driver.click(verify_button)
+    driver.wait(lambda: len(driver.elements(verified)) == 1)
+    text = driver.text(verified)
+    if driver.elements(alert) or any(value not in text for value in ('根归档与固定长度、SHA256 和 SHA512 一致。', '已读取字节：25197', '依赖未解析、未安装、未运行、平台兼容性未验证')):
+        raise Failure('dsh_gui_success_invalid')
+    if snapshot(root) != before: raise Failure('dsh_gui_fixture_changed')
+    records.append({'state': 'official_root_verified', 'real_gui_plan_and_verify': True, 'zero_write': True})
+    phase('dsh_root_corrupt_archive_rejected')
+    driver.type(field, str(paths['corrupt']))
+    driver.wait(lambda: driver.value(field) == str(paths['corrupt']) and not driver.elements(verified) and not driver.elements(plan))
+    driver.wait(lambda: driver.enabled(verify_button)); driver.click(verify_button)
+    driver.wait(lambda: len(driver.elements(alert)) == 1)
+    if driver.elements(verified) or driver.elements(plan): raise Failure('dsh_gui_corrupt_accepted')
+    for value in (driver.text('//body'), driver.command('GET', '/source')):
+        if not isinstance(value, str): raise Failure('dsh_gui_success_invalid')
+        if CANARY in value: raise Failure('private_fixture_content_exposed')
+    if snapshot(root) != before: raise Failure('dsh_gui_fixture_changed')
+    records.append({'state': 'corrupt_root_rejected', 'old_success_invalidated': True, 'no_secret_rendered': True, 'zero_write': True})
+    phase('dsh_root_clear')
+    driver.wait(lambda: driver.enabled("//button[text()='清除 DSH 根包选择与结果']"))
+    driver.click("//button[text()='清除 DSH 根包选择与结果']")
+    driver.wait(lambda: driver.value(field) == '' and not driver.elements(alert) and not driver.elements(plan) and not driver.elements(verified))
+    if snapshot(root) != before: raise Failure('dsh_gui_fixture_changed')
+    records.append({'state': 'cleared', 'zero_write': True})
+
+
 def failure_code(error):
     if isinstance(error, complete.PreparationFailure): return 'complete_cache_preparation_failed'
     if isinstance(error, Failure):
@@ -509,7 +570,7 @@ def failure_code(error):
                    'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready', 'startup_registry_not_idle', 'incomplete_gui_coverage', 'desktop_write_output_invalid', 'desktop_destination_not_new',
                    'desktop_confirmation_not_invalidated', 'desktop_confirmation_details_mismatch', 'desktop_unconfirmed_write',
                    'desktop_write_not_confirmed', 'desktop_write_modified_source', 'desktop_diagnosis_or_zero_write_failed',
-                   'desktop_existing_destination_not_rejected', 'desktop_existing_destination_changed', 'desktop_final_zero_write_failed', 'scope_summary_invalid', 'scope_fixture_changed', 'desktop_attempt_target_changed', 'desktop_attempt_fill_not_readonly', 'desktop_attempt_recovery_invalid', 'workspace_scroll_limit', 'workspace_scroll_invalid', 'workspace_scroll_changed_inputs'}
+                   'desktop_existing_destination_not_rejected', 'desktop_existing_destination_changed', 'desktop_final_zero_write_failed', 'dsh_gui_plan_invalid', 'dsh_gui_success_invalid', 'dsh_gui_corrupt_accepted', 'dsh_gui_fixture_changed', 'scope_summary_invalid', 'scope_fixture_changed', 'desktop_attempt_target_changed', 'desktop_attempt_fill_not_readonly', 'desktop_attempt_recovery_invalid', 'workspace_scroll_limit', 'workspace_scroll_invalid', 'workspace_scroll_changed_inputs'}
         return str(error) if str(error) in allowed else 'harness_failure'
     if isinstance(error, (ConnectionError, http.client.HTTPException)): return 'webdriver_transport_error'
     if isinstance(error, TimeoutError): return 'webdriver_timeout'
@@ -620,13 +681,13 @@ def capture_log(stream, output):
         output.extend(chunk); kept += len(chunk)
 
 
-def guarded_run(application, driver_binary, native_driver, evidence, cli=None, archive=None):
+def guarded_run(application, driver_binary, native_driver, evidence, cli=None, archive=None, dsh_archive=None):
     if (os.environ.get('GITHUB_ACTIONS'), os.environ.get('RUNNER_ENVIRONMENT'), os.environ.get('RUNNER_OS')) != ('true', 'github-hosted', 'Linux'):
         raise Failure('requires_hosted_linux_ci')
     for name in ('WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS', 'WEBKIT_FORCE_SANDBOX'):
         if name in os.environ:
             raise Failure('sandbox_override_forbidden')
-    if cli is None or archive is None: raise Failure('complete_cache_inputs_required')
+    if cli is None or archive is None or dsh_archive is None: raise Failure('complete_cache_inputs_required')
     for binary in (application, driver_binary, native_driver, cli):
         if not binary.is_absolute() or not binary.is_file() or not os.access(binary, os.X_OK):
             raise Failure('missing_explicit_executable')
@@ -638,7 +699,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
     env = dict(os.environ, HOME=str(home))
     for key, name in [('XDG_CONFIG_HOME', 'config'), ('XDG_CACHE_HOME', 'cache'), ('XDG_DATA_HOME', 'data'), ('XDG_STATE_HOME', 'state'), ('XDG_RUNTIME_DIR', 'runtime')]:
         directory = home / name; directory.mkdir(mode=0o700); env[key] = str(directory)
-    client = Driver(); process = None; records = []; write_records = []; scope_records = []; passed = False
+    client = Driver(); process = None; records = []; write_records = []; scope_records = []; dsh_records = []; passed = False
     log = bytearray(); logger = None
     diagnostic = {'phase': 'start_driver', 'failure_code': None}
     def phase(value): diagnostic['phase'] = value
@@ -677,6 +738,12 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         exercise_scopes(client, scope_paths, scope_root, scope_records, phase)
         if len(scope_records) != 2 or snapshot(fixture_root, exact) != readonly_before:
             raise Failure('incomplete_gui_coverage')
+        dsh_source_before = snapshot(dsh_archive.parent)
+        dsh_root = temporary / 'dsh-fixtures'; dsh_root.mkdir(mode=0o700)
+        dsh_paths = dsh_fixtures(dsh_root, dsh_archive)
+        exercise_dsh_root(client, dsh_paths, dsh_root, dsh_records, phase)
+        if len(dsh_records) != 3 or snapshot(dsh_archive.parent) != dsh_source_before:
+            raise Failure('incomplete_gui_coverage')
         phase('acceptance_complete')
         passed = True
     except Exception as error:
@@ -705,17 +772,17 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         if CANARY.encode() in retained:
             retained = b'Synthetic private content suppressed.\n'; passed = False
         (evidence / 'driver.log').write_bytes(retained)
-        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'desktop_write_checks': write_records, 'scope_checks': scope_records, 'synthetic_scope_gui_verified': passed and len(scope_records)==2, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_directory_mode': '0700'}, indent=2))
+        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'desktop_write_checks': write_records, 'scope_checks': scope_records, 'dsh_root_checks': dsh_records, 'dsh_root_gui_verified': passed and len(dsh_records)==3, 'dsh_executed': False, 'synthetic_scope_gui_verified': passed and len(scope_records)==2, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_directory_mode': '0700'}, indent=2))
     if not passed:
         raise Failure('acceptance_not_confirmed')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    for name in ('application', 'driver', 'native-driver', 'evidence', 'cli', 'archive'):
+    for name in ('application', 'driver', 'native-driver', 'evidence', 'cli', 'archive', 'dsh-archive'):
         parser.add_argument('--' + name, type=Path, required=True)
     args = parser.parse_args()
     try:
-        guarded_run(args.application, args.driver, args.native_driver, args.evidence, args.cli, args.archive)
+        guarded_run(args.application, args.driver, args.native_driver, args.evidence, args.cli, args.archive, args.dsh_archive)
     except Exception:
         # Do not dump backend bodies, fixture contents or arbitrary paths.
         print('Linux real WebView acceptance failed; inspect CI driver/platform evidence.', file=__import__('sys').stderr)

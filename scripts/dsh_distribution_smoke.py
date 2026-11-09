@@ -164,11 +164,16 @@ def validate_plan(plan):
         raise Failure('cli_plan_invalid')
 
 
-def smoke(directory, cli):
+def fetch_package(directory):
     directory.mkdir(mode=0o700, exist_ok=False)  # No cache trust or reuse.
     raw = fetch(META_URL, 262144); validate_metadata(raw)
     data = fetch(URL, SIZE); validate_archive(data)
     target = directory / NAME; write_new(target, data)
+    return raw, data, target
+
+
+def smoke(directory, cli):
+    raw, data, target = fetch_package(directory)
     # Contract checks below are completed against the real CLI, never DSH.
     planned = run_cli(cli, ['distribution-plan'], directory)
     if planned.returncode != 0: raise Failure('cli_plan_failed')
