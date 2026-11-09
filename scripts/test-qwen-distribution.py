@@ -21,6 +21,11 @@ VERSION = '0.27.0'
 URL = 'https://registry.npmjs.org/@qwen-code/qwen-code/-/qwen-code-0.27.0.tgz'
 INTEGRITY = 'efZt0LUm/raGUjR/SNN6pp8cpuNHnmE0hQvcvXzWHtVX9oVtDDgukq2IZNwYDErFYqHRj1xq2NQ5Jjt2SHUr/Q=='
 
+# Reviewed artifact: 1,400 entries / 156,300,038 bytes / largest file 12,142,871.
+MAX_ARCHIVE_ENTRIES = 2000
+MAX_UNPACKED_BYTES = 256 * 1024 * 1024
+MAX_FILE_BYTES = 32 * 1024 * 1024
+
 
 def verify_archive(path):
     with open(path, 'rb') as stream:
@@ -29,14 +34,30 @@ def verify_archive(path):
         raise ValueError('Pinned Qwen archive integrity mismatch')
 
 
+def bounded_members(archive):
+    # Do not call getmembers(): stop iteration as soon as a limit is exceeded.
+    # Validate the whole bounded inventory before creating extracted files.
+    members = []
+    total = 0
+    for member in archive:
+        if len(members) >= MAX_ARCHIVE_ENTRIES:
+            raise ValueError('Archive entry count exceeds limit')
+        parts = pathlib.PurePosixPath(member.name).parts
+        if not parts or parts[0] != 'package' or '..' in parts or not (member.isfile() or member.isdir()):
+            raise ValueError('Unexpected archive member')
+        if member.size < 0 or member.size > MAX_FILE_BYTES:
+            raise ValueError('Archive member size exceeds limit')
+        total += member.size
+        if total > MAX_UNPACKED_BYTES:
+            raise ValueError('Archive expanded size exceeds limit')
+        members.append(member)
+    return members
+
+
 def unpack(path, destination):
     verify_archive(path)
     with tarfile.open(path) as archive:
-        members = archive.getmembers()
-        for member in members:
-            parts = pathlib.PurePosixPath(member.name).parts
-            if not parts or parts[0] != 'package' or '..' in parts or not (member.isfile() or member.isdir()):
-                raise ValueError('Unexpected archive member')
+        members = bounded_members(archive)
         archive.extractall(destination, members=members, filter='data')
     package = destination / 'package'
     manifest = json.loads((package / 'package.json').read_text())

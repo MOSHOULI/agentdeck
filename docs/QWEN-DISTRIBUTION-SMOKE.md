@@ -68,3 +68,24 @@ candidates to verified installations and does not validate effective Vim mode.
 网络隔离**，不声称默认隔离模式已通过。没有登录、模型调用或读取用户配置。
 版本/帮助属于启动快速路径，不覆盖完整设置加载、交互界面、MCP、工具、认证或
 Vim 实际生效，也不会将目录候选自动标记为已验证安装。尚未发布安装包。
+
+## Archive resource limits / 解包资源限制
+
+After the unchanged pinned SHA-512 check, inventory validation stops at the first
+excessive entry instead of loading an unbounded member list: at most 2,000 entries,
+256 MiB summed declared expanded bytes, and 32 MiB per member (including declared
+directory payloads). Negative sizes are rejected. All inventory checks complete
+before extraction writes any file. The reviewed artifact contains 1,400 entries,
+156,300,038 expanded bytes and a largest file of 12,142,871 bytes. These bounds do
+not permit arbitrary archives or replace the integrity check, and are not a
+general defense against every tar parser or metadata attack. Offline regressions
+cover exact boundaries, one-over rejection, early iteration stop, rejection before
+extraction and integrity-before-parsing order. No official Agent execution or
+network-isolation behavior changes with this hardening.
+
+仍先校验原有固定 SHA-512，再逐条检查清单；最多 2,000 个条目、总声明展开大小
+256 MiB、单条目 32 MiB（目录若声明载荷也计入），负数拒绝。发现超限立即停止
+遍历，不先无限加载全部条目；完整清单通过前不写出解包文件。已核对固定官方包
+为 1,400 条、156,300,038 字节，最大文件 12,142,871 字节。本限制不开放任意包，
+不替代完整性校验，也不宣称覆盖所有 tar 解析器或元数据攻击。离线回归包含边界、
+超一拒绝、提前终止、写文件前拒绝及先校验哈希顺序；没有改变 Agent 执行或网络隔离。
