@@ -98,6 +98,24 @@ class Driver:
     def click(self, xpath):
         self.command('POST', '/element/' + self.one(xpath) + '/click', {})
 
+    def keyboard_scroll_workspace_top(self):
+        # Standard element Send Keys focuses this tabindex=-1 main. NULL alone
+        # first establishes focus without typing/clicking a child control.
+        element = self.one("//main[@id='workspace-content']")
+        path = '/element/' + element + '/value'
+        self.command('POST', path, {'text': '\ue000', 'value': ['\ue000']})
+        active = self.command('GET', '/element/active')
+        if not isinstance(active, dict) or active.get(ELEMENT) != element:
+            raise Failure('workspace_focus_not_confirmed')
+        keys = '\ue009\ue011\ue000'  # Control + Home, then explicit modifier release.
+        self.command('POST', path, {'text': keys, 'value': list(keys)})
+        def at_top():
+            value = self.command('GET', '/element/' + element + '/property/scrollTop')
+            if type(value) not in (int, float) or not 0 <= value <= 1_000_000:
+                raise Failure('workspace_scroll_invalid')
+            return value == 0
+        self.wait(at_top)
+
     def type(self, xpath, text):
         self.expected_input = text
         self.input_stage = 'locate_input'
@@ -361,6 +379,10 @@ def exercise_cache_writes(driver, archive, root, records, phase=lambda value: No
         records.append({'operation': operation + '_existing', 'rejected_without_overwrite': True})
     phase('desktop_clear_and_final_zero_write')
     before = snapshot(root, exact)
+    retained_inputs = [driver.value(path) for path in (source_input, destination_input, "//*[@id='qoder-cache']")]
+    driver.keyboard_scroll_workspace_top()
+    if retained_inputs != [driver.value(path) for path in (source_input, destination_input, "//*[@id='qoder-cache']")]:
+        raise Failure('workspace_scroll_changed_inputs')
     driver.wait(lambda: driver.enabled("//button[text()='清除 Qoder 选择与结果']"))
     driver.click("//button[text()='清除 Qoder 选择与结果']")
     driver.wait(lambda: not driver.elements(result) and not driver.elements(alert) and not driver.elements(read_result) and not driver.elements(dialog))
@@ -380,7 +402,7 @@ def failure_code(error):
                    'clear_or_final_zero_write_failed', 'driver_exited', 'driver_not_ready', 'startup_registry_not_idle', 'incomplete_gui_coverage', 'desktop_write_output_invalid', 'desktop_destination_not_new',
                    'desktop_confirmation_not_invalidated', 'desktop_confirmation_details_mismatch', 'desktop_unconfirmed_write',
                    'desktop_write_not_confirmed', 'desktop_write_modified_source', 'desktop_diagnosis_or_zero_write_failed',
-                   'desktop_existing_destination_not_rejected', 'desktop_existing_destination_changed', 'desktop_final_zero_write_failed'}
+                   'desktop_existing_destination_not_rejected', 'desktop_existing_destination_changed', 'desktop_final_zero_write_failed', 'workspace_focus_not_confirmed', 'workspace_scroll_invalid', 'workspace_scroll_changed_inputs'}
         return str(error) if str(error) in allowed else 'harness_failure'
     if isinstance(error, (ConnectionError, http.client.HTTPException)): return 'webdriver_transport_error'
     if isinstance(error, TimeoutError): return 'webdriver_timeout'

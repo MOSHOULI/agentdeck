@@ -297,6 +297,30 @@ class Tests(unittest.TestCase):
             self.assertNotIn('SECRET',json.dumps(info))
         self.assertNotIn('webdriver_error',subject.response_shape(b'{"value":null}'))
 
+    def test_workspace_keyboard_scroll_protocol_focus_release_and_no_replay(self):
+        driver=subject.Driver();driver.one=Mock(return_value='main')
+        driver.wait=lambda predicate: self.assertTrue(predicate())
+        driver.command=Mock(side_effect=[None,{subject.ELEMENT:'main'},None,0])
+        driver.keyboard_scroll_workspace_top()
+        self.assertEqual([call.args for call in driver.command.call_args_list],[
+            ('POST','/element/main/value',{'text':'\ue000','value':['\ue000']}),
+            ('GET','/element/active'),
+            ('POST','/element/main/value',{'text':'\ue009\ue011\ue000','value':['\ue009','\ue011','\ue000']}),
+            ('GET','/element/main/property/scrollTop')])
+        for active in [None,{}, {subject.ELEMENT:'input'}]:
+            driver.command=Mock(side_effect=[None,active])
+            with self.assertRaises(subject.Failure):driver.keyboard_scroll_workspace_top()
+            self.assertEqual(driver.command.call_count,2)
+        for value in [True,'0',None,-1,1000001,float('nan'),float('inf')]:
+            driver.command=Mock(side_effect=[None,{subject.ELEMENT:'main'},None,value])
+            with self.assertRaises(subject.Failure):driver.keyboard_scroll_workspace_top()
+        for failure_at in [0,2]:
+            outcomes=[None,{subject.ELEMENT:'main'},None,0]
+            outcomes[failure_at]=subject.Failure('driver_http_error')
+            driver.command=Mock(side_effect=outcomes)
+            with self.assertRaises(subject.Failure):driver.keyboard_scroll_workspace_top()
+            self.assertEqual(driver.command.call_count,failure_at+1)
+
     def test_clear_geometry_is_read_only_and_bounded(self):
         good={'x':-100,'y':0.5,'width':1000,'height':600,'SECRET':'discard'}
         driver=Mock();driver.one.return_value='element'
@@ -328,6 +352,7 @@ class Tests(unittest.TestCase):
         class Fake:
             def __init__(self, fault=None):
                 self.values={};self.operation='stage';self.dialog=False;self.result=False;self.alert=False;self.read=False;self.fault=fault;self.confirmed=0
+            def keyboard_scroll_workspace_top(self):pass
             def one(self,xpath):return 'element'
             def wait(self,predicate,seconds=20):
                 if not predicate():raise subject.Failure('ui_wait_expired')

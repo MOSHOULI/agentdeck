@@ -92,3 +92,25 @@ needed to establish the cause and validate any eventual fix.
 因此整体验收仍失败。滚动、遮挡或元素失效均未证实。新增诊断仅保留白名单
 错误类别、严格布尔值和有限范围几何，不保留原始错误消息；不重放失败点击，
 不注入 JS，继续保留全部门禁，待新一轮真实 GUI 结果。
+
+### Keyboard scroll candidate / 真实键盘滚动候选
+
+The diagnostic run established `element not interactable` for final Clear while
+its enabled/displayed values were true. This does not establish the exact layout
+cause. The next isolated run uses standard element Send Keys on the existing
+focusable `main#workspace-content` (`tabIndex=-1`): NULL first, verify the active
+WebDriver element is that main, then Control + Home + NULL to release modifiers.
+A read-only `scrollTop` poll must reach zero; all source/destination/cache input
+values must remain unchanged. Only then is the original Clear clicked once and
+all original clear/zero-write assertions run. No coordinate click, script
+injection, alternate Clear, or failed-click retry is used.
+
+Protocol basis (not proof of this runner's outcome):
+- [W3C Element Send Keys and keyboard codes](https://w3c.github.io/webdriver/#element-send-keys)
+- [Official WebKit Session.cpp](https://github.com/WebKit/WebKit/blob/main/Source/WebDriver/Session.cpp): `elementSendKeys` focuses the target before dispatch and rejects a target that cannot receive focus.
+- [Official WebKit GTK keyboard mapping](https://github.com/WebKit/WebKit/blob/main/Source/WebKit/UIProcess/Automation/gtk/WebAutomationSessionGtk.cpp): Control and Home map to GTK keyboard events.
+
+诊断已确认最终按钮为 `element not interactable`，尚不能确定底层布局原因。
+候选方案使用标准键盘输入聚焦原滚动容器，核验焦点后发送 Ctrl+Home 并释放修饰键；
+等待滚动位置归零且输入未变，再点击原清除按钮。离线协议测试不是此 GTK/WebView
+真实运行成功证明，仍须完整真实 GUI 门禁通过。
