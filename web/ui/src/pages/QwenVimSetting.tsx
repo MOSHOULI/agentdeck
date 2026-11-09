@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as bridge from '../bridge';
+import { useWorkspaceActivityStore } from '../stores/workspaceActivity';
 import type { QwenVimPreview, QwenRecovery, QwenRecoveryState } from '../qwenContract';
 const recoveryLabels: Record<QwenRecoveryState, string> = {
   no_receipt: '未发现所有权记录；不代表配置从未被修改。',
@@ -26,6 +27,8 @@ export function QwenVimSetting({ settings, manifest, inspecting, onActivity }: P
   const mounted = useRef(false);
   const mode = bridge.runtimeMode();
   const available = mode === 'native' && !!settings.trim() && !!manifest.trim();
+  const workspaceBusy = useWorkspaceActivityStore(state => state.busy.qwen);
+  const blocked = busy || inspecting || workspaceBusy || !available;
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; generation.current++; }; }, []);
   useEffect(() => { onActivity(busy, mutating); }, [busy, mutating, onActivity]);
   useEffect(() => {
@@ -33,9 +36,12 @@ export function QwenVimSetting({ settings, manifest, inspecting, onActivity }: P
   }, [settings, manifest]);
   const invalidate = () => { generation.current++; setPreview(null); setRecovery(null); setRestoreConfirm(false); setMessage(''); setError(false); };
   const run = async (action: 'preview' | 'apply' | 'restore' | 'recovery') => {
-    if (running.current || inspecting || !available || (action === 'apply' && (!preview || !preview.changes)) || (action === 'restore' && !restoreConfirm)) return;
+    if (running.current || inspecting || useWorkspaceActivityStore.getState().busy.qwen || !available || (action === 'apply' && (!preview || !preview.changes)) || (action === 'restore' && !restoreConfirm)) return;
     const selectedPreview = preview;
     const writes = action === 'apply' || action === 'restore';
+    // Keep the IPC owner through unmount; cancel and path changes only discard results.
+    const owner = Symbol(`qwen-vim-${action}`);
+    useWorkspaceActivityStore.getState().setActivity('qwen', owner, true);
     running.current = true; onActivity(true, writes); setBusy(true); setMutating(writes); setDiagnosing(action === 'recovery'); setMessage(''); setError(false);
     const current = ++generation.current;
     setPreview(null); setRecovery(null); setRestoreConfirm(false);
@@ -62,6 +68,7 @@ export function QwenVimSetting({ settings, manifest, inspecting, onActivity }: P
       }
     } finally {
       running.current = false;
+      useWorkspaceActivityStore.getState().setActivity('qwen', owner, false);
       if (mounted.current) { setBusy(false); setMutating(false); setDiagnosing(false); }
     }
   };
@@ -70,12 +77,12 @@ export function QwenVimSetting({ settings, manifest, inspecting, onActivity }: P
     <p>仅支持 Qwen 0.27.0 / schema 4 的 general.vimMode。请先停止 Qwen 和其他配置编辑器。此操作不是跨进程事务。</p>
     <p className="muted">只修改所选文件中的布尔值；JSON 排版可能改变，其他字段按语义保留。其他配置层可能覆盖此值。旁置所有权记录仅保存原布尔值或缺省状态，不备份完整配置；外部修改受管字段时会拒绝撤销。</p>
     {mode !== 'native' && <p>此功能仅在桌面后端开放；演示模式不会预览或写入文件。</p>}
-    <label><input type="checkbox" checked={enabled} disabled={busy || inspecting || !available} onChange={event => { invalidate(); setEnabled(event.target.checked); }} />启用 Vim 模式</label>
+    <label><input type="checkbox" checked={enabled} disabled={blocked} onChange={event => { invalidate(); setEnabled(event.target.checked); }} />启用 Vim 模式</label>
     <div className="dsh-form-actions">
-      <button type="button" className="button" disabled={busy || inspecting || !available} onClick={() => { void run('preview'); }}>预览 Vim 变更</button>
-      <button type="button" className="button" disabled={busy || inspecting || !available} onClick={() => { invalidate(); setRestoreConfirm(true); }}>撤销受管 Vim 设置</button>
+      <button type="button" className="button" disabled={blocked} onClick={() => { void run('preview'); }}>预览 Vim 变更</button>
+      <button type="button" className="button" disabled={blocked} onClick={() => { invalidate(); setRestoreConfirm(true); }}>撤销受管 Vim 设置</button>
     </div>
-    <button type="button" className="button" disabled={busy || inspecting || !available} onClick={() => { void run('recovery'); }}>只读检查 Vim 恢复状态</button>
+    <button type="button" className="button" disabled={blocked} onClick={() => { void run('recovery'); }}>只读检查 Vim 恢复状态</button>
     {diagnosing && <button type="button" className="button" onClick={invalidate}>取消恢复诊断结果</button>}
     {recovery && <section aria-label="Vim 恢复状态观察">
       <p role="status">{recoveryLabels[recovery.state]}</p>
@@ -86,12 +93,12 @@ export function QwenVimSetting({ settings, manifest, inspecting, onActivity }: P
     {preview && <div role="dialog" aria-label="确认 Vim 变更">
       <p>原值：{preview.before === null ? '未声明（官方默认关闭）' : preview.before ? '启用' : '关闭'}；目标：{preview.after ? '启用' : '关闭'}。</p>
       <p>{preview.changes ? '确认后才会写入所选文件。' : '当前字段与目标一致，无需应用。'}</p>
-      <button type="button" className="button button-primary" disabled={busy || !preview.changes} onClick={() => { void run('apply'); }}>确认应用 Vim 变更</button>
+      <button type="button" className="button button-primary" disabled={blocked || !preview.changes} onClick={() => { void run('apply'); }}>确认应用 Vim 变更</button>
       <button type="button" className="button" onClick={invalidate}>取消 Vim 变更</button>
     </div>}
     {restoreConfirm && <div role="dialog" aria-label="确认撤销 Vim 设置">
       <p>仅根据所选文件旁的 AgentDeck 所有权记录撤销受管字段；不是恢复完整配置。若字段已被外部更改，将拒绝覆盖。</p>
-      <button type="button" className="button button-primary" disabled={busy} onClick={() => { void run('restore'); }}>确认撤销 Vim 设置</button>
+      <button type="button" className="button button-primary" disabled={blocked} onClick={() => { void run('restore'); }}>确认撤销 Vim 设置</button>
       <button type="button" className="button" onClick={invalidate}>取消撤销</button>
     </div>}
     {message && <p role={error ? 'alert' : 'status'}>{message}</p>}

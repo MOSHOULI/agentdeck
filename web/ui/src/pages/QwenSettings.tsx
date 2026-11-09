@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import * as bridge from '../bridge';
 import type { QwenSection, QwenStatus } from '../qwenContract';
 import { sectionNames } from '../qwenContract';
-import { useWorkspaceActivity } from '../stores/workspaceActivity';
+import { useWorkspaceActivityStore } from '../stores/workspaceActivity';
 import './DshInventory.css';
 import { QwenVimSetting } from './QwenVimSetting';
 
@@ -29,7 +29,7 @@ export function QwenSettings() {
   const generation = useRef(0);
   const running = useRef(false);
   const mounted = useRef(false);
-  useWorkspaceActivity('qwen', busy || editingBusy);
+  const workspaceBusy = useWorkspaceActivityStore(state => state.busy.qwen);
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; generation.current++; };
@@ -39,7 +39,10 @@ export function QwenSettings() {
   };
   const inspect = async (event: FormEvent) => {
     event.preventDefault();
-    if (running.current || editingBusy || mode === 'unavailable' || !settings.trim() || !manifest.trim()) return;
+    if (running.current || editingBusy || useWorkspaceActivityStore.getState().busy.qwen || mode === 'unavailable' || !settings.trim() || !manifest.trim()) return;
+    // Native work outlives this view: only its actual settlement releases the owner.
+    const owner = Symbol('qwen-inspect');
+    useWorkspaceActivityStore.getState().setActivity('qwen', owner, true);
     running.current = true; setBusy(true); setResult(null); setError(false);
     const current = ++generation.current;
     try {
@@ -49,6 +52,7 @@ export function QwenSettings() {
       if (mounted.current && current === generation.current) setError(true);
     } finally {
       running.current = false;
+      useWorkspaceActivityStore.getState().setActivity('qwen', owner, false);
       if (mounted.current) setBusy(false);
     }
   };
@@ -57,16 +61,17 @@ export function QwenSettings() {
     <div className="notice">仅审阅 Qwen 0.27.0 / schema 4。声明版本不是安装真实性证明；不执行 Qwen、不读取独立认证文件、只读检查不初始化备份或改写配置；下方单字段管理需另行确认。</div>
     {mode === 'demo' && <p role="status">合成示例模式，不读取本机文件。</p>}
     {mode === 'unavailable' && <p role="status">未连接桌面后端，请在 AgentDeck 桌面应用中检查。</p>}
-    <form className="panel dsh-form" aria-label="Qwen 检查路径" aria-busy={busy} onSubmit={event => { void inspect(event); }}>
+    <form className="panel dsh-form" aria-label="Qwen 检查路径" aria-busy={busy || editingBusy || workspaceBusy} onSubmit={event => { void inspect(event); }}>
       <label htmlFor="qwen-settings">settings.json 绝对路径</label>
       <input className="control" id="qwen-settings" value={settings} maxLength={4096} autoComplete="off" spellCheck={false} disabled={mode === 'unavailable' || mutating} onChange={e => change(setSettings, e.target.value)} />
       <label htmlFor="qwen-manifest">运行时 package.json 绝对路径</label>
       <input className="control" id="qwen-manifest" value={manifest} maxLength={4096} autoComplete="off" spellCheck={false} disabled={mode === 'unavailable' || mutating} onChange={e => change(setManifest, e.target.value)} />
       <p className="muted">路径仅在本页保留，不自动发现。每文件最多 64 KiB，严格 JSON；注释、BOM、未知版本和链接不受支持。文件不受支持不代表 Qwen 未安装。</p>
-      <div className="dsh-form-actions"><button type="submit" className="button button-primary" disabled={busy || editingBusy || mode === 'unavailable' || !settings.trim() || !manifest.trim()}>{busy ? '检查中…' : mode === 'demo' ? '查看合成示例' : '检查所选文件'}</button>
+      <div className="dsh-form-actions"><button type="submit" className="button button-primary" disabled={busy || editingBusy || workspaceBusy || mode === 'unavailable' || !settings.trim() || !manifest.trim()}>{busy ? '检查中…' : mode === 'demo' ? '查看合成示例' : '检查所选文件'}</button>
         <button type="button" className="button" disabled={mutating} onClick={() => { generation.current++; setResult(null); setError(false); setSettings(''); setManifest(''); }}>清除路径与结果</button></div>
       {busy && <p role="status">正在读取。清除或修改路径后，旧请求的结果将被丢弃；文件读取本身无法中止。</p>}
     </form>
+    {workspaceBusy && !busy && !editingBusy && <p role="status">另一个 Qwen 操作仍在处理，完成前不能开始新操作；修改路径不会中止该操作。</p>}
     {error && <p role="alert">检查未完成或响应不兼容。请核对绝对路径、文件名与桌面后端后重试。</p>}
     {result && <section className="panel" aria-label="Qwen 检查结果">
       <h2>{result.synthetic ? '合成示例结果' : '所选文件摘要'}</h2>
