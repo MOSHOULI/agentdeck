@@ -288,6 +288,34 @@ class Tests(unittest.TestCase):
             self.assertFalse(report['cache_input']['matches_expected'])
             self.assertFalse(report['inspect_button']['enabled'])
 
+    def test_w3c_error_diagnostics_are_fixed_enums_only(self):
+        for error in ['element click intercepted', 'element not interactable', 'invalid argument',
+                      'stale element reference', 'SECRET arbitrary', ['SECRET'], {'SECRET': True}, None]:
+            info=subject.response_shape(json.dumps({'value':{'error':error,'message':'SECRET','stacktrace':'SECRET'}}).encode())
+            expected=error if isinstance(error,str) and not error.startswith('SECRET') else 'unrecognized'
+            self.assertEqual(info['webdriver_error'],expected)
+            self.assertNotIn('SECRET',json.dumps(info))
+        self.assertNotIn('webdriver_error',subject.response_shape(b'{"value":null}'))
+
+    def test_clear_geometry_is_read_only_and_bounded(self):
+        good={'x':-100,'y':0.5,'width':1000,'height':600,'SECRET':'discard'}
+        driver=Mock();driver.one.return_value='element'
+        driver.command.side_effect=[True,False,good,good]
+        report=subject.capture_clear_geometry(driver)
+        self.assertTrue(report['enabled']);self.assertFalse(report['displayed'])
+        self.assertEqual(report['element_rect'],{'x':-100,'y':0.5,'width':1000,'height':600})
+        self.assertNotIn('SECRET',json.dumps(report))
+        self.assertEqual([call.args for call in driver.command.call_args_list],[
+            ('GET','/element/element/enabled'),('GET','/element/element/displayed'),
+            ('GET','/element/element/rect'),('GET','/window/rect')])
+        for bad in [None,[],{},dict(good,x=True),dict(good,x='SECRET'),dict(good,x=float('nan')),
+                    dict(good,y=float('inf')),dict(good,x=10**1000),dict(good,width=-1),dict(good,height=1000001)]:
+            with self.subTest(bad=bad),self.assertRaises(subject.Failure):subject.bounded_rect(bad)
+        driver.command.side_effect=['SECRET',1,{'SECRET':True},ValueError('SECRET')]
+        report=subject.capture_clear_geometry(driver)
+        self.assertNotIn('SECRET',json.dumps(report))
+        self.assertTrue(all(value['state']=='unavailable' for value in report.values()))
+
     def test_oversize_or_symlink_fixture_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);subject.fixtures(root)

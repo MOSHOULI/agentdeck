@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import http.client
 import json
+import math
 import os
 from pathlib import Path
 import signal
@@ -46,7 +47,7 @@ class Driver:
             raise Failure('forbidden_driver_endpoint')
         payload = None if body is None else json.dumps(body).encode()
         operation = path.rsplit('/', 1)[-1]
-        allowed_operations = {'status', 'session', 'elements', 'click', 'clear', 'value', 'enabled', 'text', 'source'}
+        allowed_operations = {'status', 'session', 'elements', 'click', 'clear', 'value', 'enabled', 'displayed', 'rect', 'text', 'source'}
         self.last_response = {'operation': operation if operation in allowed_operations else 'other', 'method': method, 'received': False}
         try:
             self.connection.request(method, path, body=payload, headers={'Content-Type': 'application/json', 'Content-Length': str(len(payload) if payload is not None else 0)})
@@ -126,7 +127,7 @@ class Driver:
 
 
 def response_shape(raw):
-    # Classify structure only: never keys, strings, IDs, URLs or backend messages.
+    # Classify structure and fixed W3C error enums only; never retain backend messages.
     info = {'empty': len(raw) == 0, 'within_limit': len(raw) <= 1_048_576}
     if not info['within_limit']: return info
     try: value = json.loads(raw)
@@ -144,7 +145,14 @@ def response_shape(raw):
         info['has_value'] = 'value' in value
         if 'value' in value:
             info['value_type'] = kind(value['value'])
-            if isinstance(value['value'], dict): info['has_error'] = 'error' in value['value']
+            if isinstance(value['value'], dict):
+                info['has_error'] = 'error' in value['value']
+                error = value['value'].get('error')
+                allowed = {'element click intercepted', 'element not interactable', 'stale element reference',
+                           'invalid argument', 'no such element', 'no such window', 'invalid session id',
+                           'unknown error', 'timeout', 'unsupported operation', 'unknown command'}
+                if 'error' in value['value']:
+                    info['webdriver_error'] = error if isinstance(error, str) and error in allowed else 'unrecognized'
     return info
 
 
@@ -353,6 +361,7 @@ def exercise_cache_writes(driver, archive, root, records, phase=lambda value: No
         records.append({'operation': operation + '_existing', 'rejected_without_overwrite': True})
     phase('desktop_clear_and_final_zero_write')
     before = snapshot(root, exact)
+    driver.wait(lambda: driver.enabled("//button[text()='清除 Qoder 选择与结果']"))
     driver.click("//button[text()='清除 Qoder 选择与结果']")
     driver.wait(lambda: not driver.elements(result) and not driver.elements(alert) and not driver.elements(read_result) and not driver.elements(dialog))
     if snapshot(root, exact) != before or snapshot(archive.parent, source_contract) != original_source or unused.exists():
@@ -378,6 +387,41 @@ def failure_code(error):
     return 'unexpected_harness_error'
 
 
+def bounded_rect(value):
+    # Geometry is diagnostic only, not a click target or permission to replay.
+    if not isinstance(value, dict): raise Failure('harness_failure')
+    result = {}
+    for key in ('x', 'y', 'width', 'height'):
+        number = value.get(key)
+        if type(number) not in (int, float) or not -1_000_000 <= number <= 1_000_000 or not math.isfinite(number):
+            raise Failure('harness_failure')
+        if key in ('width', 'height') and number < 0: raise Failure('harness_failure')
+        result[key] = number
+    return result
+
+
+def capture_clear_geometry(driver):
+    report = {}
+    try:
+        element = driver.one("//button[text()='清除 Qoder 选择与结果']")
+        if not isinstance(element, str): raise Failure('harness_failure')
+    except Exception as error:
+        return {'state': 'unavailable', 'code': failure_code(error)}
+    for name, path in [('enabled', '/element/' + element + '/enabled'),
+                       ('displayed', '/element/' + element + '/displayed'),
+                       ('element_rect', '/element/' + element + '/rect'), ('window_rect', '/window/rect')]:
+        try:
+            value = driver.command('GET', path)
+            if name in ('enabled', 'displayed'):
+                if type(value) is not bool: raise Failure('harness_failure')
+                report[name] = value
+            else:
+                report[name] = bounded_rect(value)
+        except Exception as error:
+            report[name] = {'state': 'unavailable', 'code': failure_code(error)}
+    return report
+
+
 def capture_failure_dom(driver, evidence):
     # Read-only standard WebDriver endpoints, never executeScript. Inspect the
     # full bounded response for the canary BEFORE truncating retained evidence.
@@ -385,6 +429,7 @@ def capture_failure_dom(driver, evidence):
     if not driver.session:
         report['session'] = 'unavailable'
     else:
+        report['clear_geometry'] = capture_clear_geometry(driver)
         # Retain only agreement/length/boolean facts, never an untrusted input value.
         try:
             value = driver.value("//*[@id='qoder-cache']")

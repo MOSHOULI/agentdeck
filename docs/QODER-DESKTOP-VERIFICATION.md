@@ -70,3 +70,25 @@ All 11 fixed targets are individually labelled native radio controls in a respon
 11 个固定目标使用带完整名称的原生单选项，紧凑网格随宽度换行，不默认选择、不自动检测主机；演示或后端不可用时禁用。改目标使已有及迟到结果失效，清除后全部取消选择。Windows 安装版验收按精确名称通过 UI Automation SelectionItem 选择 RadioButton，同时核对选中状态与显示目标，不猜键盘位置、不直接调用 IPC。
 
 The Qoder desktop workspace now exposes [read-only cache inspection](QODER-CACHE-INSPECTION.md) on supported Linux x86_64 hosts, with explicit unsupported-host handling elsewhere. No desktop cleanup/activation. 桌面新增[缓存只读诊断](QODER-CACHE-INSPECTION.md)，仅 Linux x86_64 后端可用，其他主机明确拒绝；不开放清理或激活。
+
+### Pending Linux final-clear diagnosis / Linux 最终清除待诊断
+
+PR #38 first Linux GUI run recorded all five read-only states and all five
+desktop write checks, including genuine pinned-archive staging, unpacking, and
+existing-destination rejection. The final top-level Clear click returned W3C
+HTTP 400; the run remains failed, not complete acceptance. Its retained response
+shape did not identify the W3C error, so a scrolling, obstruction, stale-element,
+or other cause is **not established**.
+
+The harness now retains only a fixed allowlist of W3C error names, never raw
+error messages or stack traces. Failure diagnostics read Clear enabled/displayed
+booleans and bounded finite element/window geometry through standard read-only
+WebDriver endpoints. Final Clear waits for enabled before its single click.
+No failed click is replayed, no JavaScript click/scroll is injected, and every
+original acceptance gate remains required. A fresh isolated real GUI run is
+needed to establish the cause and validate any eventual fix.
+
+首轮已记录五种只读状态及五项写入检查，但最终顶部清除按钮返回 HTTP 400，
+因此整体验收仍失败。滚动、遮挡或元素失效均未证实。新增诊断仅保留白名单
+错误类别、严格布尔值和有限范围几何，不保留原始错误消息；不重放失败点击，
+不注入 JS，继续保留全部门禁，待新一轮真实 GUI 结果。
