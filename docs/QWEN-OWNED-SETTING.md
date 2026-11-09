@@ -54,7 +54,9 @@ and the strict-JSON parse operation. The same upstream settings schema defines
 synthetic apply, persisted new-process read, restore and conflict refusal.
 It does **not** execute the full Qwen settings loader/UI or prove effective value:
 other layers, environment and CLI arguments can override the selected file.
-Real Agent installation/authentication and GUI acceptance remain outstanding.
+A separate [official distribution bootstrap smoke](QWEN-DISTRIBUTION-SMOKE.md)
+checks the real pinned package version/help without login. Full installation,
+authentication, effective settings and GUI acceptance remain outstanding.
 
 ## 中文
 
@@ -72,6 +74,6 @@ Real Agent installation/authentication and GUI acceptance remain outstanding.
 字段外部变化则拒绝覆盖。receipt 记录准备、应用、恢复阶段，允许精确状态下
 重试；不能把它当通用备份工具。运行时不要删除锁文件或手动复制/编辑 receipt。
 
-已测试的是合成文件与固定官方读取函数，不是完整 Qwen 运行时。多层设置可能
+本字段闭环测试使用合成文件与固定官方读取函数；另有[真实官方包启动检查](QWEN-DISTRIBUTION-SMOKE.md)验证版本/帮助，不涉及登录或完整运行时。多层设置可能
 覆盖该字段，尚未验证真实登录/GUI。协作锁和最后检查不能消除跨进程竞态，
 也无法检测改走又改回相同布尔值；不承诺断电或恶意同用户操作安全。

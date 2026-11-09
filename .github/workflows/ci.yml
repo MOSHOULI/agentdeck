@@ -69,6 +69,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Qwen distribution harness (offline safety regressions)
+        run: python scripts/test_qwen_distribution_harness.py
       - name: Qwen owned field compatibility (synthetic, pinned offline source)
         run: python scripts/run-isolated.py node scripts/test-qwen-owned-setting.mjs
       - name: Install official runner GLib development dependencies
