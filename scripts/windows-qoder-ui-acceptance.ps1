@@ -13,21 +13,28 @@ function Assert-QoderSelectedTarget([string]$target) {
     Record 'qoder-target-selected' @{ target = $target; visibleSelectionConfirmed = $true }
 }
 function Select-QoderTarget([string]$target) {
-    $combo = Wait-QwenControl '明确分发目标（不是本机自动检测）' ([Windows.Automation.ControlType]::ComboBox)
     # WebView's native select popup is outside the combo subtree and its provider
     # advertises ExpandCollapse while rejecting Collapse. Do not call that pattern.
-    # Use real focused keyboard navigation, verifying exact selected state after
-    # each step rather than assuming an option index or ordering.
+    # Each candidate is a complete keyboard transaction: reacquire focus, open,
+    # navigate from Home, commit with Enter and leave with Tab. Never return with
+    # an outstanding popup/focus transaction that can swallow the next selection.
+    # Scan candidates, checking exact committed state rather than assuming order.
     Add-Type -AssemblyName System.Windows.Forms
-    $combo.SetFocus()
-    [Windows.Forms.SendKeys]::SendWait('{HOME}')
     for ($step = 0; $step -lt 12; $step++) {
+        $combo = Wait-QwenControl '明确分发目标（不是本机自动检测）' ([Windows.Automation.ControlType]::ComboBox)
+        $combo.SetFocus()
+        [Windows.Forms.SendKeys]::SendWait('%{DOWN}')
+        [Windows.Forms.SendKeys]::SendWait('{HOME}')
+        for ($down = 0; $down -lt $step; $down++) {
+            [Windows.Forms.SendKeys]::SendWait('{DOWN}')
+        }
+        [Windows.Forms.SendKeys]::SendWait('{ENTER}')
+        [Windows.Forms.SendKeys]::SendWait('{TAB}')
         $deadline = [DateTime]::UtcNow.AddSeconds(1)
         do {
             if ($null -ne (Find-QwenControl "当前分发目标：$target" ([Windows.Automation.ControlType]::Text))) { Assert-QoderSelectedTarget $target; return }
             Start-Sleep -Milliseconds 100
         } while ([DateTime]::UtcNow -lt $deadline)
-        [Windows.Forms.SendKeys]::SendWait('{DOWN}')
     }
     throw "Could not select the exact Qoder target: $target"
 }
