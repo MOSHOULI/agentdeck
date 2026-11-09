@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory)][string]$BaselineInstaller,
     [Parameter(Mandatory)][string]$ExpectedVersion,
     [Parameter(Mandatory)][string]$ExpectedCommit,
-    [Parameter(Mandatory)][string]$EvidenceDirectory
+    [Parameter(Mandatory)][string]$EvidenceDirectory,
+    [Parameter(Mandatory)][string]$RealQoderArchive
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -14,6 +15,7 @@ if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hoste
 }
 $Installer = (Resolve-Path -LiteralPath $Installer).Path
 $BaselineInstaller = (Resolve-Path -LiteralPath $BaselineInstaller).Path
+$RealQoderArchive = (Resolve-Path -LiteralPath $RealQoderArchive).Path
 $EvidenceDirectory = [IO.Path]::GetFullPath($EvidenceDirectory)
 New-Item -ItemType Directory -Force -Path $EvidenceDirectory | Out-Null
 $root = Join-Path $env:RUNNER_TEMP ('AgentDeck 验收 ' + [guid]::NewGuid().ToString('N'))
@@ -160,7 +162,7 @@ try {
 } finally {
     if ($null -ne $running -and -not $running.HasExited) { Stop-Process -Id $running.Id -Force -ErrorAction SilentlyContinue }
     # Preserve runner-local evidence on failure; never delete a real user's data.
-    @{ passed = $passed; buildCommit = $ExpectedCommit; events = $events; limitations = @('Synthetic data only', 'No real Agent installation or authentication', 'Synthetic Qwen single-field UI lifecycle only; not real Qwen execution or complete GUI coverage', 'Published baseline is verified against its published checksum, not an independent signature') } |
+    @{ passed = $passed; buildCommit = $ExpectedCommit; events = $events; limitations = @('Synthetic settings plus a pinned official Linux archive (read only)', 'Qoder UI hashes a Linux archive on Windows; no Qoder execution or Windows runtime validation', 'No real Agent installation or authentication', 'Synthetic Qwen single-field UI lifecycle only; not real Qwen execution or complete GUI coverage', 'Published baseline is verified against its published checksum, not an independent signature') } |
         ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'result.json') -Encoding utf8
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $originalEnv[$name]) }
 }

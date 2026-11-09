@@ -64,3 +64,10 @@ it('renders selected identity and archive name as complete accessible text nodes
   expect(name.childNodes).toHaveLength(1);
   expect(name.firstChild?.nodeType).toBe(Node.TEXT_NODE);
 });
+
+it('renders a successful byte count as one complete accessible text node', async () => {
+  render(<QoderDistribution />); fill(); verify();
+  const bytes = await screen.findByText('已读取字节：123');
+  expect(bytes.childNodes).toHaveLength(1);
+  expect(bytes.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+});
