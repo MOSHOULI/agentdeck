@@ -118,3 +118,47 @@ All five recovery hints are fixed local text. A verified staged cache may be cho
 “将上次提交目标填入只读诊断”仅填写捕获的原目标，不调用 IPC、不重试、不清理、不自动诊断。用户仍须另行点击只读诊断。每份结果显示请求时的精确目录；修改输入、取消、清除或卸载都会废弃迟到响应及旧结论。目录缺失、不可读或平台不支持时，没有完整性、空目录、安全删除或已清理结论。
 
 五种恢复提示均为本地固定文案：完整暂存目录可以手动选择为后续解包来源，但必须另选全新目标、重新确认并经核心完整复验；解包缓存仅保留，不能作为暂存来源替代。不完整、冲突或归属未知时保留现场人工排查，不自动删除、修复、复用或原地重试。本增量没有新增后端能力、执行权限或自动操作。
+
+## Synthetic Qwen owned-setting GUI gate
+
+The same mandatory hosted-Linux job now also calls `linux_qwen_webview.py`
+through the real Tauri/WebKit session. It types explicit private synthetic
+`settings.json` and `package.json` paths and clicks the existing controls; it
+never evaluates JavaScript, calls IPC directly, or substitutes a product backend.
+The declared Qwen 0.27.0/schema 4 fixture is **not a real Qwen installation**.
+This gate validates AgentDeck GUI/native IPC against synthetic files, not Qwen
+execution, model access, credentials, networking or effective runtime settings.
+Issue #22's mandatory network-namespace blocker is unchanged.
+
+All eleven required records must appear in order: no-receipt read-only recovery;
+preview/cancel/path-clear; stale-preview rejection after an external whitespace
+edit; apply preserving all unrelated values; restore-field read-only recovery;
+restore cancellation; external managed-field conflict rejection; conflict
+read-only recovery; cleanup-receipt read-only recovery; successful restore; final
+path clear. Path changes, cancel and clear must remove dialogs, status/alert
+messages and recovery observations. Newly rendered buttons are polled for unique
+presence before querying enabled state; ambiguous controls fail without a click.
+Preview content must show false-to-true. Recovery observations never
+authorize a write. External edits are made only by the test in its private fixture;
+the exact applied image is restored by that test before the final GUI restore.
+A successful restore removes the receipt and retains the product's persistent,
+empty private lock. The harness does not delete the lock or claim cross-process
+atomicity. This increment does not test restart or live concurrent UI races.
+
+Each boundary checks the exact expected member set, owner, 0700 directory/0600
+regular single-link files, bounded hashes and metadata. Read-only and cancelled
+operations must preserve bytes and metadata; manifest bytes and metadata remain
+unchanged throughout. Apply validates the entire synthetic document and exact
+receipt fields, bindings, before/after hashes and types. Only the managed boolean
+may change. Symlinks, hardlinks, extra/missing members, wrong modes, ownership,
+manifest drift and over-limit files fail closed. Fixture contents are never
+recorded; the shared synthetic private-value canary is checked in body and full
+bounded DOM at every recorded stage and suppressed by the existing failure-DOM
+and retained-log paths before evidence is written.
+
+`qwen_owned_gui_verified` is true only after all required records and the existing
+session/process/log cleanup succeed. Existing Qoder and DSH stages remain required
+and unchanged. Run `python -B scripts/test_linux_qwen_webview.py` for bounded,
+offline harness regressions; those tests are not evidence that GUI acceptance ran.
+No new runtime dependency, sandbox override, installer publication or Qwen launch
+is introduced. Real GUI acceptance must still pass in hosted Linux CI.
