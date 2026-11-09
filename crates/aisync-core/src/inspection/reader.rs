@@ -1,6 +1,10 @@
-//! The only production I/O boundary. It exposes one bounded read, no mutation or
-//! process operation. Tests inject an allowlist reader that rejects every other path.
+//! Audited selected-source I/O boundary: bounded read/hash and explicit copying
+//! into a caller-owned private destination handle. Source files are read-only;
+//! this module never opens destination paths or runs processes. Inspection tests
+//! inject an allowlist reader that rejects every other source path.
 use std::fs::{self, File, Metadata, OpenOptions};
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+use std::io::Write;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 
@@ -82,7 +86,8 @@ impl NativeSelectedFileReader {
     ) -> Result<Vec<u8>, InspectionIssue> {
         let mut bytes = Vec::new();
         self.visit_named(path, expected, LIMITS.max_manifest_bytes as u64, |chunk| {
-            bytes.extend_from_slice(chunk)
+            bytes.extend_from_slice(chunk);
+            Ok(())
         })?;
         Ok(bytes)
     }
@@ -96,7 +101,26 @@ impl NativeSelectedFileReader {
         use sha2::{Digest, Sha256};
         let mut hash = Sha256::new();
         let size = self.visit_named(path, expected, 256 * 1024 * 1024, |chunk| {
-            hash.update(chunk)
+            hash.update(chunk);
+            Ok(())
+        })?;
+        Ok((format!("{:x}", hash.finalize()), size))
+    }
+
+    /// Same audited source handle supplies both the private copy and its digest.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    pub(crate) fn copy_archive(
+        &self,
+        path: &Path,
+        expected: &str,
+        destination: &mut File,
+    ) -> Result<(String, u64), InspectionIssue> {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        let size = self.visit_named(path, expected, 256 * 1024 * 1024, |chunk| {
+            destination.write_all(chunk)?;
+            hash.update(chunk);
+            Ok(())
         })?;
         Ok((format!("{:x}", hash.finalize()), size))
     }
@@ -106,7 +130,7 @@ impl NativeSelectedFileReader {
         path: &Path,
         expected: &str,
         limit: u64,
-        mut visit: impl FnMut(&[u8]),
+        mut visit: impl FnMut(&[u8]) -> io::Result<()>,
     ) -> Result<u64, InspectionIssue> {
         validate_path(path, expected)?;
         // Refuse all platforms without the no-follow/non-blocking flags audited
@@ -153,7 +177,7 @@ impl NativeSelectedFileReader {
             if size > limit {
                 return Err(InspectionIssue::FileTooLarge);
             }
-            visit(&buffer[..count]);
+            visit(&buffer[..count]).map_err(io_issue)?;
         }
         #[cfg(windows)]
         if checked_handle_identity(&file)? != handle_identity {
