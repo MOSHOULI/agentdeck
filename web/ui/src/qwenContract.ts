@@ -47,3 +47,20 @@ export function validateQwenReport(value: unknown): QwenSummary {
 export function qwenDemoSummary(): QwenSummary {
   return { manifest: 'read', settings: 'read', reviewed: true, sections: Object.fromEntries(sectionNames.map(key => [key, key === 'general' || key === 'model'])) as Record<QwenSection, boolean> };
 }
+
+export interface QwenVimPreview {
+  field: 'general.vimMode'; before: boolean | null; after: boolean; changes: boolean; token: string;
+}
+/** Only fixed labels and the one non-sensitive boolean cross into rendered state. */
+export function validateQwenVimPreview(value: unknown, enabled: boolean): QwenVimPreview {
+  const preview = object(value);
+  if (preview.field !== 'general.vimMode' || !(preview.before === null || typeof preview.before === 'boolean')
+    || preview.after !== enabled || typeof preview.changes !== 'boolean'
+    || preview.changes !== (preview.before !== enabled)
+    || typeof preview.token !== 'string' || !/^[a-f0-9]{64}$/.test(preview.token)) throw invalid();
+  return { field: 'general.vimMode', before: preview.before, after: enabled, changes: preview.changes, token: preview.token };
+}
+export function validateQwenMutation(value: unknown): boolean {
+  if (typeof value !== 'boolean') throw invalid();
+  return value;
+}
