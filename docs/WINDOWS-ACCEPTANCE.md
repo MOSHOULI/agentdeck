@@ -47,3 +47,13 @@ The fixture reset is test setup, not an automatic conflict-resolution feature. T
 测试只使用合成 settings.json 和声明 Qwen 0.27.0 的 package.json，**不是真实 Qwen 安装**。覆盖只读预览、取消、清除路径零写入；预览后外部改字节导致令牌失效且禁止应用；确认应用后实际字段写入、无关值及 manifest 保留、所有权记录生成；关闭并重启应用后取消撤销零改动；确认撤销前外部修改受管字段时拒绝覆盖并保留记录；仅将测试夹具重置为已记录的应用后字节，再确认撤销，恢复原布尔值并移除记录。UI 完成状态与磁盘断言必须同时通过，可访问性证据上传前检查合成秘密标记未泄露。
 
 夹具重置不是自动解决用户配置冲突的功能。本测试不执行 Qwen、不验证真实运行时加载、不模拟写入中途进程崩溃，也不覆盖所有交互。云端 Linux 静态检查不能替代精确提交的 Windows CI 验收通过。
+
+The Qwen lifecycle also clicks read-only recovery observation for all four states
+(no receipt, field restoration, receipt-only cleanup, conflict), checks that the
+entire synthetic directory's file names and byte hashes remain unchanged, and
+ensures no restore/apply confirmation is opened by inspection. This tests the
+installed UI/IPC route, not real Qwen behavior; Windows CI must actually pass.
+
+Qwen 生命周期还通过真实点击检查四种恢复观察状态，核对整个合成目录文件名与
+字节哈希均不变，诊断不打开应用/撤销确认。此项验证已安装 UI/IPC，不代表真实
+Qwen 运行效果，仍须以 Windows CI 实际通过为准。

@@ -15,6 +15,7 @@ pub fn run() {
             commands::dsh::inspect_dsh_profile,
             commands::qwen::inspect_qwen_settings,
             commands::qwen::preview_qwen_vim,
+            commands::qwen::inspect_qwen_vim_recovery,
             commands::qwen::apply_qwen_vim,
             commands::qwen::restore_qwen_vim,
             commands::deploy::get_agents,

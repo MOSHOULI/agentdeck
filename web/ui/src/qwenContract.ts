@@ -64,3 +64,14 @@ export function validateQwenMutation(value: unknown): boolean {
   if (typeof value !== 'boolean') throw invalid();
   return value;
 }
+
+export const recoveryStates = ['no_receipt', 'restore_field', 'cleanup_receipt', 'conflict'] as const;
+export type QwenRecoveryState = typeof recoveryStates[number];
+export interface QwenRecovery { field: 'general.vimMode'; state: QwenRecoveryState; changesSettings: boolean }
+/** Do not retain backend limitations, errors, paths, hashes or arbitrary properties. */
+export function validateQwenRecovery(value: unknown): QwenRecovery {
+  const report = object(value);
+  if (report.field !== 'general.vimMode' || !recoveryStates.includes(report.state as QwenRecoveryState)
+    || typeof report.changes_settings !== 'boolean' || report.changes_settings !== (report.state === 'restore_field')) throw invalid();
+  return { field: 'general.vimMode', state: report.state as QwenRecoveryState, changesSettings: report.changes_settings };
+}

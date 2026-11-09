@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import * as bridge from '../bridge';
-import { qwenDemoSummary } from '../qwenContract';
+import { qwenDemoSummary, type QwenRecovery } from '../qwenContract';
 import { QwenSettings } from './QwenSettings';
 const token = 'a'.repeat(64);
 const preview = { field: 'general.vimMode' as const, before: null, after: false, changes: true, token };
@@ -10,6 +10,7 @@ beforeEach(() => {
   vi.spyOn(bridge, 'inspectQwenSettings');
   vi.spyOn(bridge, 'previewQwenVim').mockResolvedValue(preview);
   vi.spyOn(bridge, 'applyQwenVim').mockResolvedValue(true);
+  vi.spyOn(bridge, 'inspectQwenVimRecovery').mockResolvedValue({ field: 'general.vimMode', state: 'no_receipt', changesSettings: false });
   vi.spyOn(bridge, 'restoreQwenVim').mockResolvedValue(true);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -117,5 +118,65 @@ describe('Qwen single field management', () => {
     const view = render(<QwenSettings />); fill(); fireEvent.click(screen.getByRole('button', { name: '预览 Vim 变更' })); view.unmount();
     await act(async () => { work.resolve(preview); }); render(<QwenSettings />);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
+describe('Qwen recovery observation UI', () => {
+  const observe = () => fireEvent.click(screen.getByRole('button', { name: '只读检查 Vim 恢复状态' }));
+  const report: QwenRecovery = { field: 'general.vimMode', state: 'restore_field', changesSettings: true };
+  it.each(['no_receipt', 'restore_field', 'cleanup_receipt', 'conflict'] as const)('shows %s as observation, never mutation authorization', async state => {
+    vi.mocked(bridge.inspectQwenVimRecovery).mockResolvedValue({ ...report, state, changesSettings: state === 'restore_field' });
+    render(<QwenSettings />); fill(); observe();
+    const region = await screen.findByRole('region', { name: 'Vim 恢复状态观察' });
+    expect(region).toHaveTextContent('不是恢复授权');
+    expect(region).toHaveTextContent('后端会再次检查');
+    expect(bridge.restoreQwenVim).not.toHaveBeenCalled();
+    expect(bridge.applyQwenVim).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '撤销受管 Vim 设置' }));
+    expect(screen.queryByRole('region', { name: 'Vim 恢复状态观察' })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: '确认撤销 Vim 设置' })).toBeInTheDocument();
+    expect(bridge.restoreQwenVim).not.toHaveBeenCalled();
+  });
+  it.each(['cancel', 'path', 'clear', 'unmount'])('discards late observation after %s and blocks duplicate dispatch', async kind => {
+    const work = defer<QwenRecovery>(); vi.mocked(bridge.inspectQwenVimRecovery).mockReturnValue(work.promise);
+    const view = render(<QwenSettings />); fill(); observe(); observe();
+    expect(bridge.inspectQwenVimRecovery).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText('settings.json 绝对路径')).toBeEnabled();
+    expect(screen.getByRole('button', { name: '预览 Vim 变更' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '撤销受管 Vim 设置' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '检查所选文件' })).toBeDisabled();
+    if (kind === 'cancel') fireEvent.click(screen.getByRole('button', { name: '取消恢复诊断结果' }));
+    if (kind === 'path') fireEvent.change(screen.getByLabelText('运行时 package.json 绝对路径'), { target: { value: '/other/package.json' } });
+    if (kind === 'clear') fireEvent.click(screen.getByRole('button', { name: '清除路径与结果' }));
+    if (kind === 'unmount') view.unmount();
+    await act(async () => { work.resolve(report); });
+    if (kind === 'unmount') render(<QwenSettings />);
+    expect(screen.queryByRole('region', { name: 'Vim 恢复状态观察' })).not.toBeInTheDocument();
+    expect(bridge.restoreQwenVim).not.toHaveBeenCalled();
+  });
+  it('diagnosis invalidates preview and restore confirmation, and preview invalidates diagnosis', async () => {
+    render(<QwenSettings />); fill(); await showPreview(); observe();
+    await screen.findByRole('region', { name: 'Vim 恢复状态观察' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await showPreview();
+    expect(screen.queryByRole('region', { name: 'Vim 恢复状态观察' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '撤销受管 Vim 设置' })); observe();
+    await screen.findByRole('region', { name: 'Vim 恢复状态观察' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '清除恢复诊断结果' }));
+    expect(screen.queryByRole('region', { name: 'Vim 恢复状态观察' })).not.toBeInTheDocument();
+  });
+  it('reports fixed errors without treating failed observation as no receipt', async () => {
+    vi.mocked(bridge.inspectQwenVimRecovery).mockRejectedValue(new Error('SECRET'));
+    render(<QwenSettings />); fill(); observe();
+    expect(await screen.findByRole('alert')).toHaveTextContent('未获得有效观察结果');
+    expect(screen.getByRole('alert')).not.toHaveTextContent('SECRET');
+    expect(screen.queryByRole('region', { name: 'Vim 恢复状态观察' })).not.toBeInTheDocument();
+  });
+  it.each(['demo', 'unavailable'] as const)('never observes in %s', mode => {
+    vi.mocked(bridge.runtimeMode).mockReturnValue(mode); render(<QwenSettings />);
+    if (mode === 'demo') fill();
+    expect(screen.getByRole('button', { name: '只读检查 Vim 恢复状态' })).toBeDisabled(); observe();
+    expect(bridge.inspectQwenVimRecovery).not.toHaveBeenCalled();
   });
 });

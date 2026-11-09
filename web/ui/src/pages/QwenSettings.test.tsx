@@ -32,7 +32,8 @@ describe('Qwen settings workspace', () => {
     await screen.findByRole('region', { name: 'Qwen 检查结果' });
     expect(bridge.inspectQwenSettings).toHaveBeenCalledExactlyOnceWith('/selected/settings.json', '/runtime/package.json');
     expect(screen.getByText('通用：区段存在')).toBeInTheDocument();
-    expect(screen.getAllByRole('button')).toHaveLength(4);
+    expect(screen.getAllByRole('button')).toHaveLength(5);
+    expect(screen.getByRole('button', { name: '只读检查 Vim 恢复状态' })).toBeEnabled();
   });
   it('blocks repeated submissions and discards responses after path changes', async () => {
     const work = deferred(); vi.mocked(bridge.inspectQwenSettings).mockReturnValue(work.promise);
