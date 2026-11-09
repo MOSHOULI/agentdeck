@@ -70,7 +70,9 @@ jobs:
         with:
           node-version: 24
       - name: Qwen distribution harness (offline safety regressions)
-        run: python scripts/test_qwen_distribution_harness.py
+        run: python -B scripts/test_qwen_distribution_harness.py
+      - name: Qwen settings runtime harness (offline fail-closed regressions)
+        run: python -B scripts/test_qwen_settings_runtime_harness.py
       - name: Qwen owned field compatibility (synthetic, pinned offline source)
         run: python scripts/run-isolated.py node scripts/test-qwen-owned-setting.mjs
       - name: Install official runner GLib development dependencies
@@ -88,6 +90,49 @@ jobs:
           CARGO_PROFILE_TEST_OPT_LEVEL=0 python scripts/run-isolated.py cargo test --locked -p glib-regression --lib
           CARGO_PROFILE_TEST_OPT_LEVEL=2 python scripts/run-isolated.py cargo test --locked -p glib-regression --lib
           CARGO_PROFILE_RELEASE_OPT_LEVEL=3 python scripts/run-isolated.py cargo test --locked -p glib-regression --lib --release
+
+  qwen-runtime:
+    name: Qwen official settings snapshot (network isolated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BUILD_SHA }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Install official runner bubblewrap package
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y bubblewrap
+          dpkg-query -W bubblewrap
+      - run: cargo build --locked -p aisync-cli
+      - name: Fetch pinned official Qwen distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --proto '=https' --tlsv1.2 --max-time 120 --max-filesize 67108864 \
+            https://registry.npmjs.org/@qwen-code/qwen-code/-/qwen-code-0.27.0.tgz \
+            --output "$RUNNER_TEMP/qwen-code-0.27.0.tgz"
+      - name: Verify real settings snapshot apply and restore with mandatory network isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          # No host sysctl/AppArmor changes or non-isolated fallback are permitted.
+          python -B scripts/test-qwen-settings-runtime.py \
+            --archive "$RUNNER_TEMP/qwen-code-0.27.0.tgz" \
+            --aisync "$PWD/target/debug/aisync" 2>&1 | tee qwen-settings-runtime.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Qwen-settings-runtime-${{ env.BUILD_SHA }}
+          path: qwen-settings-runtime.txt
+          if-no-files-found: warn
 
   dependency-audit:
     name: Rust dependency audit
@@ -222,7 +267,7 @@ jobs:
   release:
     name: Publish verified Windows installer
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release == true
-    needs: [frontend, portable-core, dependency-audit, windows, windows-acceptance]
+    needs: [frontend, portable-core, qwen-runtime, dependency-audit, windows, windows-acceptance]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
