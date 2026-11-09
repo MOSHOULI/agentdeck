@@ -1,7 +1,7 @@
 //! AgentDeck command-line interface. Mutating operations require an explicit --yes.
 use std::path::{Path, PathBuf};
 
-use aisync_core::{config, deploy, dsh, git, qwen, registry, sync};
+use aisync_core::{config, deploy, dsh, git, qoder, qwen, registry, sync};
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
@@ -32,6 +32,11 @@ enum Commands {
     Qwen {
         #[command(subcommand)]
         action: QwenAction,
+    },
+    /// Inspect explicitly selected Qoder CLI scopes without executing or modifying them.
+    Qoder {
+        #[command(subcommand)]
+        action: QoderAction,
     },
     /// Sync personalization and opted-in memory to explicitly selected agents.
     #[command(
@@ -78,6 +83,24 @@ enum Commands {
     Release {
         #[command(subcommand)]
         action: ReleaseAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum QoderAction {
+    /// Summarize selected scopes and repeated MCP names, without exposing names/values.
+    #[command(
+        long_about = "Read explicitly selected Qoder CLI settings and project MCP files. Emits fixed redacted section flags, server counts and potential cross-scope overlap only. No execution, discovery, initialization, writes, backup or BYOK editing. This is not effective configuration, version verification, a diff or apply readiness. Exit 0 means a report was produced (including unavailable/unsupported observations); invalid selections exit with an error."
+    )]
+    Inspect {
+        #[arg(long, value_name = "ABSOLUTE_SETTINGS_JSON")]
+        user_settings: Option<PathBuf>,
+        #[arg(long, value_name = "ABSOLUTE_SETTINGS_JSON")]
+        project_settings: Option<PathBuf>,
+        #[arg(long, value_name = "ABSOLUTE_SETTINGS_LOCAL_JSON")]
+        local_settings: Option<PathBuf>,
+        #[arg(long, value_name = "ABSOLUTE_DOT_MCP_JSON")]
+        project_mcp: Option<PathBuf>,
     },
 }
 
@@ -355,6 +378,31 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             )?;
             use std::io::Write;
             writeln!(std::io::stdout().lock(), "{report}")?;
+        }
+        Commands::Qoder {
+            action:
+                QoderAction::Inspect {
+                    user_settings,
+                    project_settings,
+                    local_settings,
+                    project_mcp,
+                },
+        } => {
+            let selections = qoder::Selections {
+                user_settings: user_settings.as_deref(),
+                project_settings: project_settings.as_deref(),
+                local_settings: local_settings.as_deref(),
+                project_mcp: project_mcp.as_deref(),
+            };
+            qoder::validate_selections(&selections)
+                .map_err(|issue| anyhow::anyhow!("invalid Qoder selection: {issue:?}"))?;
+            let report = qoder::inspect_scopes(&selections);
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&report)?
+            )?;
         }
         Commands::Qwen {
             action:

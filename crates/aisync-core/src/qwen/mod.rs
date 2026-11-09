@@ -9,8 +9,7 @@
 //! These narrow but do not eliminate same-privilege ancestor replacement races;
 //! filesystem reads can block on mounts or update atime. This is not a sandbox.
 pub mod owned;
-mod parse;
-mod reader;
+use crate::inspection::{parse, reader};
 mod types;
 
 use reader::{NativeSelectedFileReader, SelectedFileReader};

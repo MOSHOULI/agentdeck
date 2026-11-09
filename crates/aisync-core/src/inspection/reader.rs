@@ -6,13 +6,13 @@ use std::path::{Component, Path, PathBuf};
 
 use super::{InspectionIssue, LIMITS};
 
-pub(super) trait SelectedFileReader {
+pub(crate) trait SelectedFileReader {
     fn read_selected(&self, path: &Path) -> Result<Vec<u8>, InspectionIssue>;
 }
 
-pub(super) struct NativeSelectedFileReader;
+pub(crate) struct NativeSelectedFileReader;
 
-pub(super) fn validate_path(path: &Path, expected_name: &str) -> Result<(), InspectionIssue> {
+pub(crate) fn validate_path(path: &Path, expected_name: &str) -> Result<(), InspectionIssue> {
     if !path.is_absolute() {
         return Err(InspectionIssue::PathMustBeAbsolute);
     }
@@ -66,6 +66,8 @@ impl SelectedFileReader for NativeSelectedFileReader {
         let expected = match path.file_name().and_then(|v| v.to_str()) {
             Some("package.json") => "package.json",
             Some("settings.json") => "settings.json",
+            Some("settings.local.json") => "settings.local.json",
+            Some(".mcp.json") => ".mcp.json",
             _ => return Err(InspectionIssue::UnexpectedFileName),
         };
         self.read_named(path, expected)
@@ -73,7 +75,7 @@ impl SelectedFileReader for NativeSelectedFileReader {
 }
 
 impl NativeSelectedFileReader {
-    pub(super) fn read_named(
+    pub(crate) fn read_named(
         &self,
         path: &Path,
         expected: &str,

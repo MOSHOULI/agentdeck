@@ -15,3 +15,5 @@ pub mod vault;
 pub fn health_check() -> String {
     format!("AgentDeck v{} OK", env!("CARGO_PKG_VERSION"))
 }
+
+pub mod qwen;
