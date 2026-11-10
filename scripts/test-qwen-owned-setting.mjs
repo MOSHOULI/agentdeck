@@ -48,6 +48,18 @@ try {
   assert.equal(applied.security.example,'SYNTHETIC-ONLY');
   // A new process reads the same persisted value. This is not a running Qwen UI test.
   assert.equal(run('vim-preview',['--enabled','true']).changes,false);
+  // Updating ownership keeps the first backup, including original absence.
+  for (const enabled of [false, true, false]) {
+    const update = run('vim-update-preview', ['--enabled', String(enabled)]);
+    const beforeUpdate = readFileSync(settings);
+    run('vim-update', ['--enabled', String(enabled), '--preview-token', update.token], false);
+    assert.deepEqual(readFileSync(settings), beforeUpdate);
+    run('vim-update', ['--enabled', String(enabled), '--preview-token', update.token, '--yes']);
+    const updated = JSON.parse(readConfigFile(settings));
+    assert.equal(updated.general.vimMode, enabled);
+    unchangedNumbers(updated);
+    assert.equal(updated.general.language, 'en');
+  }
   // Keep negative zero intact when simulating an unrelated external edit.
   writeFileSync(settings,readFileSync(settings,'utf8').replace('"language": "en"','"language": "en", "newUserField": "preserve"'));
   run('vim-restore',['--yes']);
@@ -62,5 +74,5 @@ try {
   restored.general.vimMode=false;writeFileSync(settings,JSON.stringify(restored));
   run('vim-restore',['--yes'],false);
   assert.equal(JSON.parse(readConfigFile(settings)).general.vimMode,false);
-  console.log('Pinned Qwen readConfigFile / strict JSON, apply, new-process read, field restore and drift checks passed. No real Agent/authentication/effective layers tested.');
+  console.log('Pinned Qwen readConfigFile / strict JSON, apply, repeated managed updates, new-process read, original field restore and drift checks passed. No real Agent/authentication/effective layers tested.');
 } finally {rmSync(directory,{recursive:true,force:true});}

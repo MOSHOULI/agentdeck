@@ -42,6 +42,24 @@ pub async fn preview_qwen_vim(
     .map_err(|_| "Qwen 预览未完成。".to_string())?
 }
 
+#[tauri::command]
+pub async fn preview_qwen_vim_update(
+    settings_path: String,
+    runtime_manifest: String,
+    enabled: bool,
+) -> Result<qwen::owned::Preview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        qwen::owned::update_preview(
+            Path::new(&settings_path),
+            Path::new(&runtime_manifest),
+            enabled,
+        )
+        .map_err(edit_error)
+    })
+    .await
+    .map_err(|_| "Qwen 预览未完成。".to_string())?
+}
+
 /// Observation only: does not acquire a lock or authorize a later restore.
 #[tauri::command]
 pub async fn inspect_qwen_vim_recovery(
@@ -81,6 +99,30 @@ pub async fn apply_qwen_vim(
 }
 
 #[tauri::command]
+pub async fn update_qwen_vim(
+    settings_path: String,
+    runtime_manifest: String,
+    enabled: bool,
+    token: String,
+) -> Result<bool, String> {
+    // Reject malformed or unbounded caller input before any filesystem access.
+    if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("预览无效，请重新预览。".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        qwen::owned::update(
+            Path::new(&settings_path),
+            Path::new(&runtime_manifest),
+            enabled,
+            &token,
+        )
+        .map_err(edit_error)
+    })
+    .await
+    .map_err(|_| "Qwen 操作结果未确认，请检查后再试。".to_string())?
+}
+
+#[tauri::command]
 pub async fn restore_qwen_vim(
     settings_path: String,
     runtime_manifest: String,
@@ -98,7 +140,7 @@ fn edit_error(error: qwen::owned::EditError) -> String {
     match error {
         Unsupported => "所选文件、版本或权限不受支持。",
         Changed => "文件或预览已变化，请重新预览。",
-        AlreadyOwned => "已有受管记录，请先撤销原操作。",
+        AlreadyOwned => "已有受管记录，请选择更新受管值或撤销原操作。",
         Drift => "受管字段已被外部修改，未覆盖该修改。",
         Busy => "另一个配置操作正在进行。",
         Io => "操作结果未确认，请检查受管记录后再试。",
@@ -235,6 +277,35 @@ mod tests {
                 serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
             assert_eq!(value["general"]["vimMode"], true);
             assert_eq!(value["unrelated"], "SECRET");
+            let update = preview_qwen_vim_update(s.clone(), m.clone(), false)
+                .await
+                .unwrap();
+            assert_eq!(update.before, Some(true));
+            assert!(!serde_json::to_string(&update).unwrap().contains("SECRET"));
+            assert!(
+                update_qwen_vim(s.clone(), m.clone(), false, "bad".into())
+                    .await
+                    .is_err()
+            );
+            assert!(
+                update_qwen_vim(s.clone(), m.clone(), false, update.token.clone())
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                update_qwen_vim(s.clone(), m.clone(), false, update.token)
+                    .await
+                    .is_err()
+            );
+            let update = preview_qwen_vim_update(s.clone(), m.clone(), true)
+                .await
+                .unwrap();
+            assert_eq!(update.before, Some(false));
+            assert!(
+                update_qwen_vim(s.clone(), m.clone(), true, update.token)
+                    .await
+                    .unwrap()
+            );
             assert!(restore_qwen_vim(s.clone(), m.clone()).await.unwrap());
             let value: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();

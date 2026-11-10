@@ -79,6 +79,15 @@ struct Receipt {
     had_general: bool,
     before_digest: String,
     after_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    updating: Option<UpdateIntent>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateIntent {
+    previous: bool,
+    previous_digest: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -86,6 +95,7 @@ struct Receipt {
 enum Phase {
     Prepared,
     Applied,
+    Updating,
     Restoring,
 }
 
@@ -254,6 +264,7 @@ pub fn apply(settings: &Path, manifest: &Path, after: bool, expected_token: &str
         had_general: current.had_general,
         before_digest: digest(&current.bytes),
         after_digest: digest(&output),
+        updating: None,
     };
     let receipt_bytes = serde_json::to_vec(&receipt).map_err(|_| EditError::Io)?;
     // create_new never replaces someone else's receipt.
@@ -275,6 +286,109 @@ pub fn apply(settings: &Path, manifest: &Path, after: bool, expected_token: &str
     Ok(true)
 }
 
+fn update_token(selected: &Selection, receipt_bytes: &[u8], after: bool) -> String {
+    let mut hash = Sha256::new();
+    hash.update(b"agentdeck/qwen-vim/update/2\0");
+    hash.update(token(selected, after));
+    hash.update(digest(receipt_bytes));
+    format!("{:x}", hash.finalize())
+}
+
+fn update_selection(settings: &Path, manifest: &Path) -> Result<(Selection, Vec<u8>, Receipt)> {
+    let selected = selection(settings, manifest)?;
+    let receipt_bytes = read(&sibling(settings, RECEIPT)?, RECEIPT)?;
+    let receipt = parse_receipt(&receipt_bytes)?;
+    // Validate schema, selection and manifest even when a completed update has
+    // returned the owned value to its initial value.
+    recovery_action(&selected, &receipt)?;
+    if receipt.phase != Phase::Applied {
+        return Err(EditError::Unsupported);
+    }
+    if selected.before != Some(receipt.after) {
+        return Err(EditError::Drift);
+    }
+    Ok((selected, receipt_bytes, receipt))
+}
+
+/// Read-only update plan. The original field backup remains in the receipt.
+pub fn update_preview(settings: &Path, manifest: &Path, after: bool) -> Result<Preview> {
+    let (selected, receipt_bytes, _) = update_selection(settings, manifest)?;
+    if read(settings, "settings.json")? != selected.bytes
+        || read(manifest, "package.json")? != selected.manifest
+        || read(&sibling(settings, RECEIPT)?, RECEIPT)? != receipt_bytes
+    {
+        return Err(EditError::Changed);
+    }
+    Ok(Preview {
+        field: "general.vimMode",
+        before: selected.before,
+        after,
+        changes: selected.before != Some(after),
+        token: update_token(&selected, &receipt_bytes, after),
+        limitations: "Updates an already-owned strict-JSON field only. Restore retains the first original value, not the previous update. Stop Qwen and other editors first. Interrupted updates require recovery, never automatic continuation. Manifest is not installation proof. Not a cross-process transaction.",
+    })
+}
+
+/// Update an applied receipt using a distinct preview token. Persist both exact
+/// crash images before replacing settings; preserve the first original backup.
+pub fn update(settings: &Path, manifest: &Path, after: bool, expected_token: &str) -> Result<bool> {
+    let (initial, initial_receipt, _) = update_selection(settings, manifest)?;
+    if update_token(&initial, &initial_receipt, after) != expected_token {
+        return Err(EditError::Changed);
+    }
+    if initial.before == Some(after) {
+        return Ok(false);
+    }
+    let _lock = lock(settings)?;
+    let (current, receipt_bytes, mut receipt) = update_selection(settings, manifest)?;
+    if update_token(&current, &receipt_bytes, after) != expected_token {
+        return Err(EditError::Changed);
+    }
+    #[cfg(unix)]
+    let _metadata_check = unix_replacement_source(settings).map_err(|_| EditError::Unsupported)?;
+    let mut document = current.document.clone();
+    set_field(&mut document, Some(after), false);
+    let output = encode(&document)?;
+    receipt.format = 2;
+    receipt.phase = Phase::Updating;
+    receipt.updating = Some(UpdateIntent {
+        previous: receipt.after,
+        previous_digest: digest(&current.bytes),
+    });
+    receipt.after = after;
+    receipt.after_digest = digest(&output);
+    receipt.restore_digest = None;
+    let receipt_path = sibling(settings, RECEIPT)?;
+    if read(settings, "settings.json")? != current.bytes
+        || read(manifest, "package.json")? != current.manifest
+        || read(&receipt_path, RECEIPT)? != receipt_bytes
+    {
+        return Err(EditError::Changed);
+    }
+    let pending = serde_json::to_vec(&receipt).map_err(|_| EditError::Io)?;
+    replace_receipt(&receipt_path, &pending)?;
+    if read(settings, "settings.json")? != current.bytes
+        || read(manifest, "package.json")? != current.manifest
+        || read(&receipt_path, RECEIPT)? != pending
+    {
+        return Err(EditError::Changed);
+    }
+    replace(settings, &output)?;
+    if read(settings, "settings.json")? != output
+        || read(manifest, "package.json")? != current.manifest
+        || read(&receipt_path, RECEIPT)? != pending
+    {
+        return Err(EditError::Changed);
+    }
+    receipt.phase = Phase::Applied;
+    receipt.updating = None;
+    replace_receipt(
+        &receipt_path,
+        &serde_json::to_vec(&receipt).map_err(|_| EditError::Io)?,
+    )?;
+    Ok(true)
+}
+
 fn parse_receipt(bytes: &[u8]) -> Result<Receipt> {
     let value = parse::parse_json(bytes).map_err(|_| EditError::Unsupported)?;
     serde_json::from_value(value).map_err(|_| EditError::Unsupported)
@@ -282,15 +396,40 @@ fn parse_receipt(bytes: &[u8]) -> Result<Receipt> {
 
 // Shared with the mutating restore path: an observation never relaxes its checks.
 fn recovery_action(selected: &Selection, receipt: &Receipt) -> Result<RecoveryAction> {
-    if receipt.format != 1
+    if !matches!(receipt.format, 1 | 2)
         || receipt.selection_binding != selected.binding
         || receipt.manifest_digest != digest(&selected.manifest)
-        || receipt.before == Some(receipt.after)
+        || (receipt.format == 1 && receipt.before == Some(receipt.after))
         || (!receipt.had_general && receipt.before.is_some())
         || ![&receipt.before_digest, &receipt.after_digest]
             .iter()
             .all(|d| d.len() == 64 && d.bytes().all(|c| c.is_ascii_hexdigit()))
     {
+        return Err(EditError::Unsupported);
+    }
+    if receipt.format == 1 && (receipt.phase == Phase::Updating || receipt.updating.is_some()) {
+        return Err(EditError::Unsupported);
+    }
+    if receipt.phase == Phase::Updating {
+        let intent = receipt.updating.as_ref().ok_or(EditError::Unsupported)?;
+        if intent.previous == receipt.after
+            || intent.previous_digest.len() != 64
+            || !intent
+                .previous_digest
+                .bytes()
+                .all(|c| c.is_ascii_hexdigit())
+            || receipt.restore_digest.is_some()
+        {
+            return Err(EditError::Unsupported);
+        }
+        let current_digest = digest(&selected.bytes);
+        if (current_digest == intent.previous_digest && selected.before == Some(intent.previous))
+            || (current_digest == receipt.after_digest && selected.before == Some(receipt.after))
+        {
+            return Ok(RecoveryAction::RestoreField);
+        }
+        return Err(EditError::Drift);
+    } else if receipt.updating.is_some() {
         return Err(EditError::Unsupported);
     }
     if receipt.phase == Phase::Restoring {
@@ -364,6 +503,19 @@ pub fn recovery_preview(settings: &Path, manifest: &Path) -> Result<RecoveryPrev
 /// Restore only the backed-up field. Unrelated external edits are preserved.
 /// The receipt remains on any error; successful restoration removes it.
 pub fn restore(settings: &Path, manifest: &Path) -> Result<bool> {
+    restore_impl(
+        settings,
+        manifest,
+        #[cfg(test)]
+        &|| Ok(()),
+    )
+}
+
+fn restore_impl(
+    settings: &Path,
+    manifest: &Path,
+    #[cfg(test)] before_settings_write: &dyn Fn() -> Result<()>,
+) -> Result<bool> {
     let _initial = selection(settings, manifest)?;
     let _lock = lock(settings)?;
     let selected = selection(settings, manifest)?;
@@ -387,12 +539,18 @@ pub fn restore(settings: &Path, manifest: &Path) -> Result<bool> {
     #[cfg(unix)]
     let _metadata_check = unix_replacement_source(settings).map_err(|_| EditError::Unsupported)?;
     receipt.phase = Phase::Restoring;
+    receipt.updating = None;
+    receipt.after = selected.before.ok_or(EditError::Unsupported)?;
     receipt.after_digest = digest(&selected.bytes);
     receipt.restore_digest = Some(digest(&output));
     replace_receipt(
         &receipt_path,
         &serde_json::to_vec(&receipt).map_err(|_| EditError::Io)?,
     )?;
+    // Test-only, per-call fault injection after the real receipt replacement.
+    // No runtime switch or hook is present in production builds.
+    #[cfg(test)]
+    before_settings_write()?;
     if read(settings, "settings.json")? != selected.bytes {
         return Err(EditError::Changed);
     }

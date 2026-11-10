@@ -21,6 +21,9 @@ class OfflineDriver:
         self.status = ''
         self.target = False
         self.preview_hash = None
+        self.preview_value = False
+        self.preview_target = False
+        self.updating = False
         self.clicks = []
 
     def one(self, selector): return 'checkbox'
@@ -42,7 +45,10 @@ class OfflineDriver:
         return []
     def text(self, selector):
         if 'Vim 恢复状态观察' in selector: return self.recovery
-        if "@role='dialog'" in selector: return '原值：关闭；目标：启用。'
+        if "@role='dialog'" in selector:
+            return ('当前值：' + ('启用' if self.preview_value else '关闭') + '；目标：'
+                    + ('启用' if self.preview_target else '关闭') + '。'
+                    + ('首次管理前的原值' if self.updating else ''))
         return self.status
     def wait(self, predicate, **kwargs):
         if not predicate(): raise harness.Failure('ui_wait_expired')
@@ -64,9 +70,12 @@ class OfflineDriver:
             self.dialog = False
             if self.fault == 'cancel_alert': self.status = subject.ERROR
             if self.fault == 'cancel_recovery': self.recovery = 'stale recovery'
-        elif label == '预览 Vim 变更':
+        elif label in ('预览 Vim 变更', '预览更新受管 Vim 值'):
             self.dialog = True
             self.preview_hash = subject.digest(settings.read_bytes())
+            self.preview_value = json.loads(settings.read_bytes())['general']['vimMode']
+            self.preview_target = self.target
+            self.updating = label == '预览更新受管 Vim 值'
         elif label == '撤销受管 Vim 设置': self.dialog = True
         elif label == '确认应用 Vim 变更':
             self.dialog = False
@@ -85,6 +94,20 @@ class OfflineDriver:
             harness.write_private(self.root / subject.LOCK, b'')
             if self.fault == 'apply_extra': harness.write_private(self.root / 'extra', b'')
             self.status = '所选文件的 Vim 模式字段已应用。尚未验证 Qwen 实际运行效果。'
+        elif label == '确认更新受管 Vim 值':
+            self.dialog = False
+            if self.preview_hash != subject.digest(settings.read_bytes()):
+                self.status = subject.ERROR
+                if self.fault == 'update_stale_write': settings.write_bytes(subject.original())
+                return
+            applied = json.dumps(subject.document(self.target)).encode()
+            settings.write_bytes(applied)
+            record = json.loads(receipt.read_bytes())
+            record.update(format=2, after=self.target, after_digest=subject.digest(applied))
+            if self.fault == 'update_backup': record['before'] = self.preview_value
+            if self.fault == 'update_value': settings.write_bytes(json.dumps(subject.document(not self.target)).encode())
+            receipt.write_bytes(json.dumps(record).encode())
+            self.status = '受管 Vim 值已更新；首次原值仍保留供撤销。尚未验证 Qwen 实际运行效果。'
         elif label == '确认撤销 Vim 设置':
             self.dialog = False
             if not json.loads(settings.read_bytes())['general']['vimMode']:
@@ -206,7 +229,7 @@ class Tests(unittest.TestCase):
 
     def test_offline_lifecycle_model_and_injected_failures(self):
         for fault in (None, 'canary', 'stale_write', 'apply_extra', 'conflict_write',
-                      'restore_receipt', 'recovery_write'):
+                      'restore_receipt', 'recovery_write', 'update_stale_write', 'update_backup', 'update_value'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 driver = OfflineDriver(root, fault)
@@ -257,6 +280,7 @@ class Tests(unittest.TestCase):
             subject.assert_coverage(records)
             self.assertEqual(driver.clicks.count("//button[text()='确认应用 Vim 变更']"), 2)
             self.assertEqual(driver.clicks.count("//button[text()='确认撤销 Vim 设置']"), 2)
+            self.assertEqual(driver.clicks.count("//button[text()='确认更新受管 Vim 值']"), 3)
 
     def test_ambiguous_button_fails_without_click(self):
         class AmbiguousDriver(OfflineDriver):

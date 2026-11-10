@@ -596,6 +596,11 @@ fn extended_attributes_refuse_restore_before_receipt_transition() {
     let original = recovery_snapshot(&f);
     let inode = fs::metadata(&f.settings).unwrap().ino();
     assert!(matches!(
+        update_fixture(&f, false),
+        Err(EditError::Unsupported)
+    ));
+    assert_eq!(recovery_snapshot(&f), original);
+    assert!(matches!(
         restore(&f.settings, &f.manifest),
         Err(EditError::Unsupported)
     ));
@@ -900,5 +905,219 @@ fn readonly_comment_support_does_not_enable_owned_vim_rewrite() {
         ));
         assert_eq!(fs::read(&f.settings).unwrap(), bytes);
         assert_eq!(fs::read_dir(&f.dir).unwrap().count(), 2);
+    }
+}
+
+fn update_fixture(f: &Fixture, after: bool) -> Result<bool> {
+    let p = update_preview(&f.settings, &f.manifest, after)?;
+    update(&f.settings, &f.manifest, after, &p.token)
+}
+
+#[test]
+fn update_repeated_retains_first_original_and_unrelated_fields() {
+    for original in [None, Some(false), Some(true)] {
+        let f = Fixture::new(r#"{"$version":4,"unrelated":"keep"}"#);
+        let mut d = f.value();
+        if let Some(v) = original {
+            set_field(&mut d, Some(v), false);
+        }
+        fs::write(&f.settings, encode(&d).unwrap()).unwrap();
+        f.apply(original != Some(true)).unwrap();
+        let first: Receipt = parse_receipt(&fs::read(f.dir.join(RECEIPT)).unwrap()).unwrap();
+        for v in [false, true, false, true] {
+            update_fixture(&f, v).unwrap();
+        }
+        let last: Receipt = parse_receipt(&fs::read(f.dir.join(RECEIPT)).unwrap()).unwrap();
+        assert_eq!(last.format, 2);
+        assert_eq!(last.before, original);
+        assert_eq!(last.before_digest, first.before_digest);
+        assert_eq!(last.had_general, first.had_general);
+        restore(&f.settings, &f.manifest).unwrap();
+        assert_eq!(f.value(), d);
+    }
+}
+
+#[test]
+fn update_preview_and_noop_do_not_write_or_expose_values() {
+    let f = Fixture::new(r#"{"$version":4,"secret":"SENSITIVE"}"#);
+    f.apply(true).unwrap();
+    let bytes = fs::read(&f.settings).unwrap();
+    let receipt = fs::read(f.dir.join(RECEIPT)).unwrap();
+    fs::remove_file(f.dir.join(LOCK)).unwrap();
+    let p = update_preview(&f.settings, &f.manifest, true).unwrap();
+    assert!(!p.changes);
+    assert!(!serde_json::to_string(&p).unwrap().contains("SENSITIVE"));
+    assert!(!update(&f.settings, &f.manifest, true, &p.token).unwrap());
+    assert!(!f.dir.join(LOCK).exists());
+    assert_eq!(fs::read(&f.settings).unwrap(), bytes);
+    assert_eq!(fs::read(f.dir.join(RECEIPT)).unwrap(), receipt);
+}
+
+#[test]
+fn update_tokens_bind_receipt_document_target_and_operation() {
+    let f = Fixture::new(r#"{"$version":4}"#);
+    f.apply(true).unwrap();
+    let p = update_preview(&f.settings, &f.manifest, false).unwrap();
+    assert!(matches!(
+        update(&f.settings, &f.manifest, true, &p.token),
+        Err(EditError::Changed)
+    ));
+    let apply_p = preview(&f.settings, &f.manifest, false).unwrap();
+    assert!(matches!(
+        update(&f.settings, &f.manifest, false, &apply_p.token),
+        Err(EditError::Changed)
+    ));
+    let receipt = fs::read(f.dir.join(RECEIPT)).unwrap();
+    let mut changed_receipt = receipt.clone();
+    changed_receipt.push(b' ');
+    fs::write(f.dir.join(RECEIPT), changed_receipt).unwrap();
+    assert!(matches!(
+        update(&f.settings, &f.manifest, false, &p.token),
+        Err(EditError::Changed)
+    ));
+    fs::write(f.dir.join(RECEIPT), receipt).unwrap();
+    let mut d = f.value();
+    d["other"] = Value::Bool(true);
+    fs::write(&f.settings, encode(&d).unwrap()).unwrap();
+    assert!(matches!(
+        update(&f.settings, &f.manifest, false, &p.token),
+        Err(EditError::Changed)
+    ));
+    update_fixture(&f, false).unwrap();
+    restore(&f.settings, &f.manifest).unwrap();
+    assert_eq!(f.value()["other"], true);
+}
+
+#[test]
+fn update_refuses_missing_drifted_or_incomplete_receipts() {
+    let f = Fixture::new(r#"{"$version":4}"#);
+    assert!(update_preview(&f.settings, &f.manifest, true).is_err());
+    f.apply(true).unwrap();
+    let mut r = parse_receipt(&fs::read(f.dir.join(RECEIPT)).unwrap()).unwrap();
+    for phase in [Phase::Prepared, Phase::Restoring] {
+        r.phase = phase;
+        fs::write(f.dir.join(RECEIPT), serde_json::to_vec(&r).unwrap()).unwrap();
+        assert!(update_preview(&f.settings, &f.manifest, false).is_err());
+    }
+    r.phase = Phase::Applied;
+    fs::write(f.dir.join(RECEIPT), serde_json::to_vec(&r).unwrap()).unwrap();
+    let mut d = f.value();
+    set_field(&mut d, Some(false), false);
+    fs::write(&f.settings, encode(&d).unwrap()).unwrap();
+    assert!(matches!(
+        update_preview(&f.settings, &f.manifest, true),
+        Err(EditError::Drift)
+    ));
+}
+
+fn pending_update(f: &Fixture, after: bool) -> (Vec<u8>, Vec<u8>) {
+    let before = fs::read(&f.settings).unwrap();
+    let mut d = f.value();
+    set_field(&mut d, Some(after), false);
+    let output = encode(&d).unwrap();
+    let mut r = parse_receipt(&fs::read(f.dir.join(RECEIPT)).unwrap()).unwrap();
+    r.format = 2;
+    r.phase = Phase::Updating;
+    r.updating = Some(UpdateIntent {
+        previous: r.after,
+        previous_digest: digest(&before),
+    });
+    r.after = after;
+    r.after_digest = digest(&output);
+    fs::write(f.dir.join(RECEIPT), serde_json::to_vec(&r).unwrap()).unwrap();
+    (before, output)
+}
+
+#[test]
+fn interrupted_update_recovers_exact_pre_and_post_images_to_initial() {
+    for completed in [false, true] {
+        let f = Fixture::new(r#"{"$version":4,"other":42}"#);
+        let original = f.value();
+        f.apply(true).unwrap();
+        let (_, output) = pending_update(&f, false);
+        if completed {
+            fs::write(&f.settings, output).unwrap();
+        }
+        assert!(update_preview(&f.settings, &f.manifest, true).is_err());
+        assert_eq!(
+            recovery_preview(&f.settings, &f.manifest).unwrap().state,
+            RecoveryState::RestoreField
+        );
+        assert!(restore(&f.settings, &f.manifest).unwrap());
+        assert_eq!(f.value(), original);
+        assert!(!f.dir.join(RECEIPT).exists());
+    }
+}
+
+#[test]
+fn interrupted_update_refuses_unrelated_drift_too() {
+    let f = Fixture::new(r#"{"$version":4}"#);
+    f.apply(true).unwrap();
+    pending_update(&f, false);
+    let mut d = f.value();
+    d["external"] = Value::Bool(true);
+    fs::write(&f.settings, encode(&d).unwrap()).unwrap();
+    let bytes = fs::read(&f.settings).unwrap();
+    let r = fs::read(f.dir.join(RECEIPT)).unwrap();
+    assert_eq!(
+        recovery_preview(&f.settings, &f.manifest).unwrap().state,
+        RecoveryState::Conflict
+    );
+    assert!(matches!(
+        restore(&f.settings, &f.manifest),
+        Err(EditError::Drift)
+    ));
+    assert_eq!(fs::read(&f.settings).unwrap(), bytes);
+    assert_eq!(fs::read(f.dir.join(RECEIPT)).unwrap(), r);
+}
+
+#[test]
+fn interrupted_recovery_of_preupdate_image_can_retry() {
+    let f = Fixture::new(r#"{"$version":4,"general":{"vimMode":false}}"#);
+    let original = f.value();
+    f.apply(true).unwrap();
+    pending_update(&f, false);
+    let applied_bytes = fs::read(&f.settings).unwrap();
+    // Exercise the production transition, then simulate failure immediately
+    // after its actual Restoring receipt is persisted but before settings write.
+    assert!(matches!(
+        restore_impl(&f.settings, &f.manifest, &|| Err(EditError::Io)),
+        Err(EditError::Io)
+    ));
+    assert_eq!(fs::read(&f.settings).unwrap(), applied_bytes);
+    let persisted = parse_receipt(&fs::read(f.dir.join(RECEIPT)).unwrap()).unwrap();
+    assert_eq!(persisted.phase, Phase::Restoring);
+    assert!(persisted.updating.is_none());
+    assert!(persisted.after); // Actual pre-restore value, NOT update target=false.
+    assert_eq!(persisted.before, Some(false));
+    assert_eq!(persisted.after_digest, digest(&applied_bytes));
+    assert_eq!(
+        recovery_preview(&f.settings, &f.manifest).unwrap().state,
+        RecoveryState::RestoreField
+    );
+    assert!(restore(&f.settings, &f.manifest).unwrap());
+    assert_eq!(f.value(), original);
+    assert!(!f.dir.join(RECEIPT).exists());
+}
+
+#[test]
+fn malformed_update_intents_fail_closed() {
+    let f = Fixture::new(r#"{"$version":4}"#);
+    f.apply(true).unwrap();
+    pending_update(&f, false);
+    let r = parse_receipt(&fs::read(f.dir.join(RECEIPT)).unwrap()).unwrap();
+    for variant in 0..4 {
+        let mut bad = r.clone();
+        match variant {
+            0 => bad.format = 1,
+            1 => bad.updating = None,
+            2 => bad.updating.as_mut().unwrap().previous = false,
+            _ => bad.updating.as_mut().unwrap().previous_digest = "bad".into(),
+        }
+        fs::write(f.dir.join(RECEIPT), serde_json::to_vec(&bad).unwrap()).unwrap();
+        assert!(matches!(
+            restore(&f.settings, &f.manifest),
+            Err(EditError::Unsupported)
+        ));
     }
 }

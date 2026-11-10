@@ -138,3 +138,38 @@ user.* 属性，没有更改 SELinux/主机安全策略，也不声称验证了�
 ```sh
 python scripts/run-isolated.py cargo test --locked -p aisync-core extended_attributes_ -- --ignored
 ```
+
+## Updating an owned value / 更新已受管的值
+
+After a successful apply, use `aisync qwen vim-update-preview` with the same
+explicit paths and the new `--enabled` value. Confirm using `vim-update`, its
+returned `--preview-token`, and `--yes`. The desktop exposes a separate managed
+update preview and confirmation. This is not a fallback that silently takes
+ownership: a valid applied receipt and an unchanged managed field are required.
+The update token binds the selected document, manifest, value and receipt.
+Changing any of them requires another preview.
+
+The first original value or absence remains the restore destination across
+repeated updates. Existing version-1 receipts can be read; a real update records
+a version-2 transaction. An interrupted update is not resumed automatically:
+recovery accepts only its exact pre-update or post-update document image and
+restores the first original value. Other images are conflicts. Completed updates
+still allow unrelated edits to be retained during a later restore. Existing
+strict-JSON, metadata and cooperating-writer limits remain unchanged.
+
+首次应用成功后，可使用相同明确路径及新的 `--enabled` 值调用
+`vim-update-preview`，检查后用返回的 token、`--yes` 调用 `vim-update`。
+桌面提供独立的受管更新预览与确认，不会把初次应用失败自动转成更新。
+必须已有有效且已完成的受管记录，当前字段未被外部修改；配置、清单、目标值
+或受管记录变化后，旧预览失效。
+
+反复切换仍保留首次原值或“原本不存在”，撤销始终回到首次状态。旧版记录
+仍可读取，实际更新使用新版事务记录；更新中断时不自动继续，只允许对精确的
+更新前或更新后文档进行恢复，其他内容判为冲突。正常完成后撤销仍保留无关
+字段的外部修改。严格 JSON、元数据和协作锁的既有限制不变。
+
+Coverage uses authored configuration fixtures, the product core/CLI/native IPC,
+and the pinned readConfigFile helper. It does not execute the full Qwen runtime
+or establish effective layered settings.
+验证使用自建配置、产品核心/CLI/原生 IPC 及固定读取函数，不等于执行完整
+Qwen 运行时或验证多层设置的最终生效值。

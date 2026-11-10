@@ -177,6 +177,28 @@ enum QwenAction {
         #[arg(long, required = true)]
         yes: bool,
     },
+    /// Preview an already-owned Vim update; preserve the first original value.
+    VimUpdatePreview {
+        #[arg(long, value_parser = parse_qwen_settings)]
+        settings: PathBuf,
+        #[arg(long, value_parser = parse_qwen_manifest)]
+        runtime_manifest: PathBuf,
+        #[arg(long, action = clap::ArgAction::Set)]
+        enabled: bool,
+    },
+    /// Update owned general.vimMode with a separate update token; retain original recovery.
+    VimUpdate {
+        #[arg(long, value_parser = parse_qwen_settings)]
+        settings: PathBuf,
+        #[arg(long, value_parser = parse_qwen_manifest)]
+        runtime_manifest: PathBuf,
+        #[arg(long, action = clap::ArgAction::Set)]
+        enabled: bool,
+        #[arg(long)]
+        preview_token: String,
+        #[arg(long, required = true)]
+        yes: bool,
+    },
     /// Inspect recovery state without writes or lock creation; not permission to restore.
     #[command(
         long_about = "Inspect explicitly selected Qwen settings and the field-only recovery receipt without writes, lock creation or Agent execution. Exit 0 means an observation was produced, including no_receipt or conflict; it is not a restore authorization or write-readiness guarantee. Invalid, unsafe or mismatched files return an error. Restore always rechecks under its lock."
@@ -601,6 +623,35 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             anyhow::ensure!(yes, "--yes is required");
             let changed =
                 qwen::owned::apply(&settings, &runtime_manifest, enabled, &preview_token)?;
+            println!(
+                "{}",
+                serde_json::json!({"changed": changed, "field": "general.vimMode"})
+            );
+        }
+        Commands::Qwen {
+            action:
+                QwenAction::VimUpdatePreview {
+                    settings,
+                    runtime_manifest,
+                    enabled,
+                },
+        } => {
+            let preview = qwen::owned::update_preview(&settings, &runtime_manifest, enabled)?;
+            println!("{}", serde_json::to_string_pretty(&preview)?);
+        }
+        Commands::Qwen {
+            action:
+                QwenAction::VimUpdate {
+                    settings,
+                    runtime_manifest,
+                    enabled,
+                    preview_token,
+                    yes,
+                },
+        } => {
+            anyhow::ensure!(yes, "--yes is required");
+            let changed =
+                qwen::owned::update(&settings, &runtime_manifest, enabled, &preview_token)?;
             println!(
                 "{}",
                 serde_json::json!({"changed": changed, "field": "general.vimMode"})
