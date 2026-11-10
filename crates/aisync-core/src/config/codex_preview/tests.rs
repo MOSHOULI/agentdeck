@@ -243,12 +243,19 @@ fn symlink_ancestors_leaves_and_hardlinks_fail_closed() {
 fn control_character_paths_are_not_exposed() {
     let f = Fixture::new();
     let unsafe_home = f.home.join("private\nspoof");
-    fs::create_dir(&unsafe_home).unwrap();
+    // Windows rejects control characters in names before creation; validate the
+    // selected path itself without requiring an invalid directory to exist.
+    let before = f.snapshot();
     let error = build(&f.agent, &f.profile, &unsafe_home, None)
         .unwrap_err()
         .to_string();
     assert!(!error.contains("private"));
     assert!(!error.contains("spoof"));
+    assert_eq!(
+        f.snapshot(),
+        before,
+        "rejected selection must not create files"
+    );
 }
 #[cfg(unix)]
 #[test]
