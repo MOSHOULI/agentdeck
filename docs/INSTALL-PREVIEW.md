@@ -116,3 +116,13 @@ Pi 强制禁用安装脚本；其他现有适配器遵循 npm 配置，可能下
 测试包括合成 core/前端回归，以及真实 Linux WebView 经原生 IPC 调用“自建合成 npm”
 并安装“仅输出合成版本的 Codex 替身”。该验收验证管理流程，不代表安装过真实 Codex、
 验证过 npm 网络/依赖脚本、登录或模型运行。仍需完整 CI；本次不发布单独安装包。
+
+### Read-only empty vault / 空密钥库只读检查
+
+Startup also loads the vault list. Reading a missing vault now returns an empty
+result without creating its directory, lock or key material. Existing vaults
+retain their locking behavior. This does not provide an adversarial concurrent
+filesystem sandbox.
+
+启动时还会读取密钥列表。缺失的密钥库现在返回空结果，不创建目录、锁或主密钥；
+已有密钥库继续使用原文件锁。这不是防御恶意并发文件系统替换的沙箱。

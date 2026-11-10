@@ -168,6 +168,9 @@ impl Vault {
 
     /// 取明文密钥（复制用；主密钥不匹配时明确报错）
     pub fn get(&self, name: &str) -> crate::Result<Option<String>> {
+        if !keystore::vault_directory_exists(&self.dir)? {
+            return Ok(None);
+        }
         keystore::with_file_lock(&self.dir, || {
             let file = load_file(&self.dir)?;
             match file.keys.get(name) {
@@ -182,6 +185,9 @@ impl Vault {
 
     /// 列出密钥（脱敏）
     pub fn list(&self) -> crate::Result<Vec<KeyInfo>> {
+        if !keystore::vault_directory_exists(&self.dir)? {
+            return Ok(Vec::new());
+        }
         keystore::with_file_lock(&self.dir, || {
             let file = load_file(&self.dir)?;
             if file.keys.is_empty() {
@@ -292,7 +298,6 @@ fn import_from_v2_at(v2_dir: &Path, v3_dir: &Path) -> crate::Result<usize> {
 mod tests {
     use super::*;
 
-    #[cfg(windows)]
     fn temp_dir(tag: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -301,6 +306,64 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("agentdeck-vault-{}-{}", tag, nanos));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn absent_vault_reads_do_not_initialize_directories_or_files() {
+        let root = temp_dir("absent-read");
+        let parent = root.join("missing-parent");
+        let dir = parent.join("vault");
+        let vault = Vault::open(&dir);
+        assert!(vault.list().unwrap().is_empty());
+        assert_eq!(vault.get("missing").unwrap(), None);
+        assert!(!parent.exists());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn existing_empty_vault_reads_keep_lock_without_creating_key_material() {
+        let dir = temp_dir("empty-read");
+        let vault = Vault::open(&dir);
+        assert!(vault.list().unwrap().is_empty());
+        assert_eq!(vault.get("missing").unwrap(), None);
+        assert!(dir.join(".vault.lock").is_file());
+        assert!(!dir.join("master.key").exists());
+        assert!(!dir.join("vault.json").exists());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn vault_reads_reject_non_directory_without_mutating_it() {
+        let root = temp_dir("file-read");
+        let dir = root.join("vault");
+        std::fs::write(&dir, b"sentinel").unwrap();
+        let vault = Vault::open(&dir);
+        assert!(vault.list().is_err());
+        assert!(vault.get("missing").is_err());
+        assert_eq!(std::fs::read(&dir).unwrap(), b"sentinel");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn absent_vault_reads_reject_dangling_and_ancestor_links() {
+        use std::os::unix::fs::symlink;
+        let root = temp_dir("linked-read");
+        let target = root.join("absent-target");
+        let link = root.join("linked-vault");
+        symlink(&target, &link).unwrap();
+        for dir in [&link, &link.join("vault")] {
+            let vault = Vault::open(dir);
+            assert!(vault.list().is_err());
+            assert!(vault.get("missing").is_err());
+        }
+        assert!(!target.exists());
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
     }
 
     #[test]
