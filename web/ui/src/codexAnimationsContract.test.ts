@@ -14,3 +14,10 @@ it('recovery requires independently valid token except no_receipt', () => {
   for (const v of [null, {state:'new'}, {state:'restore_original',token:null}, {state:'no_receipt',token}, {state:'cleanup_receipt',token:'bad'}]) expect(() => recovery(v)).toThrow();
   expect(() => mutation({success:true})).toThrow(); expect(mutation(false)).toBe(false);
 });
+import { validateAnimationsCapability as capability, validateAnimationsObservation as observation } from './codexAnimationsContract';
+it('accepts only fixed platform capability values',()=>{ for(const value of ['linux_managed','windows_read_only','unsupported']) expect(capability(value)).toBe(value); for(const value of [null,{},'Windows 11','linux',true]) expect(()=>capability(value)).toThrow(); });
+it('read-only observation projects only fixed bool/state and rejects write-capable data',()=>{
+  const good={schemaVersion:1,readOnly:true,state:'ready',current:false,applySupported:false,restoreSupported:false};
+  expect(observation({...good,token:'secret',secret:'secret'})).toEqual(good);
+  for(const value of [null,{}, {...good,schemaVersion:2},{...good,readOnly:false},{...good,current:'false'},{...good,state:'missing'},{...good,applySupported:true},{...good,restoreSupported:true},{...good,state:'secret'}]) expect(()=>observation(value)).toThrow();
+});

@@ -1,3 +1,4 @@
+import { validateAnimationsCapability, validateAnimationsObservation } from "./codexAnimationsContract";
 import { validateAnimationsPreview, validateAnimationsRecovery, validateAnimationsMutation, validAnimationsToken } from "./codexAnimationsContract";
 import { validateCodexConfigurationPlan, demoCodexConfigurationPlan } from './codexConfigurationContract';
 import { validateDshRootPlan, validateDshRootVerification } from "./dshDistributionContract";
@@ -658,4 +659,12 @@ export async function restoreCodexAnimations(token: string) {
   useDemo(true);
   if (!validAnimationsToken(token)) throw new Error('请重新检查恢复状态。');
   return validateAnimationsMutation(await invoke<unknown>('restore_codex_animations', { token }));
+}
+export async function getCodexAnimationsCapability() {
+  useDemo(true);
+  return validateAnimationsCapability(await invoke<unknown>('get_codex_animations_capability'));
+}
+export async function observeCodexAnimations() {
+  useDemo(true);
+  return validateAnimationsObservation(await invoke<unknown>('observe_codex_animations'));
 }

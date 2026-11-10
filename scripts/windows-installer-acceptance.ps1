@@ -125,6 +125,7 @@ try {
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
     . (Join-Path $PSScriptRoot 'windows-qwen-ui-acceptance.ps1')
     . (Join-Path $PSScriptRoot 'windows-qoder-ui-acceptance.ps1')
+    . (Join-Path $PSScriptRoot 'windows-codex-ui-acceptance.ps1')
     $sentinel = Join-Path $homeDir '.agentdeck\acceptance-user-data.txt'
     $sentinelValue = 'Synthetic data, must survive installation, upgrade and uninstall.'
     New-Item -ItemType Directory -Force -Path (Split-Path $sentinel) | Out-Null
@@ -137,6 +138,7 @@ try {
     Check-QwenLifecycle
     Check-Gui 'restart' -KeepOpen
     Check-QoderReadonly
+    Check-CodexReadonly
     Run-Installer $Installer
     Assert-Version
     Assert-Sentinel
@@ -162,7 +164,7 @@ try {
 } finally {
     if ($null -ne $running -and -not $running.HasExited) { Stop-Process -Id $running.Id -Force -ErrorAction SilentlyContinue }
     # Preserve runner-local evidence on failure; never delete a real user's data.
-    @{ passed = $passed; buildCommit = $ExpectedCommit; events = $events; limitations = @('Synthetic settings plus a pinned official Linux archive (read only)', 'Qoder UI hashes a Linux archive on Windows; no Qoder execution or Windows runtime validation', 'No real Agent installation or authentication', 'Synthetic Qwen single-field UI lifecycle only; not real Qwen execution or complete GUI coverage', 'Published baseline is verified against its published checksum, not an independent signature') } |
+    @{ passed = $passed; buildCommit = $ExpectedCommit; events = $events; limitations = @('Synthetic settings plus a pinned official Linux archive (read only)', 'Qoder UI hashes a Linux archive on Windows; no Qoder execution or Windows runtime validation', 'No real Agent installation or authentication', 'Synthetic Codex Windows read-only UI observation only; no Windows writer or actual Codex runtime verification', 'Synthetic Qwen single-field UI lifecycle only; not real Qwen execution or complete GUI coverage', 'Published baseline is verified against its published checksum, not an independent signature') } |
         ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'result.json') -Encoding utf8
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $originalEnv[$name]) }
 }
