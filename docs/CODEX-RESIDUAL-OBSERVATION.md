@@ -54,12 +54,15 @@ Windows 上须明确传入已存在的本地固定盘 prefix。JSON 仅包含四
 整体路径、访问或变化错误以非零退出码和固定消息返回，不回传原始系统错误。
 不会从 PATH、npm 配置或会话令牌发现位置，也不会自动恢复旧请求的路径。
 
-During inspection, metadata-only handles retain existing ancestors and selected
+During inspection, read-capable handles, used only for metadata queries, retain existing ancestors and selected
 entries without sharing write/delete access. An already open incompatible writer
 can make the check unavailable; inspection can briefly prevent competing writes
 or renames. This is not a background watcher. Directory identity/type/attributes
 are checked rather than treating unrelated sibling activity as a global snapshot.
 
-检查期间保留仅访问属性的句柄，不共享写入和删除权限。已有不兼容写句柄可能令检查
+检查期间保留只查询属性但带读取访问权的句柄，不共享写入和删除权限。已有不兼容写句柄可能令检查
 不可用；检查也可能短暂阻止竞争写入或重命名。它不是后台监控器，也不把兄弟文件的
 活动当作全局快照。
+
+The handle read-access bit is required for Windows write-sharing exclusion; no file-content read API is called. Access-denied results stay unavailable, not missing.
+Windows 的写共享排斥需要句柄的读取访问位，但实现不调用文件内容读取 API。访问被拒绝仍表示不可检查，不表示缺失。

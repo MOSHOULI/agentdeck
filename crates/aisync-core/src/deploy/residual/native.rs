@@ -1,5 +1,8 @@
-//! Metadata-only Windows handles. All existing ancestor handles remain open
-//! without FILE_SHARE_WRITE or FILE_SHARE_DELETE. Reparse points are opened themselves, never followed.
+//! Read-capable Windows handles used solely for metadata queries (no ReadFile or
+//! directory enumeration). All existing ancestor handles remain open without
+//! FILE_SHARE_WRITE or FILE_SHARE_DELETE. Reparse points are opened themselves,
+//! never followed. Attribute-only access does not establish the needed sharing
+//! exclusion; FILE_READ_DATA (FILE_LIST_DIRECTORY for directories) does.
 use super::*;
 use std::{
     ffi::OsStr,
@@ -88,7 +91,10 @@ fn open(path: &Path) -> Result<Option<File>> {
     let handle = unsafe {
         CreateFileW(
             name.as_ptr(),
-            FILE_READ_ATTRIBUTES,
+            // Attribute-only access is outside the relevant sharing checks.
+            // Request read capability to establish them, but never consume data.
+            // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
+            FILE_READ_DATA | FILE_READ_ATTRIBUTES,
             FILE_SHARE_READ,
             std::ptr::null(),
             OPEN_EXISTING,
