@@ -8,6 +8,7 @@ use crate::registry::AgentDefinition;
 
 mod inspection;
 mod process_guard;
+pub mod residual;
 pub use inspection::{
     CodexStaticObservation, InstallPreview, InstallationDetails, InstallationInstance,
     InstallationSource, StaticObservationError, inspect_codex_windows_static, inspect_installation,

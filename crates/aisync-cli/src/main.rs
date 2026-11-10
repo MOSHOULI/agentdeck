@@ -21,6 +21,12 @@ enum DeployAction {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Windows-only fixed Codex slot metadata; never read file contents, run programs or authorize cleanup.
+    CodexResidual {
+        /// Explicit existing fixed-local-disk npm prefix; no environment discovery.
+        #[arg(long)]
+        prefix: PathBuf,
+    },
     /// Statically associate an explicit Windows Codex npm prefix; never run npm, Node or Codex.
     CodexStatic {
         #[arg(long)]
@@ -447,6 +453,10 @@ fn run_sync_with(
 
 fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
+        Commands::CodexResidual { prefix } => {
+            let observation = deploy::residual::inspect_codex_residual_slots(&prefix)?;
+            println!("{}", serde_json::to_string(&observation)?);
+        }
         Commands::CodexStatic { prefix, node } => {
             let observation = deploy::inspect_codex_windows_static(&prefix, &node)?;
             println!("{}", serde_json::to_string(&observation)?);
