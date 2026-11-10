@@ -306,7 +306,7 @@ def exercise(driver, fixture, home, records, phase, trace=None, observe=None):
     driver.wait(lambda: driver.elements(source))
     driver.wait(lambda: '实测版本 1.2.3' in driver.text(source))
     text = driver.text(source)
-    if any(value not in text for value in ('npm 全局目录匹配，安装历史未知', '实测版本 1.2.3', '@openai/codex', str(fixture['package']), str(fixture['manager']))):
+    if any(value not in text for value in ('npm 全局目录匹配，安装历史未知', '实测版本 1.2.3', '@openai/codex', str(fixture['package']), str(fixture['manager_bin'] / 'npm'))):
         raise InstallFailure('source_mismatch')
     done('observed_source')
     assert_no_configuration(home); done('no_configuration')

@@ -52,7 +52,7 @@ class OfflineDriver:
         if "@role='alert'" in selector:
             return '安装失败 ' + ('wrong failure' if self.fault == 'wrong_stale' else 'Installation target changed since confirmation')
         if "@role='status'" in selector: return '软件安装操作已完成，未应用配置'
-        return 'npm 全局目录匹配，安装历史未知 实测版本 1.2.3 @openai/codex ' + str(f['package']) + ' ' + str(f['manager'])
+        return 'npm 全局目录匹配，安装历史未知 实测版本 1.2.3 @openai/codex ' + str(f['package']) + ' ' + str(f['manager_bin'] / 'npm')
 
 
 class FixtureTests(unittest.TestCase):
@@ -177,6 +177,17 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual([entry['stage'] for entry in trace], ['install_initial_preview', 'install_stale_preview', 'install_fresh_preview'])
         self.assertIn('install_initial_preview_wait_dialog', phases)
         self.assertIn('install_cancel_wait_closed', phases)
+
+    def test_source_requires_observed_npm_command_not_canonical_preview_entry(self):
+        records = []
+        def install(): self.assertEqual(self.run_fixture(self.install_args()).returncode, 0)
+        driver = OfflineDriver(self.f, install)
+        original = driver.text
+        driver.text = lambda selector: original(selector).replace(str(self.f['manager_bin'] / 'npm'), str(self.f['manager'])) if selector == subject.SOURCE else original(selector)
+        with self.assertRaisesRegex(subject.InstallFailure, 'source_mismatch'):
+            subject.exercise(driver, self.f, self.root / 'empty-home', records, lambda _: None)
+        self.assertEqual([entry['stage'] for entry in records], ['preview_cancel', 'stale_revision', 'confirmed_install'])
+        self.assertEqual(driver.clicks.count(subject.CONFIRM), 2)
 
     def test_query_evidence_rejects_corrupt_or_linked_file(self):
         self.f['queries'].write_text('not-enum')
