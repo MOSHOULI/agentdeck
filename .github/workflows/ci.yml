@@ -94,6 +94,8 @@ jobs:
         run: python -B scripts/test_linux_install_webview.py
       - name: Official Codex installation harness (offline safety regressions)
         run: python -B scripts/test_codex_official_install.py
+      - name: Windows official Codex installation harness (offline safety regressions)
+        run: python -B scripts/test_codex_official_install_windows.py
       - name: Install pinned official Codex package layout (never execute agent)
         timeout-minutes: 10
         run: |
@@ -189,6 +191,26 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Windows official Codex installation harness (offline safety regressions)
+        run: python -B scripts/test_codex_official_install_windows.py
+      - name: Install pinned official Windows Codex package layout (never execute agent)
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $node = (Get-Command node.exe -CommandType Application).Source
+          $npm = Join-Path (Split-Path -Parent $node) 'node_modules/npm/bin/npm-cli.js'
+          if (-not (Test-Path -LiteralPath $npm -PathType Leaf)) { throw 'Official npm CLI missing beside trusted Node' }
+          $evidence = Join-Path $env:RUNNER_TEMP 'codex-windows-install-evidence'
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          python -B scripts/codex_official_install_windows.py --node $node --npm $npm --evidence (Join-Path $evidence 'result.json')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Codex-Windows-install-layout-${{ env.BUILD_SHA }}
+          path: ${{ runner.temp }}/codex-windows-install-evidence/result.json
+          if-no-files-found: error
+          retention-days: 14
       - run: npm ci --prefix web/ui
       - run: npm run build --prefix web/ui
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
