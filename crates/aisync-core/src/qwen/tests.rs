@@ -150,8 +150,8 @@ fn unsupported_schema_and_shape_never_return_partial_summary() {
 fn unsupported_syntax_is_not_reported_as_qwen_corruption() {
     for bytes in [
         b"{ private-secret".as_slice(),
-        b"\xef\xbb\xbf{\"$version\":4}",
-        b"{ /* comment */ \"$version\":4}",
+        b"\xef\xbb\xbf\xef\xbb\xbf{\"$version\":4}",
+        b"{ /* unterminated \"$version\":4}",
     ] {
         let (r, m, s) = fixture(MANIFEST, bytes);
         let report = inspect_with(&r, &s, Some(&m));
@@ -431,4 +431,27 @@ fn native_reader_rejects_fifo_without_opening_or_blocking() {
         inspect_settings(&s, Some(&m)).settings.issue,
         Some(InspectionIssue::NotRegularFile)
     );
+}
+
+#[test]
+fn commented_settings_summary_is_redacted_but_manifest_remains_strict() {
+    let settings = b"\xef\xbb\xbf{/*PRIVATE_COMMENT*/\"$version\":4,//SECRET_LINE\n\"general\":{}}";
+    let (r, m, s) = fixture(MANIFEST, settings);
+    let report = inspect_with(&r, &s, Some(&m));
+    assert_eq!(report.settings.status, ObservationStatus::Read);
+    assert!(report.settings.sections.as_ref().unwrap().general);
+    let output = serde_json::to_string(&report).unwrap();
+    assert!(!output.contains("PRIVATE_COMMENT") && !output.contains("SECRET_LINE"));
+    assert_eq!(r.files[&s], settings);
+    for prefix in ["/*comment*/", "\u{feff}"] {
+        let manifest = format!("{prefix}{}", std::str::from_utf8(MANIFEST).unwrap());
+        let (r, m, s) = fixture(manifest.as_bytes(), settings);
+        let report = inspect_with(&r, &s, Some(&m));
+        assert_eq!(
+            report.runtime_manifest.issue,
+            Some(InspectionIssue::UnsupportedJson)
+        );
+        assert_eq!(*r.reads.borrow(), vec![m]);
+        assert!(report.settings.sections.is_none());
+    }
 }

@@ -884,3 +884,21 @@ fn recovery_fifo_receipt_is_rejected_without_open_blocking() {
     assert!(!f.dir.join(LOCK).exists());
     assert_eq!(fs::read_dir(&f.dir).unwrap().count(), 3);
 }
+
+#[test]
+fn readonly_comment_support_does_not_enable_owned_vim_rewrite() {
+    for document in [
+        "\u{feff}{\"$version\":4}",
+        "{/*private-comment*/\"$version\":4}",
+        "{\"$version\":4}//private-comment",
+    ] {
+        let f = Fixture::new(document);
+        let bytes = fs::read(&f.settings).unwrap();
+        assert!(matches!(
+            preview(&f.settings, &f.manifest, true),
+            Err(EditError::Unsupported)
+        ));
+        assert_eq!(fs::read(&f.settings).unwrap(), bytes);
+        assert_eq!(fs::read_dir(&f.dir).unwrap().count(), 2);
+    }
+}

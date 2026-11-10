@@ -8,7 +8,7 @@ This command is a read-only foundation for a future versioned adapter, not autom
 
 The only reviewed declaration is `@qwen-code/qwen-code` version **0.27.0**, settings **$version 4**. Missing or different declarations do not enable settings inspection. A matching manifest is merely a file declaration, not proof of package authenticity, installation, runtime selection, or association with the selected settings. Unknown versions must be reviewed before extending the contract.
 
-The report shows a fixed subset of top-level section presence only. It does not validate all field types or nested schemas. Unknown sections are not printed or treated as invalid. Strict JSON is supported in this slice; Qwen itself also accepts JSON comments and BOM. An unsupported parsing result therefore does not mean Qwen rejects that file. No migration, environment-variable expansion, imports or effective-layer merging occurs.
+The report shows a fixed subset of top-level section presence only. It does not validate all field types or nested schemas. Unknown sections are not printed or treated as invalid. Read-only settings summaries accept one leading UTF-8 BOM, `//` line comments and `/* */` block comments, following the pinned upstream loading syntax. Comment markers inside strings remain literal. Trailing commas, unclosed comments/strings, invalid UTF-8 and duplicate keys are rejected. Original bytes (including comments/BOM) still count toward the 64 KiB limit, and shared depth, entry and string limits remain in force. Runtime manifests and the separate owned Vim editor still require strict JSON: the editor refuses commented/BOM files rather than discarding comments. An unsupported parsing result does not mean Qwen rejects that file. No migration, environment-variable expansion, imports or effective-layer merging occurs.
 
 Exit 0 means a report was serialized, even when evidence is missing or unsupported. Invalid path syntax is rejected by argument parsing. Output failure is an error. Only audited Windows and Linux reader platforms are supported; other targets fail closed. Symlinks/reparse points, special files and oversized input are rejected. Handle and component checks narrow, but do not eliminate, same-user concurrent replacement races. Reads may update access times; this is not an OS sandbox.
 
@@ -20,7 +20,7 @@ Settings can be layered across defaults, system defaults, user, project, system 
 
 本批仅研究包声明 **@qwen-code/qwen-code 0.27.0** 与设置 **$version 4**。没有匹配的包声明时不读取设置内容；未来版本不能自动视为兼容。声明匹配不证明软件来源可信、已安装、正在运行或与所选设置存在关联。
 
-报告只显示固定的顶层分区是否存在，不是完整字段类型、嵌套 schema 或生效配置校验。本批只支持严格 JSON；Qwen 官方还支持注释和 BOM，所以“本检查器无法解析”不等于官方配置无效。不会迁移旧格式、展开环境变量、导入其他文件或合并设置层级。
+报告只显示固定的顶层分区是否存在，不是完整字段类型、嵌套 schema 或生效配置校验。只读设置摘要支持单个开头 UTF-8 BOM、`//` 行注释和 `/* */` 块注释，字符串内的注释标记保持原意；拒绝尾随逗号、未闭合注释或字符串、无效 UTF-8 和重复键。64 KiB 限额按含注释和 BOM 的原始字节计算，并保留深度、条目和字符串限额。运行时包声明与独立 Vim 单字段编辑仍要求严格 JSON，拒绝带注释/BOM 的编辑，避免丢失注释。“本检查器无法解析”仍不等于官方配置无效。不会迁移旧格式、展开环境变量、导入其他文件或合并设置层级。
 
 退出码 0 只表示生成了报告，缺失或不支持也可产生报告。链接、重解析点、特殊文件及过大输入会被拒绝；未审查平台关闭读取。文件检查不能完全消除同权限进程的并发替换竞态，读取也可能更新访问时间。
 
@@ -44,3 +44,13 @@ Only fixed section labels/statuses reach the summary view. Raw backend errors, c
 桌面左侧的 **Qwen 配置检查** 使用同一只读检查器，无需终端。填写明确的 settings.json 和运行时 package.json 绝对路径后点击检查；两项均必填。修改或清除路径会作废尚未完成的结果；重复提交不会并发读取。清除不取消已发起的文件读取，只丢弃其结果。路径仅保存在组件内存中（切换工作区时仍保留），清除按钮或组件卸载后移除，不写入持久存储。
 
 摘要只显示固定分区标签和状态，不显示后端原始错误、配置值、动态键或任意说明文本。普通浏览器无法读取文件；显式 `?demo=1` 仅返回标注清楚的合成数据。此摘要操作不编辑、备份或恢复配置；同页独立的 Vim 单字段管理需单独确认，详见上方链接。应用的其他操作仍可能维护自身数据。
+
+### Syntax verification boundary / 语法验证边界
+
+Lexer, redacted-summary and CLI/native-reader tests use authored settings fixtures;
+CLI checks preserve all selected file bytes and leave no execution marker. This is
+not a real Qwen runtime acceptance, login check, migration or configuration rewrite.
+The shared strict parser and owned Vim write path are unchanged.
+
+词法、脱敏摘要及 CLI/原生读取测试使用自建配置文件，核验原始字节不变且没有执行标记。
+这不是实际运行 Qwen、登录、迁移或重写配置的验收；共享严格解析器和 Vim 写入路径不变。

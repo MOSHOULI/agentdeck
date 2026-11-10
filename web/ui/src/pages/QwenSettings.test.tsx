@@ -24,6 +24,7 @@ function deferred() {
 describe('Qwen settings workspace', () => {
   it('requires explicit paths and action, and only shows section metadata', async () => {
     render(<StrictMode><QwenSettings /></StrictMode>);
+    expect(screen.getByText(/设置摘要支持单个开头 UTF-8 BOM 和行\/块注释/)).toHaveTextContent('包声明及 Vim 编辑仍须严格 JSON');
     expect(bridge.inspectQwenSettings).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: '检查所选文件' })).toBeDisabled();
     fill();
