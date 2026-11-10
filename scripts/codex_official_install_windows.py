@@ -128,12 +128,49 @@ def open_read_no_follow(path):
         kernel.CloseHandle(handle); raise Failure('unsafe_regular_file') from None
 
 
+def handle_fingerprint(fd):
+    if os.name != 'nt':
+        m = os.fstat(fd)
+        return tuple(getattr(m, key) for key in ('st_dev', 'st_ino', 'st_mode', 'st_size', 'st_nlink', 'st_mtime_ns', 'st_ctime_ns'))
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes as w
+    class Information(ctypes.Structure):
+        _fields_ = [('attributes', w.DWORD), ('creation', w.FILETIME), ('access', w.FILETIME),
+                    ('write', w.FILETIME), ('volume', w.DWORD), ('size_high', w.DWORD),
+                    ('size_low', w.DWORD), ('links', w.DWORD), ('index_high', w.DWORD), ('index_low', w.DWORD)]
+    k = ctypes.WinDLL('kernel32', use_last_error=True)
+    k.GetFileInformationByHandle.argtypes = [w.HANDLE, ctypes.POINTER(Information)]
+    k.GetFileInformationByHandle.restype = w.BOOL
+    info = Information()
+    if not k.GetFileInformationByHandle(msvcrt.get_osfhandle(fd), ctypes.byref(info)):
+        raise Failure('file_identity_unavailable')
+    if info.links != 1 or info.attributes & (0x400 | 0x10): raise Failure('unsafe_regular_file')
+    # Native identity/attributes avoid Python's path-extension-dependent st_mode.
+    # Exclude access time: this verifier itself reads the file.
+    return (info.volume, info.index_high, info.index_low, info.attributes, info.links,
+            info.size_high, info.size_low, info.creation.dwHighDateTime, info.creation.dwLowDateTime,
+            info.write.dwHighDateTime, info.write.dwLowDateTime)
+
+
+def metadata_families_match(path_stat, handle_stat, windows):
+    keys = ('st_dev', 'st_ino', 'st_size', 'st_nlink', 'st_mtime_ns', 'st_ctime_ns')
+    mode_mask = ~0o111 if windows else ~0
+    return (path_stat.st_mode & mode_mask) == (handle_stat.st_mode & mode_mask) and all(
+        getattr(path_stat, key) == getattr(handle_stat, key) for key in keys)
+
+
 def file_digest(path, limit, algorithm='sha256'):
     before = regular(path, limit)
     fd = open_read_no_follow(path)
     with os.fdopen(fd, 'rb') as stream:
         opened = os.fstat(stream.fileno())
-        if unsafe_reparse(opened) or opened.st_nlink != 1 or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino): raise Failure('file_changed')
+        if unsafe_reparse(opened) or opened.st_nlink != 1 or not metadata_families_match(before, opened, os.name == 'nt'): raise Failure('file_changed')
+        pinned = handle_fingerprint(stream.fileno())
+        named = open_read_no_follow(path)
+        try:
+            if handle_fingerprint(named) != pinned: raise Failure('file_changed')
+        finally: os.close(named)
         digest = hashlib.new(algorithm)
         count = 0
         while block := stream.read(CHUNK):
@@ -141,9 +178,18 @@ def file_digest(path, limit, algorithm='sha256'):
             if count > limit: raise Failure('file_size_exceeded')
             digest.update(block)
         after = os.fstat(stream.fileno())
+        if handle_fingerprint(stream.fileno()) != pinned: raise Failure('file_changed')
+        named = open_read_no_follow(path)
+        try:
+            if handle_fingerprint(named) != pinned: raise Failure('file_changed')
+        finally: os.close(named)
     final = path.lstat()
     keys = ('st_dev', 'st_ino', 'st_mode', 'st_size', 'st_nlink', 'st_mtime_ns', 'st_ctime_ns')
-    if count != before.st_size or any(getattr(before, k) != getattr(after, k) or getattr(before, k) != getattr(final, k) for k in keys):
+    # Compare each Python metadata family with itself: on Windows path stat can
+    # synthesize executable mode from '.cmd', while fstat has no filename.
+    # Cross-family identity remains checked above, with native handle snapshots.
+    if count != before.st_size or count != opened.st_size or any(
+            getattr(opened, k) != getattr(after, k) or getattr(before, k) != getattr(final, k) for k in keys):
         raise Failure('file_changed')
     return digest.digest()
 

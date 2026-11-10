@@ -17,6 +17,16 @@ import codex_official_install_windows as h
 import windows_job_process as job
 
 class Offline(unittest.TestCase):
+    def test_path_handle_mode_normalization_is_narrow(self):
+        from types import SimpleNamespace
+        values=dict(st_dev=1,st_ino=2,st_size=10,st_nlink=1,st_mtime_ns=30,st_ctime_ns=40,st_mode=0o100666)
+        before=SimpleNamespace(**values)
+        executable=SimpleNamespace(**dict(values,st_mode=0o100777))
+        self.assertTrue(h.metadata_families_match(before,executable,True))
+        self.assertFalse(h.metadata_families_match(before,executable,False))
+        for key in values:
+            changed=SimpleNamespace(**dict(values,**{key:values[key]+(0o200 if key=='st_mode' else 1)}))
+            self.assertFalse(h.metadata_families_match(before,changed,True),key)
     def test_pins(self):
         self.assertEqual(h.NATIVE.version,'0.167.0-win32-x64');self.assertEqual(h.NATIVE.files,47);self.assertEqual(h.NATIVE.expanded,501483647)
         self.assertEqual(len(base64.b64decode(h.NATIVE.integrity)),64)
@@ -114,6 +124,11 @@ class WindowsRunner(unittest.TestCase):
     def execute(self,code,path,seconds=5,limit=65536):
         env={'SystemRoot':h.windows_directory(),'WINDIR':h.windows_directory(),'TEMP':str(path),'TMP':str(path)}
         return job.run([str(Path(sys.executable).resolve()),'-I','-c',code],path,env,seconds,limit)
+    def test_native_plain_cmd_exe_metadata_consistency(self):
+        with tempfile.TemporaryDirectory() as t:
+            for name in ('plain','codex.cmd','codex.exe'):
+                path=Path(t)/name;path.write_bytes(b'NOT_EXECUTED')
+                self.assertEqual(h.file_digest(path,100),hashlib.sha256(b'NOT_EXECUTED').digest())
     def test_alternate_stream_rejected(self):
         with tempfile.TemporaryDirectory() as t:
             path=Path(t)/'plain';path.write_bytes(b'plain');Path(str(path)+':extra').write_bytes(b'canary')
