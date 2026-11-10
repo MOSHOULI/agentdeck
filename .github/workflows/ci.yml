@@ -197,6 +197,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Windows official Codex installation harness (offline safety regressions)
         run: python -B scripts/test_codex_official_install_windows.py
+      - name: Build production selected-prefix static parser
+        run: cargo build --locked -p aisync-cli
       - name: Install pinned official Windows Codex package layout (never execute agent)
         shell: pwsh
         timeout-minutes: 10
@@ -206,7 +208,18 @@ jobs:
           if (-not (Test-Path -LiteralPath $npm -PathType Leaf)) { throw 'Official npm CLI missing beside trusted Node' }
           $evidence = Join-Path $env:RUNNER_TEMP 'codex-windows-install-evidence'
           New-Item -ItemType Directory -Path $evidence | Out-Null
-          python -B scripts/codex_official_install_windows.py --node $node --npm $npm --evidence (Join-Path $evidence 'result.json')
+          # Cargo may hardlink the top-level executable to deps. Copy reviewed
+          # build bytes into a new file; retain the verifier's no-hardlink policy.
+          $builtParser = Join-Path $PWD 'target/debug/aisync.exe'
+          $verifierDirectory = Join-Path $env:RUNNER_TEMP 'codex-static-verifier'
+          New-Item -ItemType Directory -Path $verifierDirectory | Out-Null
+          $parser = Join-Path $verifierDirectory 'aisync.exe'
+          $source = Get-Item -LiteralPath $builtParser
+          if ($source.PSIsContainer -or ($source.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $source.Length -lt 2 -or $source.Length -gt 402653184) { throw 'Trusted parser build metadata invalid' }
+          $sourceHash = (Get-FileHash -LiteralPath $builtParser -Algorithm SHA256).Hash
+          [IO.File]::Copy($builtParser, $parser, $false)
+          if ((Get-Item -LiteralPath $parser).Length -ne $source.Length -or (Get-FileHash -LiteralPath $parser -Algorithm SHA256).Hash -cne $sourceHash -or (Get-FileHash -LiteralPath $builtParser -Algorithm SHA256).Hash -cne $sourceHash) { throw 'Trusted parser copy mismatch' }
+          python -B scripts/codex_official_install_windows.py --node $node --npm $npm --parser $parser --evidence (Join-Path $evidence 'result.json')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         if: always()

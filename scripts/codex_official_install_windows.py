@@ -430,36 +430,77 @@ def toolchain(node_path, npm_path):
     return node, npm
 
 
-def run(node_path, npm_path):
+STATIC_OBSERVATION = {
+    'schemaVersion': 1, 'agentId': 'codex', 'observation': 'selected_layout_matched',
+    'runtimeStatus': 'runtime_not_run', 'searchScope': 'selected_prefix_only',
+    'selectedLauncher': 'codex.cmd', 'applySupported': False,
+    'upgradeSupported': False, 'uninstallSupported': False,
+}
+
+
+def parser_tool(path):
+    if not path.is_absolute(): raise Failure('static_parser_path_not_absolute')
+    path = path.resolve(strict=True)
+    regular(path, MAX_MEMBER)
+    with os.fdopen(open_read_no_follow(path), 'rb') as stream:
+        if stream.read(2) != b'MZ': raise Failure('static_parser_not_native_pe')
+    return path
+
+
+def static_observation(parser, paths, node, env):
+    # Only the trusted locally built CLI runs here. The command is explicitly
+    # selected-prefix static parsing: it cannot probe npm or Codex versions.
+    try:
+        stdout, stderr = bounded_process([str(parser), 'codex-static', '--prefix',
+            str(paths['prefix']), '--node', str(node)], paths['home'], env, seconds=30)
+    except Failure:
+        raise Failure('production_static_process_failed') from None
+    if stderr or len(stdout) > 4096: raise Failure('production_static_output_rejected')
+    try: result = json_object(stdout)
+    except Exception: raise Failure('production_static_output_rejected') from None
+    if (result != STATIC_OBSERVATION or set(result) != set(STATIC_OBSERVATION)
+            or any(type(result[k]) is not type(v) for k, v in STATIC_OBSERVATION.items())):
+        raise Failure('production_static_contract_mismatch')
+    return result
+
+
+def run(node_path, npm_path, parser_path):
     if sys.platform != 'win32' or platform.machine().lower() not in ('amd64', 'x86_64'): raise Failure('requires_windows_x64')
     node, npm = toolchain(node_path, npm_path)
-    with tempfile.TemporaryDirectory(prefix='agentdeck-codex-real-install-') as temporary:
+    parser = parser_tool(parser_path)
+    with tempfile.TemporaryDirectory(prefix='AgentDeck 官方 安装 ') as temporary:
         root = Path(temporary); paths = prepare(root / 'isolated')
         root_archive = root / 'root.tgz'; native_archive = root / 'native.tgz'
         download(ROOT, root_archive); download(NATIVE, native_archive)
         root_records = inventory(root_archive, ROOT); native_records = inventory(native_archive, NATIVE)
         env = clean_environment(paths, node)
         bounded_process(npm_command(node, npm, paths, root_archive), paths['home'], env)
-        return verify_install(paths, root_records, native_records)
+        verified = verify_install(paths, root_records, native_records)
+        observation = static_observation(parser, paths, node, env)
+        if verify_install(paths, root_records, native_records) != verified:
+            raise Failure('production_static_tree_changed')
+        return {**verified, 'production_static_parser_verified': True,
+                'production_static_observation': observation}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--node', required=True, type=Path, help='Trusted official local Node executable')
     parser.add_argument('--npm', required=True, type=Path, help='Trusted official npm CLI (symlink permitted)')
+    parser.add_argument('--parser', required=True, type=Path, help='Trusted aisync CLI built from the reviewed commit')
     parser.add_argument('--evidence', required=True, type=Path, help='New JSON result, never overwritten')
     args = parser.parse_args()
     report = {'buildCommit': os.environ.get('BUILD_SHA', ''), 'passed': False, 'package': ROOT_NAME, 'version': VERSION, 'platform': 'win32-x64',
               'root_integrity': 'sha512-' + ROOT.integrity, 'native_integrity': 'sha512-' + NATIVE.integrity,
               'real_npm_filesystem_install_verified': False, 'lifecycle_scripts_enabled': False,
-              'codex_executed': False, 'agentdeck_adapter_verified': False, 'network_isolated': False,
+              'codex_executed': False, 'agentdeck_adapter_verified': False, 'production_static_parser_verified': False, 'network_isolated': False,
               'login_or_model_verified': False, 'release_published': False}
     # Reserve output first; never start installation when evidence cannot be saved.
     fd = os.open(args.evidence, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
     code = 1
     with os.fdopen(fd, 'w', encoding='utf-8') as evidence:
         try:
-            report.update(run(args.node, args.npm)); report['passed'] = True
+            report.update(run(args.node, args.npm, args.parser)); report['passed'] = True
             report['real_npm_filesystem_install_verified'] = True; code = 0
         except Exception as error:
             report['failure_code'] = str(error) if isinstance(error, Failure) else 'installation_verification_failed'

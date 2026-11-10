@@ -14,7 +14,11 @@ const OUTPUT_LIMIT: usize = 8192;
 const FILE_LIMIT: usize = 128 * 1024;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
+mod codex_static;
 mod installation;
+pub use codex_static::{
+    CodexStaticObservation, StaticObservationError, inspect_codex_windows_static,
+};
 pub use installation::InstallPreview;
 pub(super) use installation::{
     can_install, install_agent, install_agent_from_preview, preview_install,
