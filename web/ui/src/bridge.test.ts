@@ -135,8 +135,8 @@ describe('runtime boundary', () => {
     await bridge.installAgent('codex', 'a'.repeat(64));
     expect(invoke).toHaveBeenCalledExactlyOnceWith('install_agent', { id: 'codex', revision: 'a'.repeat(64) });
     vi.mocked(invoke).mockClear();
-    await bridge.configureAgent('codex');
-    expect(invoke).toHaveBeenCalledExactlyOnceWith('configure_agent', { id: 'codex' });
+    await bridge.configureAgent('opencode');
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('configure_agent', { id: 'opencode' });
   });
   it('native IPC always takes precedence over demo and propagates failures', async () => {
     window.history.replaceState({}, '', '/?demo=1');

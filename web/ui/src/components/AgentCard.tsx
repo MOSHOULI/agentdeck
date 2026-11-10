@@ -1,3 +1,5 @@
+import { CodexConfigurationPlan } from './CodexConfigurationPlan';
+import { useWorkspaceActivityStore } from '../stores/workspaceActivity';
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { installationEvidenceProblem, runtimeMode, type AgentInstallPreview, type AgentInfo, type InstallationInstance, type InstallationSource } from '../bridge';
 import { Icon } from './Icon';
@@ -136,6 +138,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   const detailButton = useRef<HTMLButtonElement>(null);
   const detailsId = useId();
   const configurationNoteId = useId();
+  const workspaceBusy = useWorkspaceActivityStore(state => state.busy.agents);
   const mode = runtimeMode();
   const readOnly = mode !== 'native';
   const homepage = officialHomepage(agent.homepage);
@@ -144,7 +147,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   const installUnknown = !installed && !notDetected;
   const evidence = installationEvidence(agent);
   const canInstall = notDetected && agent.canInstall === true && !evidence.ambiguous;
-  const supportsConfigure = installed && agent.canConfigure === true;
+  const supportsConfigure = agent.id !== 'codex' && installed && agent.canConfigure === true;
   const canConfigure = supportsConfigure && !evidence.ambiguous;
   const configurationReason = evidence.invalid
     ? '安装检测证据不完整或状态不一致，已暂停安装与应用配置。请刷新列表。'
@@ -163,7 +166,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
       : agent.installHelp || '此 Agent 暂不支持自动安装，请参阅官方安装说明。';
   const blockedReason = readOnly
     ? mode === 'demo' ? '只读演示：请在桌面应用中管理安装与配置。' : '未连接桌面后端，请通过桌面应用管理安装与配置。'
-    : busy || pending ? '请等待当前操作完成。'
+    : busy || workspaceBusy || pending ? '请等待当前操作完成。'
       : dataStale ? '当前状态待刷新，请成功刷新列表后再操作。' : undefined;
   const disabledReason = blockedReason || configurationReason || (manual ? manualHelp : undefined);
 
@@ -173,7 +176,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   };
 
   const runOperation = async (operation: 'install' | 'configure') => {
-    if (operationLock.current || busy || readOnly || dataStale || plan
+    if (operationLock.current || useWorkspaceActivityStore.getState().busy.agents || busy || readOnly || dataStale || plan
       || (operation === 'install' ? !canInstall : !canConfigure)) return;
     operationLock.current = true;
     const token = generation.current;
@@ -195,7 +198,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   };
 
   const confirmInstall = async () => {
-    if (!plan || operationLock.current || busy || readOnly || dataStale || !canInstall) return;
+    if (!plan || operationLock.current || useWorkspaceActivityStore.getState().busy.agents || busy || readOnly || dataStale || !canInstall) return;
     operationLock.current = true;
     const revision = plan.revision;
     setPlan(null);
@@ -298,6 +301,8 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         </div>
       </div>
 
+      {agent.id === 'codex' && <CodexConfigurationPlan busy={busy || pending !== null || plan !== null} context={JSON.stringify([reviewContext, selected, agent.id, dataStale])} />}
+
       {pending === 'install' && !plan && <p role="status">安装操作处理中，请等待当前请求完成。<button type="button" className="button" onClick={cancelPreview}>取消预览展示</button></p>}
       {plan && <section role="dialog" data-testid="install-review-dialog" aria-label={`${agent.name} 安装计划`} className="agent-details">
         <h3>检查 npm 安装计划</h3>
@@ -343,7 +348,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
           <dl className="agent-facts">
             <div><dt>类型</dt><dd>{getUiTypeLabel(agent.uiType)} · {agent.category === 'ai-coding' ? 'AI 编程' : agent.category === 'personal-agent' ? '个人代理' : agent.category || '未提供'}</dd></div>
             <div><dt>安装状态</dt><dd>{status}{installed && ` · ${versionLabel}`}</dd></div>
-            <div><dt>自动管理</dt><dd>安装{evidence.ambiguous ? '已暂停（检测证据待确认）' : capabilityLabel(agent.canInstall)} · 配置{evidence.ambiguous ? '已暂停（检测证据待确认）' : capabilityLabel(agent.canConfigure)} · 自动卸载功能尚未提供</dd></div>
+            <div><dt>自动管理</dt><dd>安装{evidence.ambiguous ? '已暂停（检测证据待确认）' : capabilityLabel(agent.canInstall)} · 配置{agent.id === 'codex' ? '仅只读计划，不支持应用' : evidence.ambiguous ? '已暂停（检测证据待确认）' : capabilityLabel(agent.canConfigure)} · 自动卸载功能尚未提供</dd></div>
             {agent.installationMessage && <div><dt>检测说明</dt><dd>{agent.installationMessage}</dd></div>}
             <div><dt>来源证据</dt><dd>{evidence.active?.source.kind === 'npm' ? '当前 npm 目录关联已匹配，详见实例证据' : '安装来源未验证'}</dd></div>
             <div><dt>本地认证线索</dt><dd>{agent.authVerified ? '检测到本地认证配置' : '未验证'}</dd></div>

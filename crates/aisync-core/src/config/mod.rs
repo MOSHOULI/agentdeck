@@ -11,6 +11,11 @@ use serde_json::Value;
 
 use crate::registry::AgentDefinition;
 
+mod codex_preview;
+pub use codex_preview::{
+    CodexConfigurationPreview, CodexConfigurationTarget, preview_codex_configuration,
+};
+
 // Shared with MCP writers: config read/modify/write and transaction rollback
 // must not interleave within this process.
 static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -433,16 +438,26 @@ const INSTRUCTIONS_END: &str = "<!-- agentdeck:personalization:end -->";
 
 /// Replace only our managed block; never replace user-authored instructions.
 fn managed_instructions(target: &Path, template: &str) -> crate::Result<String> {
-    if template.contains(INSTRUCTIONS_START) || template.contains(INSTRUCTIONS_END) {
-        return Err(crate::Error::InjectFailed(
-            "Instruction template contains reserved AgentDeck markers".into(),
-        ));
-    }
+    validate_instruction_template(template)?;
     let existing = match fs::read_to_string(target) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(e.into()),
     };
+    managed_instructions_text(&existing, template)
+}
+
+fn validate_instruction_template(template: &str) -> crate::Result<()> {
+    if template.contains(INSTRUCTIONS_START) || template.contains(INSTRUCTIONS_END) {
+        return Err(crate::Error::InjectFailed(
+            "Instruction template contains reserved AgentDeck markers".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn managed_instructions_text(existing: &str, template: &str) -> crate::Result<String> {
+    validate_instruction_template(template)?;
     let block = format!(
         "{INSTRUCTIONS_START}\n{}\n{INSTRUCTIONS_END}",
         template.trim_end()

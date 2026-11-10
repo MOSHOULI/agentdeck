@@ -1,3 +1,4 @@
+import { validateCodexConfigurationPlan, demoCodexConfigurationPlan } from './codexConfigurationContract';
 import { validateDshRootPlan, validateDshRootVerification } from "./dshDistributionContract";
 import { scopeIds, validateScopeReport, type ScopePaths } from './qoderScopeContract';
 import { validateQoderWrite, type QoderWriteOperation } from './qoderContract';
@@ -365,8 +366,13 @@ export async function installAgent(id: string, revision: string): Promise<Instal
 }
 
 /** 单独应用默认 profile 支持的配置（调用方必须先明确确认） */
+export async function previewCodexConfiguration() {
+  if (useDemo()) return { plan: demoCodexConfigurationPlan(), synthetic: true };
+  return { plan: validateCodexConfigurationPlan(await invoke<unknown>('preview_codex_configuration')), synthetic: false };
+}
 export async function configureAgent(id: string): Promise<InstallOutcome> {
   useDemo(true);
+  if (id === 'codex') throw new Error('Codex 当前仅提供只读配置计划，不支持应用。');
   return invoke<InstallOutcome>('configure_agent', { id });
 }
 

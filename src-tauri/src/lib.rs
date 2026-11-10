@@ -31,6 +31,7 @@ pub fn run() {
             commands::deploy::preview_agent_install,
             commands::deploy::install_agent,
             commands::deploy::configure_agent,
+            commands::deploy::preview_codex_configuration,
             commands::deploy::uninstall_agent,
             commands::deploy::verify_agent_auth,
             commands::memory::collect_memory,

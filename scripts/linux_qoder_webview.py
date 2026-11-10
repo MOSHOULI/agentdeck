@@ -17,6 +17,7 @@ import qoder_complete_fixtures as complete
 import dsh_distribution_smoke as dsh_pinned
 import linux_qwen_webview as qwen
 import linux_install_webview as install_gui
+import linux_codex_config_webview as codex_config
 
 ELEMENT = 'element-6066-11e4-a52e-4f735466cecf'
 CANARY = 'QODER-SYNTHETIC-PRIVATE-CONTENT-NOT-FOR-UI'
@@ -563,6 +564,7 @@ def exercise_dsh_root(driver, paths, root, records, phase=lambda _: None):
 
 
 def failure_code(error):
+    if isinstance(error, codex_config.CodexConfigFailure): return 'codex_config_gui_acceptance_failed'
     if isinstance(error, install_gui.InstallFailure): return 'reviewed_install_gui_acceptance_failed'
     if isinstance(error, qwen.QwenFailure): return 'qwen_gui_acceptance_failed'
     if isinstance(error, complete.PreparationFailure): return 'complete_cache_preparation_failed'
@@ -700,10 +702,10 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
     home = temporary / 'home'; home.mkdir(mode=0o700)
     fixture_root = temporary / 'fixtures'; fixture_root.mkdir(mode=0o700)
     paths = fixtures(fixture_root)
-    env = dict(os.environ, HOME=str(home))
+    env = dict(os.environ, HOME=str(home), CODEX_HOME=str(home / '.codex'))
     for key, name in [('XDG_CONFIG_HOME', 'config'), ('XDG_CACHE_HOME', 'cache'), ('XDG_DATA_HOME', 'data'), ('XDG_STATE_HOME', 'state'), ('XDG_RUNTIME_DIR', 'runtime')]:
         directory = home / name; directory.mkdir(mode=0o700); env[key] = str(directory)
-    client = Driver(); process = None; records = []; write_records = []; scope_records = []; dsh_records = []; qwen_records = []; install_records = []; install_trace = []; passed = False
+    client = Driver(); process = None; records = []; write_records = []; scope_records = []; dsh_records = []; qwen_records = []; install_records = []; install_trace = []; codex_config_records = []; passed = False
     log = bytearray(); logger = None
     diagnostic = {'phase': 'start_driver', 'failure_code': None}
     def phase(value): diagnostic['phase'] = value
@@ -759,6 +761,8 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         install_gui.exercise(client, install_fixture, home, install_records, phase, install_trace,
                              lambda stage: install_gui.capture_geometry(client, evidence, stage))
         install_gui.assert_coverage(install_records)
+        codex_config.exercise(client, home, install_fixture, codex_config_records, write_private, phase)
+        codex_config.assert_coverage(codex_config_records)
         phase('acceptance_complete')
         passed = True
     except Exception as error:
@@ -791,7 +795,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         if CANARY.encode() in retained:
             retained = b'Synthetic private content suppressed.\n'; passed = False
         (evidence / 'driver.log').write_bytes(retained)
-        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'reviewed_install_checks': install_records, 'reviewed_install_query_trace': install_trace, 'synthetic_install_gui_verified': passed and install_records == [{'stage': name, 'verified': True} for name in install_gui.STAGES], 'real_agent_package_installed_or_executed': False, 'registry_or_lifecycle_compatibility_verified': False, 'qwen_owned_checks': qwen_records, 'qwen_owned_gui_verified': passed and qwen_records == [{'stage': name, 'verified': True} for name in qwen.STAGES], 'qwen_executed': False, 'desktop_write_checks': write_records, 'scope_checks': scope_records, 'dsh_root_checks': dsh_records, 'dsh_root_gui_verified': passed and len(dsh_records)==3, 'dsh_executed': False, 'synthetic_scope_gui_verified': passed and len(scope_records)==2, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_directory_mode': '0700'}, indent=2))
+        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'codex_config_plan_checks': codex_config_records, 'codex_config_plan_gui_verified': passed and codex_config_records == [{'stage': name, 'verified': True} for name in codex_config.STAGES], 'codex_config_plan_agent_executed': False, 'reviewed_install_checks': install_records, 'reviewed_install_query_trace': install_trace, 'synthetic_install_gui_verified': passed and install_records == [{'stage': name, 'verified': True} for name in install_gui.STAGES], 'real_agent_package_installed_or_executed': False, 'registry_or_lifecycle_compatibility_verified': False, 'qwen_owned_checks': qwen_records, 'qwen_owned_gui_verified': passed and qwen_records == [{'stage': name, 'verified': True} for name in qwen.STAGES], 'qwen_executed': False, 'desktop_write_checks': write_records, 'scope_checks': scope_records, 'dsh_root_checks': dsh_records, 'dsh_root_gui_verified': passed and len(dsh_records)==3, 'dsh_executed': False, 'synthetic_scope_gui_verified': passed and len(scope_records)==2, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_directory_mode': '0700'}, indent=2))
     if not passed:
         raise Failure('acceptance_not_confirmed')
 
