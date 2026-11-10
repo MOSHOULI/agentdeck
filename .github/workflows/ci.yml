@@ -76,6 +76,8 @@ jobs:
       - name: Verify official DSH root archive without installation or execution
         timeout-minutes: 5
         run: python -B scripts/dsh_distribution_smoke.py --cli "$PWD/target/debug/aisync" --destination "$RUNNER_TEMP/dsh-root-package-smoke"
+      - name: Codex animations Linux filesystem metadata guards
+        run: python scripts/run-isolated.py cargo test --locked -p aisync-core --test codex_animations_fs_metadata -- --ignored
       - name: Qwen owned setting rejects extended POSIX ACLs
         run: python scripts/run-isolated.py cargo test --locked -p aisync-core extended_posix_acl_is_not_silently_lost -- --ignored
       - name: Qwen owned setting refuses unpreserved Linux extended attributes
