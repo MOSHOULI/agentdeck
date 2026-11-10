@@ -49,6 +49,43 @@ def synthetic_metadata_diagnostics():
 
 
 class Offline(unittest.TestCase):
+    def test_production_static_parser_command_and_closed_output_contract(self):
+        paths = {'prefix': Path('/synthetic/prefix'), 'home': Path('/synthetic/home')}
+        good = json.dumps(h.STATIC_OBSERVATION).encode()
+        with patch.object(h, 'bounded_process', return_value=(good, b'')) as process:
+            self.assertEqual(h.static_observation(Path('/trusted/aisync.exe'), paths, Path('/trusted/node.exe'), {}), h.STATIC_OBSERVATION)
+            process.assert_called_once_with([str(Path('/trusted/aisync.exe')), 'codex-static', '--prefix', str(paths['prefix']), '--node', str(Path('/trusted/node.exe'))], paths['home'], {}, seconds=30)
+        malformed = [b'not-json', b'{}', good[:-1] + b',"extra":true}',
+                     good.replace(b'"schemaVersion": 1', b'"schemaVersion": true'),
+                     good.replace(b'"applySupported": false', b'"applySupported": 0'),
+                     good.replace(b'runtime_not_run', b'installed')]
+        for output in malformed:
+            with self.subTest(output=output), patch.object(h, 'bounded_process', return_value=(output, b'')):
+                with self.assertRaises(h.Failure): h.static_observation(Path('parser'), paths, Path('node'), {})
+        with patch.object(h, 'bounded_process', return_value=(good, b'private-output')):
+            with self.assertRaisesRegex(h.Failure, '^production_static_output_rejected$'):
+                h.static_observation(Path('parser'), paths, Path('node'), {})
+        with patch.object(h, 'bounded_process', side_effect=h.Failure('npm_process_failed')):
+            with self.assertRaisesRegex(h.Failure, '^production_static_process_failed$'):
+                h.static_observation(Path('parser'), paths, Path('node'), {})
+
+    def test_static_parser_requires_native_absolute_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parser = Path(tmp) / 'aisync.exe'; parser.write_bytes(b'MZauthored-never-executed')
+            self.assertEqual(h.parser_tool(parser), parser.resolve())
+            parser.write_bytes(b'not-native')
+            with self.assertRaises(h.Failure): h.parser_tool(parser)
+            with self.assertRaises(h.Failure): h.parser_tool(Path('relative.exe'))
+
+    def test_static_bridge_is_between_complete_layout_gates(self):
+        import inspect
+        source = inspect.getsource(h.run)
+        first = source.index('verified = verify_install(')
+        call = source.index('observation = static_observation(')
+        last = source.index('if verify_install(')
+        self.assertLess(first, call); self.assertLess(call, last)
+        self.assertIn("prefix='AgentDeck 官方 安装 '", source)
+
     def test_path_handle_mode_normalization_is_narrow(self):
         from types import SimpleNamespace
         values=dict(st_dev=1,st_ino=2,st_size=10,st_nlink=1,st_mtime_ns=30,st_ctime_ns=40,st_birthtime_ns=40,st_mode=0o100666)

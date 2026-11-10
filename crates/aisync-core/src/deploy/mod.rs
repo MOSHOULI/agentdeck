@@ -9,8 +9,8 @@ use crate::registry::AgentDefinition;
 mod inspection;
 mod process_guard;
 pub use inspection::{
-    InstallPreview, InstallationDetails, InstallationInstance, InstallationSource,
-    inspect_installation,
+    CodexStaticObservation, InstallPreview, InstallationDetails, InstallationInstance,
+    InstallationSource, StaticObservationError, inspect_codex_windows_static, inspect_installation,
 };
 
 use std::process::{Child, Command};

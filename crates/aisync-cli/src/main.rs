@@ -21,6 +21,13 @@ enum DeployAction {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Statically associate an explicit Windows Codex npm prefix; never run npm, Node or Codex.
+    CodexStatic {
+        #[arg(long)]
+        prefix: PathBuf,
+        #[arg(long)]
+        node: PathBuf,
+    },
     /// List supported agents and installation capabilities (does not run installers).
     Agents,
     /// Inspect DSH manifests or fixed offline evidence without executing or changing it.
@@ -440,6 +447,10 @@ fn run_sync_with(
 
 fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
+        Commands::CodexStatic { prefix, node } => {
+            let observation = deploy::inspect_codex_windows_static(&prefix, &node)?;
+            println!("{}", serde_json::to_string(&observation)?);
+        }
         Commands::Agents => {
             let doc = registry::load_registry_runtime()?;
             let mut agents: Vec<_> = doc.agents.into_values().collect();

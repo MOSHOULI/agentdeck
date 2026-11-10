@@ -197,6 +197,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Windows official Codex installation harness (offline safety regressions)
         run: python -B scripts/test_codex_official_install_windows.py
+      - name: Build production selected-prefix static parser
+        run: cargo build --locked -p aisync-cli
       - name: Install pinned official Windows Codex package layout (never execute agent)
         shell: pwsh
         timeout-minutes: 10
@@ -206,7 +208,7 @@ jobs:
           if (-not (Test-Path -LiteralPath $npm -PathType Leaf)) { throw 'Official npm CLI missing beside trusted Node' }
           $evidence = Join-Path $env:RUNNER_TEMP 'codex-windows-install-evidence'
           New-Item -ItemType Directory -Path $evidence | Out-Null
-          python -B scripts/codex_official_install_windows.py --node $node --npm $npm --evidence (Join-Path $evidence 'result.json')
+          python -B scripts/codex_official_install_windows.py --node $node --npm $npm --parser (Join-Path $PWD 'target/debug/aisync.exe') --evidence (Join-Path $evidence 'result.json')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         if: always()

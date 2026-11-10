@@ -133,7 +133,8 @@ using a fresh evidence path:
 ```powershell
 $node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
 $npm = Join-Path (Split-Path -Parent $node) 'node_modules/npm/bin/npm-cli.js'
-python -B scripts/codex_official_install_windows.py --node $node --npm $npm --evidence "$env:RUNNER_TEMP/codex-windows-install-result.json"
+cargo build --locked -p aisync-cli
+python -B scripts/codex_official_install_windows.py --node $node --npm $npm --parser (Join-Path $PWD 'target/debug/aisync.exe') --evidence "$env:RUNNER_TEMP/codex-windows-install-result.json"
 ```
 
 Offline regressions on Linux and Windows:
@@ -159,3 +160,44 @@ Windows 支持。验收在一次性的 GitHub-hosted Windows runner 中，使用
 配置、已完成登录或具备离线运行能力。真实 AgentDeck 安装适配器会执行版本和来源探测，
 仍须单独完成运行隔离验收。Windows Codex 配置界面仍为只读，本门禁不开放应用或恢复。
 其他架构、版本、npm 布局没有因此获得支持声明。
+
+
+### Production selected-prefix static parsing / 生产静态解析接合
+
+After the original official Windows package gate verifies all 50 package files
+and three exact shims, the harness invokes the trusted `aisync codex-static`
+command built from the same commit, before removing the temporary installation.
+The selected installation path contains Chinese characters and spaces. The
+command uses production static parsing for the selected prefix and supplied
+Node path; it does not execute npm, Codex, a launcher, or a version probe.
+The harness strictly checks its bounded JSON contract and re-runs the complete
+unchanged official layout verification afterward. Pins, inventories and shim
+hashes are not relaxed.
+
+`production_static_parser_verified` means only selected-prefix layout association.
+The observation explicitly says `runtime_not_run` and `selected_prefix_only`;
+apply, upgrade and uninstall remain unsupported in this observation.
+`agentdeck_adapter_verified` remains false: this is not a real-agent installation
+adapter/runtime test, measured version, complete PATH discovery, publisher
+attestation, or configuration-loading evidence. Failure remains a blocking gate.
+
+原有官方 Windows 门禁先完整验证 50 个包文件及 3 个精确启动器，随后在清理前
+调用同一提交构建的可信 `aisync codex-static`。临时安装路径包含中文和空格；
+入口使用生产静态解析逻辑，只观察指定 prefix 与 Node 路径，不执行 npm、Codex、
+启动器或版本探测。测试严格核对有界 JSON 返回，并在调用后重新执行完整官方布局
+验证，不放宽固定摘要、清单或启动器字节标准。
+
+新增证据仅证明指定目录的静态关联，明确记录“未运行”及“只检查选定 prefix”；
+不开放应用、升级、卸载。`agentdeck_adapter_verified` 仍为 false，不把静态结果
+称为真实 Agent 适配器运行、实测版本、完整 PATH 检测、发布者认证或配置读取成功。
+失败继续阻断，不发布新安装包。
+
+The standalone static command parses only `codex.cmd`. Its two companion
+launchers (`codex` and `codex.ps1`) receive regular-file and consistency checks,
+not equivalent launcher-content parsing. Exact byte verification of all three
+shims belongs to the outer official-package harness. Checks before and after
+parsing do not provide an atomic snapshot against concurrent external writers.
+
+独立静态命令只解析 `codex.cmd`；另外两个启动器（`codex`、`codex.ps1`）仅接受
+普通文件与一致性检查，不代表同等的启动器内容解析。三个启动器的精确字节验证由
+外层官方包验收程序完成。解析前后检查不构成针对外部并发写入的原子快照。
