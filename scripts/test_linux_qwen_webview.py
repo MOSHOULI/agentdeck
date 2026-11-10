@@ -62,6 +62,14 @@ class OfflineDriver:
             return
         label = selector.split("text()='")[1].split("']")[0]
         self.status = ''; self.recovery = ''
+        mismatched = receipt.exists() and json.loads(receipt.read_bytes())['manifest_digest'] != subject.digest((self.root / 'package.json').read_bytes())
+        if mismatched and label in ('只读检查 Vim 恢复状态', '预览更新受管 Vim 值', '确认撤销 Vim 设置'):
+            self.dialog = False
+            self.status = {'只读检查 Vim 恢复状态': '恢复诊断未完成。请检查所选文件与所有权记录；未获得有效观察结果。',
+                           '预览更新受管 Vim 值': '无法生成兼容预览。请检查所选文件、版本与受管记录。',
+                           '确认撤销 Vim 设置': subject.ERROR}[label]
+            if self.fault == 'manifest_boundary_write': settings.write_bytes(settings.read_bytes() + b' ')
+            return
         if label == '清除路径与结果':
             self.values.clear(); self.dialog = False; self.status = ''; self.recovery = ''
             if self.fault == 'clear_status': self.status = 'stale status'
@@ -87,7 +95,7 @@ class OfflineDriver:
             settings.write_bytes(applied)
             record = {'format': 1, 'phase': 'applied',
                       'selection_binding': subject.digest(os.fsencode(settings) + b'\0' + os.fsencode(self.root / 'package.json')),
-                      'manifest_digest': subject.digest(subject.MANIFEST), 'restore_digest': None,
+                      'manifest_digest': subject.digest((self.root / 'package.json').read_bytes()), 'restore_digest': None,
                       'before': False, 'after': True, 'had_general': True,
                       'before_digest': subject.digest(subject.original()), 'after_digest': subject.digest(applied)}
             harness.write_private(receipt, json.dumps(record).encode())
@@ -229,7 +237,7 @@ class Tests(unittest.TestCase):
 
     def test_offline_lifecycle_model_and_injected_failures(self):
         for fault in (None, 'canary', 'stale_write', 'apply_extra', 'conflict_write',
-                      'restore_receipt', 'recovery_write', 'update_stale_write', 'update_backup', 'update_value'):
+                      'restore_receipt', 'recovery_write', 'manifest_boundary_write', 'update_stale_write', 'update_backup', 'update_value'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 driver = OfflineDriver(root, fault)
@@ -244,6 +252,22 @@ class Tests(unittest.TestCase):
                         subject.exercise(driver, root, records, harness.write_private)
                     with self.assertRaises(subject.QwenFailure): subject.assert_coverage(records)
                     self.assertLess(len(records), len(subject.STAGES))
+
+    def test_current_version_independent_model_and_exact_coverage(self):
+        for fault in (None, 'canary', 'update_backup', 'update_value', 'restore_receipt'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); driver = OfflineDriver(root, fault); records = []
+                if fault is None:
+                    subject.exercise_current(driver, root, records, harness.write_private)
+                    subject.assert_current_coverage(records)
+                    self.assertEqual((root / 'package.json').read_bytes(), subject.CURRENT_MANIFEST)
+                    self.assertFalse((root / subject.RECEIPT).exists())
+                else:
+                    with self.assertRaises(subject.QwenFailure):
+                        subject.exercise_current(driver, root, records, harness.write_private)
+                    with self.assertRaises(subject.QwenFailure): subject.assert_current_coverage(records)
+        with self.assertRaises(subject.QwenFailure): subject.assert_current_coverage([])
+        self.assertNotEqual(subject.CURRENT_MANIFEST, subject.MANIFEST)
 
     def test_clear_and_cancel_reject_stale_status_alert_or_recovery(self):
         for fault in ('clear_status', 'clear_recovery', 'cancel_alert', 'cancel_recovery'):
@@ -279,7 +303,7 @@ class Tests(unittest.TestCase):
             subject.exercise(driver, Path(tmp), records, harness.write_private)
             subject.assert_coverage(records)
             self.assertEqual(driver.clicks.count("//button[text()='确认应用 Vim 变更']"), 2)
-            self.assertEqual(driver.clicks.count("//button[text()='确认撤销 Vim 设置']"), 2)
+            self.assertEqual(driver.clicks.count("//button[text()='确认撤销 Vim 设置']"), 3)
             self.assertEqual(driver.clicks.count("//button[text()='确认更新受管 Vim 值']"), 3)
 
     def test_ambiguous_button_fails_without_click(self):

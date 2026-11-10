@@ -152,7 +152,7 @@ fn selection(settings: &Path, manifest: &Path) -> Result<Selection> {
     let manifest = read(manifest, "package.json")?;
     let declaration = parse::parse_json(&manifest).map_err(|_| EditError::Unsupported)?;
     if declaration.get("name").and_then(Value::as_str) != Some("@qwen-code/qwen-code")
-        || declaration.get("version").and_then(Value::as_str) != Some("0.27.0")
+        || !super::reviewed_version(declaration.get("version").and_then(Value::as_str))
     {
         return Err(EditError::Unsupported);
     }

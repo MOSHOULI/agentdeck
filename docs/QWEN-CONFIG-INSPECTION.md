@@ -6,7 +6,7 @@
 
 This command is a read-only foundation for a future versioned adapter, not automatic configuration or restoration. Select both files yourself. It does not discover HOME/project settings, read `.env` or separate authentication files, execute Qwen/Node/npm, initialize profiles, create backups/locks, or write configuration. It does read the selected settings bytes, which may contain secrets; the JSON report excludes their values, arbitrary keys, paths and raw parser/OS errors. CLI argument errors may echo the input path; do not put secrets in command-line paths.
 
-The only reviewed declaration is `@qwen-code/qwen-code` version **0.27.0**, settings **$version 4**. Missing or different declarations do not enable settings inspection. A matching manifest is merely a file declaration, not proof of package authenticity, installation, runtime selection, or association with the selected settings. Unknown versions must be reviewed before extending the contract.
+The reviewed declarations are `@qwen-code/qwen-code` versions **0.27.0 and 0.27.2**, settings **$version 4**. Missing or different declarations do not enable settings inspection. A matching manifest is merely a file declaration, not proof of package authenticity, installation, runtime selection, or association with the selected settings. Unknown versions must be reviewed before extending the contract.
 
 The report shows a fixed subset of top-level section presence only. It does not validate all field types or nested schemas. Unknown sections are not printed or treated as invalid. Read-only settings summaries accept one leading UTF-8 BOM, `//` line comments and `/* */` block comments, following the pinned upstream loading syntax. Comment markers inside strings remain literal. Trailing commas, unclosed comments/strings, invalid UTF-8 and duplicate keys are rejected. Original bytes (including comments/BOM) still count toward the 64 KiB limit, and shared depth, entry and string limits remain in force. Runtime manifests and the separate owned Vim editor still require strict JSON: the editor refuses commented/BOM files rather than discarding comments. An unsupported parsing result does not mean Qwen rejects that file. No migration, environment-variable expansion, imports or effective-layer merging occurs.
 
@@ -18,7 +18,7 @@ Settings can be layered across defaults, system defaults, user, project, system 
 
 此命令是后续版本化适配器的只读基础，不是自动配置或恢复功能。必须明确选择 settings.json 和 package.json，不自动寻找用户或项目目录，不读取 .env 或独立认证文件，不执行 Qwen/Node/npm，不初始化配置、创建备份或锁，也不写文件。选定设置的字节可能包含密钥，因此 JSON 报告不返回配置值、任意键名、路径或原始解析/系统错误。CLI 参数错误可能回显输入路径，请勿把密钥放进命令行路径。
 
-本批仅研究包声明 **@qwen-code/qwen-code 0.27.0** 与设置 **$version 4**。没有匹配的包声明时不读取设置内容；未来版本不能自动视为兼容。声明匹配不证明软件来源可信、已安装、正在运行或与所选设置存在关联。
+本批仅研究包声明 **@qwen-code/qwen-code 0.27.0 / 0.27.2** 与设置 **$version 4**。没有匹配的包声明时不读取设置内容；未来版本不能自动视为兼容。声明匹配不证明软件来源可信、已安装、正在运行或与所选设置存在关联。
 
 报告只显示固定的顶层分区是否存在，不是完整字段类型、嵌套 schema 或生效配置校验。只读设置摘要支持单个开头 UTF-8 BOM、`//` 行注释和 `/* */` 块注释，字符串内的注释标记保持原意；拒绝尾随逗号、未闭合注释或字符串、无效 UTF-8 和重复键。64 KiB 限额按含注释和 BOM 的原始字节计算，并保留深度、条目和字符串限额。运行时包声明与独立 Vim 单字段编辑仍要求严格 JSON，拒绝带注释/BOM 的编辑，避免丢失注释。“本检查器无法解析”仍不等于官方配置无效。不会迁移旧格式、展开环境变量、导入其他文件或合并设置层级。
 

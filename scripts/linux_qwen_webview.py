@@ -16,10 +16,12 @@ RECEIPT = '.agentdeck-qwen-vim.json'
 LOCK = '.agentdeck-qwen-vim.lock'
 BASE = {'settings.json', 'package.json'}
 STAGES = ('recovery_no_receipt', 'preview_cancel_clear', 'stale_preview', 'apply',
-          'update_cancel', 'update_stale', 'update_false', 'update_true',
+          'manifest_boundary', 'update_cancel', 'update_stale', 'update_false', 'update_true',
           'recovery_restore_field', 'restore_cancel', 'restore_conflict',
           'recovery_conflict', 'recovery_cleanup_receipt', 'restore', 'clear')
 MANIFEST = b'{"name":"@qwen-code/qwen-code","version":"0.27.0"}'
+CURRENT_MANIFEST = b'{"name":"@qwen-code/qwen-code","version":"0.27.2"}'
+CURRENT_STAGES = ('apply', 'update_false', 'update_true', 'restore', 'clear')
 PANEL = "//section[@aria-label='Qwen Vim 模式管理']"
 SETTINGS = "//*[@id='qwen-settings']"
 RUNTIME = "//*[@id='qwen-manifest']"
@@ -44,7 +46,7 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def audit(root, members):
+def audit(root, members, manifest=MANIFEST):
     """Exact members, owner, modes, links, bounded hashes and metadata."""
     m = root.lstat()
     if not stat.S_ISDIR(m.st_mode) or m.st_uid != os.geteuid() or stat.S_IMODE(m.st_mode) != 0o700:
@@ -60,18 +62,18 @@ def audit(root, members):
             raise QwenFailure('unsafe_file') from None
         result[path.name] = (m.st_dev, m.st_ino, m.st_mode, m.st_uid, m.st_nlink,
                              m.st_size, m.st_mtime_ns, m.st_ctime_ns, hashed)
-    if result['package.json'][-1] != digest(MANIFEST):
+    if result['package.json'][-1] != digest(manifest):
         raise QwenFailure('manifest_changed')
     if LOCK in members and result[LOCK][-1] != digest(b''):
         raise QwenFailure('lock_changed')
     return result
 
 
-def read_checked(root, name, members):
-    before = audit(root, members)
+def read_checked(root, name, members, manifest=MANIFEST):
+    before = audit(root, members, manifest)
     with os.fdopen(os.open(root / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as stream:
         data = stream.read(65537)
-    if len(data) > 65536 or audit(root, members) != before or digest(data) != before[name][-1]:
+    if len(data) > 65536 or audit(root, members, manifest) != before or digest(data) != before[name][-1]:
         raise QwenFailure('file_changed')
     return data
 
@@ -88,8 +90,8 @@ def rewrite_settings(root, data, members):
     audit(root, members)
 
 
-def assert_document(root, enabled, members):
-    data = read_checked(root, 'settings.json', members)
+def assert_document(root, enabled, members, manifest=MANIFEST):
+    data = read_checked(root, 'settings.json', members, manifest)
     expected = document(enabled)
     actual = json.loads(data)
     # bool is an int subclass in Python: require an actual boolean as well.
@@ -98,10 +100,10 @@ def assert_document(root, enabled, members):
     return data
 
 
-def assert_receipt(root, data, applied, *, updated=False, enabled=True):
+def assert_receipt(root, data, applied, *, updated=False, enabled=True, manifest=MANIFEST):
     expected = {'format': 2 if updated else 1, 'phase': 'applied',
                 'selection_binding': digest(os.fsencode(root / 'settings.json') + b'\0' + os.fsencode(root / 'package.json')),
-                'manifest_digest': digest(MANIFEST), 'restore_digest': None,
+                'manifest_digest': digest(manifest), 'restore_digest': None,
                 'before': False, 'after': enabled, 'had_general': True,
                 'before_digest': digest(original()), 'after_digest': digest(applied)}
     actual = json.loads(data)
@@ -225,6 +227,22 @@ def exercise(driver, root, records, write_private, phase=lambda _: None):
     if CANARY.encode() in receipt:
         raise QwenFailure('private_content_exposed')
     finish('apply')
+    # Only authored package metadata changes; stale ownership never migrates.
+    (root / 'package.json').write_bytes(CURRENT_MANIFEST)
+    changed = audit(root, members, CURRENT_MANIFEST)
+    for action, expected in (
+        ('只读检查 Vim 恢复状态', '恢复诊断未完成。请检查所选文件与所有权记录；未获得有效观察结果。'),
+        ('预览更新受管 Vim 值', '无法生成兼容预览。请检查所选文件、版本与受管记录。'),
+        ('撤销受管 Vim 设置', ERROR),
+    ):
+        click(action)
+        if action == '撤销受管 Vim 设置': click('确认撤销 Vim 设置')
+        message(expected); clean_dom()
+        if audit(root, members, CURRENT_MANIFEST) != changed:
+            raise QwenFailure('manifest_boundary_write')
+    (root / 'package.json').write_bytes(MANIFEST)
+    manifest_image = audit(root, members)['package.json']
+    finish('manifest_boundary')
     def update_preview(current, target):
         click('预览更新受管 Vim 值')
         driver.wait(lambda: len(driver.elements(PANEL + "//*[@role='dialog' and @aria-label='确认更新受管 Vim 值']")) == 1)
@@ -295,3 +313,62 @@ def exercise(driver, root, records, write_private, phase=lambda _: None):
     driver.wait(lambda: driver.value(SETTINGS) == '' and driver.value(RUNTIME) == '')
     cleared_results(); unchanged(before); finish('clear')
     assert_coverage(records)
+
+
+def exercise_current(driver, root, records, write_private, phase=lambda _: None):
+    """Small independent 0.27.2 synthetic GUI/IPC lane; no Qwen process."""
+    write_private(root / 'settings.json', original())
+    write_private(root / 'package.json', CURRENT_MANIFEST)
+    members = set(BASE)
+    initial = audit(root, members, CURRENT_MANIFEST)
+    def click(label):
+        selector = "//button[text()='" + label + "']"
+        driver.wait(lambda: len(driver.elements(selector)) == 1 and driver.enabled(selector))
+        driver.click(selector)
+    def message(expected):
+        driver.wait(lambda: expected in driver.text(PANEL) and not driver.elements(DIALOG))
+    def finish(stage):
+        if audit(root, members, CURRENT_MANIFEST)['package.json'] != initial['package.json']:
+            raise QwenFailure('manifest_changed')
+        if any(CANARY in value for value in (driver.text('//body'), driver.command('GET', '/source'))):
+            raise QwenFailure('private_content_exposed')
+        records.append({'stage': stage, 'verified': True})
+    phase('qwen_current_open')
+    tab = "//*[@role='tab' and @aria-label='Qwen 配置检查']"
+    driver.wait(lambda: len(driver.elements(tab)) == 1); driver.click(tab)
+    for selector, path in ((SETTINGS, root / 'settings.json'), (RUNTIME, root / 'package.json')):
+        driver.type(selector, str(path)); driver.wait(lambda s=selector,p=path: driver.value(s) == str(p))
+    checkbox = PANEL + "//input[@type='checkbox']"
+    if driver.command('GET', '/element/' + driver.one(checkbox) + '/property/checked') is not True:
+        driver.click(checkbox)
+    click('预览 Vim 变更'); click('确认应用 Vim 变更')
+    message('所选文件的 Vim 模式字段已应用。尚未验证 Qwen 实际运行效果。')
+    members |= {RECEIPT, LOCK}
+    applied = assert_document(root, True, members, CURRENT_MANIFEST)
+    assert_receipt(root, read_checked(root, RECEIPT, members, CURRENT_MANIFEST), applied, manifest=CURRENT_MANIFEST)
+    finish('apply')
+    for enabled in (False, True):
+        driver.click(checkbox)
+        click('预览更新受管 Vim 值'); click('确认更新受管 Vim 值')
+        message('受管 Vim 值已更新；首次原值仍保留供撤销。尚未验证 Qwen 实际运行效果。')
+        applied = assert_document(root, enabled, members, CURRENT_MANIFEST)
+        assert_receipt(root, read_checked(root, RECEIPT, members, CURRENT_MANIFEST), applied,
+                       updated=True, enabled=enabled, manifest=CURRENT_MANIFEST)
+        finish('update_true' if enabled else 'update_false')
+    click('撤销受管 Vim 设置'); click('确认撤销 Vim 设置')
+    message('受管字段已撤销。尚未验证 Qwen 实际运行效果。')
+    members -= {RECEIPT}
+    assert_document(root, False, members, CURRENT_MANIFEST); finish('restore')
+    before = audit(root, members, CURRENT_MANIFEST)
+    click('清除路径与结果')
+    driver.wait(lambda: driver.value(SETTINGS) == '' and driver.value(RUNTIME) == ''
+                and not driver.elements(DIALOG)
+                and not driver.elements(PANEL + "//*[@role='status' or @role='alert']"))
+    if audit(root, members, CURRENT_MANIFEST) != before: raise QwenFailure('unexpected_write')
+    finish('clear')
+    assert_current_coverage(records)
+
+
+def assert_current_coverage(records):
+    if records != [{'stage': name, 'verified': True} for name in CURRENT_STAGES]:
+        raise QwenFailure('incomplete_current_coverage')

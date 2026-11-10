@@ -60,6 +60,17 @@ jobs:
       - run: python -B scripts/test_linux_codex_config_webview.py
       - run: python -B scripts/test_windows_codex_ui_acceptance.py
       - run: python -B scripts/test_qoder_complete_fixtures.py
+      - name: Qwen reviewed release verifier offline regressions
+        run: python -B scripts/test_qwen_release_evidence.py
+      - name: Qwen official 0.27.0 and 0.27.2 static configuration evidence (no execution)
+        timeout-minutes: 5
+        run: python -B scripts/verify_qwen_release_evidence.py --download --report "$RUNNER_TEMP/qwen-release-evidence.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Qwen-static-release-evidence-${{ env.BUILD_SHA }}
+          path: ${{ runner.temp }}/qwen-release-evidence.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Preserve DSH evidence bytes across Git checkout modes
         run: python -B scripts/test_dsh_evidence_checkout.py
       - uses: dtolnay/rust-toolchain@stable

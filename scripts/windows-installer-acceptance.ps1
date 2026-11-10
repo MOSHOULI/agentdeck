@@ -143,6 +143,7 @@ try {
     Assert-Sentinel
     Check-Gui 'clean-install' -KeepOpen
     Check-QwenLifecycle
+    Check-QwenCurrentLifecycle
     Check-Gui 'restart' -KeepOpen
     Check-QoderReadonly
     Check-ReviewedInstall
