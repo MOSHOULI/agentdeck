@@ -264,3 +264,64 @@ fn recovery_cli_observes_applied_and_conflict_without_mutation() {
         assert_eq!(before, snapshot(&f.root));
     }
 }
+
+#[test]
+fn owned_update_cli_requires_confirmation_and_retains_original() {
+    let f = Fixture::new();
+    let settings = f.root.join("settings.json");
+    let manifest = f.root.join("package.json");
+    let original: serde_json::Value =
+        serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    let p = aisync_core::qwen::owned::preview(&settings, &manifest, true).unwrap();
+    aisync_core::qwen::owned::apply(&settings, &manifest, true, &p.token).unwrap();
+    let before = snapshot(&f.root);
+    let output = f
+        .action_command("vim-update-preview")
+        .arg("--runtime-manifest")
+        .arg(&manifest)
+        .args(["--enabled", "false"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(!text.contains("SECRET"));
+    let plan: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(plan["before"], true);
+    assert_eq!(plan["after"], false);
+    assert_eq!(before, snapshot(&f.root));
+    let token = plan["token"].as_str().unwrap();
+    let denied = f
+        .action_command("vim-update")
+        .arg("--runtime-manifest")
+        .arg(&manifest)
+        .args(["--enabled", "false", "--preview-token", token])
+        .output()
+        .unwrap();
+    assert!(!denied.status.success());
+    assert_eq!(before, snapshot(&f.root));
+    let output = f
+        .action_command("vim-update")
+        .arg("--runtime-manifest")
+        .arg(&manifest)
+        .args(["--enabled", "false", "--preview-token", token, "--yes"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()["changed"],
+        true
+    );
+    let output = f
+        .action_command("vim-restore")
+        .arg("--runtime-manifest")
+        .arg(&manifest)
+        .arg("--yes")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&fs::read(&settings).unwrap()).unwrap(),
+        original
+    );
+    assert!(!f.root.join("executed").exists());
+}

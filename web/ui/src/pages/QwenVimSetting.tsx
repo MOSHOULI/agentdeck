@@ -18,7 +18,7 @@ export function QwenVimSetting({ settings, manifest, inspecting, onActivity }: P
   const [mutating, setMutating] = useState(false);
   const [recovery, setRecovery] = useState<QwenRecovery | null>(null);
   const [diagnosing, setDiagnosing] = useState(false);
-  const [preview, setPreview] = useState<QwenVimPreview | null>(null);
+  const [preview, setPreview] = useState<(QwenVimPreview & { operation: 'apply' | 'update' }) | null>(null);
   const [restoreConfirm, setRestoreConfirm] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState(false);
@@ -35,10 +35,10 @@ export function QwenVimSetting({ settings, manifest, inspecting, onActivity }: P
     generation.current++; setPreview(null); setRecovery(null); setRestoreConfirm(false); setMessage(''); setError(false);
   }, [settings, manifest]);
   const invalidate = () => { generation.current++; setPreview(null); setRecovery(null); setRestoreConfirm(false); setMessage(''); setError(false); };
-  const run = async (action: 'preview' | 'apply' | 'restore' | 'recovery') => {
-    if (running.current || inspecting || useWorkspaceActivityStore.getState().busy.qwen || !available || (action === 'apply' && (!preview || !preview.changes)) || (action === 'restore' && !restoreConfirm)) return;
+  const run = async (action: 'preview' | 'update-preview' | 'apply' | 'update' | 'restore' | 'recovery') => {
+    if (running.current || inspecting || useWorkspaceActivityStore.getState().busy.qwen || !available || ((action === 'apply' || action === 'update') && (!preview || !preview.changes || preview.operation !== action)) || (action === 'restore' && !restoreConfirm)) return;
     const selectedPreview = preview;
-    const writes = action === 'apply' || action === 'restore';
+    const writes = action === 'apply' || action === 'update' || action === 'restore';
     // Keep the IPC owner through unmount; cancel and path changes only discard results.
     const owner = Symbol(`qwen-vim-${action}`);
     useWorkspaceActivityStore.getState().setActivity('qwen', owner, true);
@@ -49,21 +49,22 @@ export function QwenVimSetting({ settings, manifest, inspecting, onActivity }: P
       if (action === 'recovery') {
         const next = await bridge.inspectQwenVimRecovery(settings, manifest);
         if (mounted.current && current === generation.current) setRecovery(next);
-      } else if (action === 'preview') {
-        const next = await bridge.previewQwenVim(settings, manifest, enabled);
-        if (mounted.current && current === generation.current) setPreview(next);
+      } else if (action === 'preview' || action === 'update-preview') {
+        const next = await (action === 'preview' ? bridge.previewQwenVim : bridge.previewQwenVimUpdate)(settings, manifest, enabled);
+        if (mounted.current && current === generation.current) setPreview({ ...next, operation: action === 'preview' ? 'apply' : 'update' });
       } else {
         const changed = action === 'apply'
           ? await bridge.applyQwenVim(settings, manifest, selectedPreview!.after, selectedPreview!.token)
+          : action === 'update' ? await bridge.updateQwenVim(settings, manifest, selectedPreview!.after, selectedPreview!.token)
           : await bridge.restoreQwenVim(settings, manifest);
         if (mounted.current && current === generation.current) setMessage(changed
-          ? action === 'apply' ? '所选文件的 Vim 模式字段已应用。尚未验证 Qwen 实际运行效果。' : '受管字段已撤销。尚未验证 Qwen 实际运行效果。'
+          ? action === 'apply' ? '所选文件的 Vim 模式字段已应用。尚未验证 Qwen 实际运行效果。' : action === 'update' ? '受管 Vim 值已更新；首次原值仍保留供撤销。尚未验证 Qwen 实际运行效果。' : '受管字段已撤销。尚未验证 Qwen 实际运行效果。'
           : '操作完成，未改变配置字段。');
       }
     } catch {
       if (mounted.current && current === generation.current) {
         setError(true);
-        setMessage(action === 'recovery' ? '恢复诊断未完成。请检查所选文件与所有权记录；未获得有效观察结果。' : action === 'preview' ? '无法生成兼容预览。请检查所选文件与版本。'
+        setMessage(action === 'recovery' ? '恢复诊断未完成。请检查所选文件与所有权记录；未获得有效观察结果。' : action === 'preview' || action === 'update-preview' ? '无法生成兼容预览。请检查所选文件、版本与受管记录。'
           : '未能确认操作完成。请检查文件与所有权记录；不要假定配置未改变或重复提交。重新预览或处理冲突后再试。');
       }
     } finally {
@@ -80,6 +81,7 @@ export function QwenVimSetting({ settings, manifest, inspecting, onActivity }: P
     <label><input type="checkbox" checked={enabled} disabled={blocked} onChange={event => { invalidate(); setEnabled(event.target.checked); }} />启用 Vim 模式</label>
     <div className="dsh-form-actions">
       <button type="button" className="button" disabled={blocked} onClick={() => { void run('preview'); }}>预览 Vim 变更</button>
+      <button type="button" className="button" disabled={blocked} onClick={() => { void run('update-preview'); }}>预览更新受管 Vim 值</button>
       <button type="button" className="button" disabled={blocked} onClick={() => { invalidate(); setRestoreConfirm(true); }}>撤销受管 Vim 设置</button>
     </div>
     <button type="button" className="button" disabled={blocked} onClick={() => { void run('recovery'); }}>只读检查 Vim 恢复状态</button>
@@ -90,14 +92,15 @@ export function QwenVimSetting({ settings, manifest, inspecting, onActivity }: P
       <button type="button" className="button" onClick={invalidate}>清除恢复诊断结果</button>
     </section>}
     {busy && <p role="status">{mutating ? '正在处理配置，不能取消已提交的文件操作。' : diagnosing ? '正在读取恢复状态，取消仅丢弃结果，不中止读取。' : '正在生成只读预览…'}</p>}
-    {preview && <div role="dialog" aria-label="确认 Vim 变更">
-      <p>原值：{preview.before === null ? '未声明（官方默认关闭）' : preview.before ? '启用' : '关闭'}；目标：{preview.after ? '启用' : '关闭'}。</p>
+    {preview && <div role="dialog" aria-label={preview.operation === 'update' ? '确认更新受管 Vim 值' : '确认 Vim 变更'}>
+      {preview.operation === 'update' && <p>仅更新已由 AgentDeck 管理且未冲突的值；撤销始终恢复首次管理前的原值，而非本次更新前的值。</p>}
+      <p>当前值：{preview.before === null ? '未声明（官方默认关闭）' : preview.before ? '启用' : '关闭'}；目标：{preview.after ? '启用' : '关闭'}。</p>
       <p>{preview.changes ? '确认后才会写入所选文件。' : '当前字段与目标一致，无需应用。'}</p>
-      <button type="button" className="button button-primary" disabled={blocked || !preview.changes} onClick={() => { void run('apply'); }}>确认应用 Vim 变更</button>
+      <button type="button" className="button button-primary" disabled={blocked || !preview.changes} onClick={() => { void run(preview.operation); }}>{preview.operation === 'update' ? '确认更新受管 Vim 值' : '确认应用 Vim 变更'}</button>
       <button type="button" className="button" onClick={invalidate}>取消 Vim 变更</button>
     </div>}
     {restoreConfirm && <div role="dialog" aria-label="确认撤销 Vim 设置">
-      <p>仅根据所选文件旁的 AgentDeck 所有权记录撤销受管字段；不是恢复完整配置。若字段已被外部更改，将拒绝覆盖。</p>
+      <p>仅根据所选文件旁的 AgentDeck 所有权记录撤销受管字段；恢复首次管理前的字段状态，不是本次更新前的值或完整配置。若字段已被外部更改，将拒绝覆盖。</p>
       <button type="button" className="button button-primary" disabled={blocked} onClick={() => { void run('restore'); }}>确认撤销 Vim 设置</button>
       <button type="button" className="button" onClick={invalidate}>取消撤销</button>
     </div>}

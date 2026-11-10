@@ -9,14 +9,14 @@ import { QwenSettings } from './QwenSettings';
 const inspection = { summary: qwenDemoSummary(), synthetic: false };
 const preview = { field: 'general.vimMode' as const, before: null, after: true, changes: true, token: 'a'.repeat(64) };
 const recovery = { field: 'general.vimMode' as const, state: 'restore_field' as const, changesSettings: true };
-const actions = ['inspect', 'preview', 'recovery', 'apply', 'restore'] as const;
+const actions = ['inspect', 'preview', 'update-preview', 'recovery', 'apply', 'update', 'restore'] as const;
 type Action = typeof actions[number];
 const pending: (() => void)[] = [];
 const activity = () => useWorkspaceActivityStore.getState();
 const inspect = () => fireEvent.submit(screen.getByRole('form', { name: 'Qwen 检查路径' }));
 const buttonNames = {
   inspect: '检查所选文件', preview: '预览 Vim 变更', recovery: '只读检查 Vim 恢复状态',
-  apply: '确认应用 Vim 变更', restore: '确认撤销 Vim 设置',
+  'update-preview': '预览更新受管 Vim 值', update: '确认更新受管 Vim 值', apply: '确认应用 Vim 变更', restore: '确认撤销 Vim 设置',
 } satisfies Record<Action, string>;
 function fill() {
   fireEvent.change(screen.getByLabelText('settings.json 绝对路径'), { target: { value: '/selected/settings.json' } });
@@ -36,23 +36,29 @@ function hold(action: Action) {
   if (action === 'preview') {
     const work = defer(preview); vi.mocked(bridge.previewQwenVim).mockReturnValueOnce(work.promise); return work;
   }
+  if (action === 'update-preview') {
+    const work = defer(preview); vi.mocked(bridge.previewQwenVimUpdate).mockReturnValueOnce(work.promise); return work;
+  }
   if (action === 'recovery') {
     const work = defer(recovery); vi.mocked(bridge.inspectQwenVimRecovery).mockReturnValueOnce(work.promise); return work;
   }
   const work = defer(true);
-  vi.mocked(action === 'apply' ? bridge.applyQwenVim : bridge.restoreQwenVim).mockReturnValueOnce(work.promise);
+  vi.mocked(action === 'apply' ? bridge.applyQwenVim : action === 'update' ? bridge.updateQwenVim : bridge.restoreQwenVim).mockReturnValueOnce(work.promise);
   return work;
 }
 async function prepare(action: Action) {
   if (action === 'apply') {
     fireEvent.click(screen.getByRole('button', { name: buttonNames.preview }));
     await screen.findByRole('dialog', { name: '确认 Vim 变更' });
+  } else if (action === 'update') {
+    fireEvent.click(screen.getByRole('button', { name: buttonNames['update-preview'] }));
+    await screen.findByRole('dialog', { name: '确认更新受管 Vim 值' });
   } else if (action === 'restore') {
     fireEvent.click(screen.getByRole('button', { name: '撤销受管 Vim 设置' }));
   }
 }
 function calls() {
-  return [bridge.inspectQwenSettings, bridge.previewQwenVim, bridge.inspectQwenVimRecovery, bridge.applyQwenVim, bridge.restoreQwenVim]
+  return [bridge.inspectQwenSettings, bridge.previewQwenVimUpdate, bridge.updateQwenVim, bridge.previewQwenVim, bridge.inspectQwenVimRecovery, bridge.applyQwenVim, bridge.restoreQwenVim]
     .map(fn => vi.mocked(fn).mock.calls.length);
 }
 function expectNoResults() {
@@ -60,10 +66,10 @@ function expectNoResults() {
   expect(screen.queryByRole('region', { name: 'Vim 恢复状态观察' })).not.toBeInTheDocument();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  expect(screen.queryByText(/字段已应用|受管字段已撤销|操作完成，未改变/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/受管 Vim 值已更新|字段已应用|受管字段已撤销|操作完成，未改变/)).not.toBeInTheDocument();
 }
 function expectBlocked() {
-  for (const name of [buttonNames.inspect, buttonNames.preview, buttonNames.recovery, '撤销受管 Vim 设置']) {
+  for (const name of [buttonNames.inspect, buttonNames.preview, buttonNames['update-preview'], buttonNames.recovery, '撤销受管 Vim 设置']) {
     expect(screen.getByRole('button', { name })).toBeDisabled();
   }
 }
@@ -73,6 +79,8 @@ beforeEach(() => {
   vi.spyOn(bridge, 'previewQwenVim').mockResolvedValue(preview);
   vi.spyOn(bridge, 'inspectQwenVimRecovery').mockResolvedValue(recovery);
   vi.spyOn(bridge, 'applyQwenVim').mockResolvedValue(true);
+  vi.spyOn(bridge, 'previewQwenVimUpdate').mockResolvedValue(preview);
+  vi.spyOn(bridge, 'updateQwenVim').mockResolvedValue(true);
   vi.spyOn(bridge, 'restoreQwenVim').mockResolvedValue(true);
 });
 afterEach(async () => {
@@ -91,7 +99,7 @@ describe('Qwen pending operation ownership', () => {
       const originalOwners = activity().owners.qwen;
       expect(originalOwners).toHaveLength(1);
       const dispatched = calls();
-      if (action === 'apply' || action === 'restore') {
+      if (action === 'apply' || action === 'update' || action === 'restore') {
         expect(screen.getByLabelText('settings.json 绝对路径')).toBeDisabled();
         expect(screen.getByLabelText('运行时 package.json 绝对路径')).toBeDisabled();
         expect(screen.getByRole('button', { name: '清除路径与结果' })).toBeDisabled();
@@ -103,7 +111,7 @@ describe('Qwen pending operation ownership', () => {
       expect(screen.getByLabelText('settings.json 绝对路径')).toHaveValue('/selected/settings.json');
       expectBlocked();
       inspect();
-      for (const name of [buttonNames.preview, buttonNames.recovery, '撤销受管 Vim 设置']) fireEvent.click(screen.getByRole('button', { name }));
+      for (const name of [buttonNames.preview, buttonNames['update-preview'], buttonNames.recovery, '撤销受管 Vim 设置']) fireEvent.click(screen.getByRole('button', { name }));
       expect(calls()).toEqual(dispatched);
       expectNoResults();
 
@@ -117,7 +125,7 @@ describe('Qwen pending operation ownership', () => {
       expectNoResults();
       act(() => activity().setActivity('qwen', otherOwner, false));
       expect(activity().busy.qwen).toBe(false);
-      for (const name of [buttonNames.inspect, buttonNames.preview, buttonNames.recovery, '撤销受管 Vim 设置']) {
+      for (const name of [buttonNames.inspect, buttonNames.preview, buttonNames['update-preview'], buttonNames.recovery, '撤销受管 Vim 设置']) {
         expect(screen.getByRole('button', { name })).toBeEnabled();
       }
       inspect();
@@ -154,6 +162,8 @@ describe('Qwen pending operation ownership', () => {
     { action: 'inspect', invalidate: 'path' },
     { action: 'preview', invalidate: 'clear' },
     { action: 'preview', invalidate: 'path' },
+    { action: 'update-preview', invalidate: 'clear' },
+    { action: 'update-preview', invalidate: 'path' },
     { action: 'recovery', invalidate: 'cancel' },
     { action: 'recovery', invalidate: 'clear' },
     { action: 'recovery', invalidate: 'path' },

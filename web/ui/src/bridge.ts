@@ -42,6 +42,16 @@ export async function applyQwenVim(settingsPath: string, runtimeManifest: string
   if (typeof enabled !== 'boolean' || typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) throw new Error('请重新预览。');
   return validateQwenMutation(await invoke<unknown>('apply_qwen_vim', { settingsPath, runtimeManifest, enabled, token }));
 }
+export async function previewQwenVimUpdate(settingsPath: string, runtimeManifest: string, enabled: boolean) {
+  qwenOwnedPaths(settingsPath, runtimeManifest);
+  if (typeof enabled !== 'boolean') throw new Error('设置值不受支持。');
+  return validateQwenVimPreview(await invoke<unknown>('preview_qwen_vim_update', { settingsPath, runtimeManifest, enabled }), enabled);
+}
+export async function updateQwenVim(settingsPath: string, runtimeManifest: string, enabled: boolean, token: string) {
+  qwenOwnedPaths(settingsPath, runtimeManifest);
+  if (typeof enabled !== 'boolean' || typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) throw new Error('请重新预览。');
+  return validateQwenMutation(await invoke<unknown>('update_qwen_vim', { settingsPath, runtimeManifest, enabled, token }));
+}
 export async function inspectQwenVimRecovery(settingsPath: string, runtimeManifest: string) {
   qwenOwnedPaths(settingsPath, runtimeManifest);
   return validateQwenRecovery(await invoke<unknown>('inspect_qwen_vim_recovery', { settingsPath, runtimeManifest }));

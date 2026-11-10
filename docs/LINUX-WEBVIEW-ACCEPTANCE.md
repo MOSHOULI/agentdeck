@@ -130,9 +130,11 @@ This gate validates AgentDeck GUI/native IPC against synthetic files, not Qwen
 execution, model access, credentials, networking or effective runtime settings.
 Issue #22's mandatory network-namespace blocker is unchanged.
 
-All eleven required records must appear in order: no-receipt read-only recovery;
+All fifteen required records must appear in order: no-receipt read-only recovery;
 preview/cancel/path-clear; stale-preview rejection after an external whitespace
-edit; apply preserving all unrelated values; restore-field read-only recovery;
+edit; apply preserving all unrelated values; managed-update preview cancellation;
+stale-update refusal; managed updates true-to-false and false-to-true;
+restore-field read-only recovery;
 restore cancellation; external managed-field conflict rejection; conflict
 read-only recovery; cleanup-receipt read-only recovery; successful restore; final
 path clear. Path changes, cancel and clear must remove dialogs, status/alert
@@ -150,7 +152,8 @@ regular single-link files, bounded hashes and metadata. Read-only and cancelled
 operations must preserve bytes and metadata; manifest bytes and metadata remain
 unchanged throughout. Apply validates the entire synthetic document and exact
 receipt fields, bindings, before/after hashes and types. Only the managed boolean
-may change. Symlinks, hardlinks, extra/missing members, wrong modes, ownership,
+may change. Repeated updates must retain the first original value and digest in
+a version-2 applied receipt; final restore returns to that first original value. Symlinks, hardlinks, extra/missing members, wrong modes, ownership,
 manifest drift and over-limit files fail closed. Fixture contents are never
 recorded; the shared synthetic private-value canary is checked in body and full
 bounded DOM at every recorded stage and suppressed by the existing failure-DOM
@@ -162,3 +165,6 @@ and unchanged. Run `python -B scripts/test_linux_qwen_webview.py` for bounded,
 offline harness regressions; those tests are not evidence that GUI acceptance ran.
 No new runtime dependency, sandbox override, installer publication or Qwen launch
 is introduced. Real GUI acceptance must still pass in hosted Linux CI.
+
+受管 Vim 更新验收新增取消、过期预览拒绝和两次反向更新，逐次核验首次原值和摘要
+始终保留，最终撤销回到首次状态。使用真实 AgentDeck 界面和自建配置，不运行 Qwen。
