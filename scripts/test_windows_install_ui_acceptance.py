@@ -131,6 +131,15 @@ class Tests(unittest.TestCase):
         flow = UI[UI.index('function Check-FailedReviewedInstall'):]
         self.assertLess(flow.index('Check-FailedResidualUnavailable $fixture'), flow.index('Check-FailedInstallResidualInspection $fixture'))
 
+    def test_navigation_waits_for_selected_visible_workspace(self):
+        helper = UI[UI.index('function Wait-InstallWorkspaceSelected'):UI.index('function Assert-ResidualResultAbsent')]
+        self.assertIn('.Current.IsSelected', helper)
+        self.assertIn('-not $control.Current.IsOffscreen', helper)
+        self.assertIn("Find-QwenControl 'settings.json 绝对路径'", helper)
+        flow = UI[UI.index('function Check-FailedReviewedInstall'):]
+        self.assertLess(flow.index("Wait-InstallWorkspaceSelected 'Qwen 配置检查'"), flow.index("$tab = Wait-QwenControl 'Agent 管理'"))
+        self.assertLess(flow.index("Wait-InstallWorkspaceSelected 'Agent 管理'"), flow.index("Save-QwenEvidence 'failed-reviewed-install-session-navigation'"))
+
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
         self.assertLess(LIFECYCLE.index('    Check-ReviewedInstall'), LIFECYCLE.index('    Check-CodexReadonly'))

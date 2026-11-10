@@ -3,7 +3,7 @@ import { CodexResidualCheck } from './CodexResidualCheck';
 import { useAgentStore } from '../stores/agentStore';
 
 /** Read-only, in-memory request history. Never an ownership or recovery receipt. */
-export function InstallSessionNote({ agentId }: { agentId: string }) {
+export function InstallSessionNote({ agentId, active = true }: { agentId: string; active?: boolean }) {
   const [open, setOpen] = useState(false);
   const session = useAgentStore(state => state.installSessions[agentId]);
   if (!session) return null;
@@ -26,6 +26,6 @@ export function InstallSessionNote({ agentId }: { agentId: string }) {
       : <p>本会话没有可关联的已审核路径快照；不会从错误内容猜测目标路径。</p>}
     <p>先刷新列表确认检测结果，再在上述已审核位置手动核对实际文件，并参考该 Agent 的官方安装说明。不要直接删除整段 prefix 或共享 node_modules；它们可能包含其他软件。残留路径会阻止新的安装计划，路径匹配不授予清理权限。</p>
     <p>再次预览不会清理残留或自动重试。此记录不提供可重放令牌或恢复命令。</p>
-    {open && agentId === 'codex' && session.state === 'unconfirmed' && session.sessionRef && <CodexResidualCheck key={session.sessionRef} sessionRef={session.sessionRef} />}
+    {active && open && agentId === 'codex' && session.state === 'unconfirmed' && session.sessionRef && <CodexResidualCheck key={session.sessionRef} sessionRef={session.sessionRef} />}
   </details>;
 }

@@ -12,7 +12,7 @@ import { dshDemoReport } from './dshContract';
 beforeEach(() => {
   window.history.replaceState({}, '', '/?demo=1');
   window.localStorage.clear();
-  act(() => useAgentStore.setState({ agents: [], selectedAgentId: null, loading: false, error: null, notice: null, refreshError: null, dataStale: true }));
+  act(() => useAgentStore.setState({ installSessions: {}, agents: [], selectedAgentId: null, loading: false, error: null, notice: null, refreshError: null, dataStale: true }));
 });
 
 afterEach(() => {
@@ -21,7 +21,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   window.history.replaceState({}, '', '/');
   window.localStorage.clear();
-  act(() => useAgentStore.setState({ agents: [], selectedAgentId: null, loading: false, error: null, notice: null, refreshError: null, dataStale: true }));
+  act(() => useAgentStore.setState({ installSessions: {}, agents: [], selectedAgentId: null, loading: false, error: null, notice: null, refreshError: null, dataStale: true }));
 });
 
 async function renderReadyApp(strict = false) {
@@ -300,4 +300,31 @@ it('retains Qwen mutation lock across navigation away and back', async () => {
   await act(async () => { finish(true); await pending; });
   expect(within(qwen).getByLabelText('settings.json 绝对路径')).toBeEnabled();
   expect(useWorkspaceActivityStore.getState().busy.qwen).toBe(false);
+});
+
+it.each(['completed', 'pending-success', 'pending-failure'] as const)('clears residual observation on real tab navigation while preserving history: %s', async mode => {
+  const codex = { ...notDetectedAgent, id: 'codex', name: 'Codex' };
+  vi.spyOn(bridge, 'getAgents').mockResolvedValue([codex]);
+  const result = ['package_directory', 'posix_launcher', 'cmd_launcher', 'powershell_launcher'].map(slot => ({ slot, state: 'missing' })) as Awaited<ReturnType<typeof bridge.inspectCodexInstallResidual>>;
+  let resolve!: (value: typeof result) => void;
+  let reject!: (reason: unknown) => void;
+  const inspect = vi.spyOn(bridge, 'inspectCodexInstallResidual').mockImplementation(() => mode === 'completed' ? Promise.resolve(result) : new Promise((yes, no) => { resolve = yes; reject = no; }));
+  render(<App />);
+  await screen.findByRole('button', { name: '选择 Codex' });
+  act(() => useAgentStore.setState({ installSessions: { codex: { state: 'unconfirmed', target: null, sessionRef: '12345678-1234-4123-8123-123456789abc' } } }));
+  const record = screen.getByTestId('install-session-record');
+  (record as HTMLDetailsElement).open = true;
+  fireEvent(record, new Event('toggle'));
+  const button = await screen.findByRole('button', { name: '只读检查固定残留槽位' });
+  fireEvent.click(button);
+  if (mode === 'completed') await screen.findByTestId('codex-residual-result');
+  fireEvent.click(screen.getByRole('tab', { name: /^Qwen 配置检查/ }));
+  expect(screen.getByRole('tab', { name: /^Qwen 配置检查/ })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.queryByTestId('codex-residual-result')).not.toBeInTheDocument();
+  if (mode !== 'completed') await act(async () => { if (mode === 'pending-success') resolve(result); else reject(new Error('private late response')); });
+  fireEvent.click(screen.getByRole('tab', { name: /^Agent 管理/ }));
+  expect(screen.queryByTestId('codex-residual-result')).not.toBeInTheDocument();
+  expect(screen.queryByText(/本会话只读检查不可用或路径发生变化/)).not.toBeInTheDocument();
+  expect(screen.getByTestId('install-session-record')).toHaveAttribute('data-state', 'unconfirmed');
+  expect(inspect).toHaveBeenCalledTimes(1);
 });

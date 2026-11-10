@@ -7,6 +7,7 @@ import { installationEvidenceProblem, runtimeMode, type AgentInstallPreview, typ
 import { Icon } from './Icon';
 
 interface AgentCardProps {
+  active?: boolean;
   onOpenDshInventory?: () => void;
   agent: AgentInfo;
   onPrepareInstall: (id: string) => Promise<AgentInstallPreview | null>;
@@ -116,6 +117,7 @@ function SourceFacts({ source }: { source: InstallationSource }) {
 /** A compact row with separate native controls for selection, details and actions. */
 export const AgentCard: React.FC<AgentCardProps> = ({
   agent,
+  active = true,
   onOpenDshInventory,
   onInstall,
   onPrepareInstall,
@@ -303,7 +305,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         </div>
       </div>
 
-      <InstallSessionNote agentId={agent.id} />
+      <InstallSessionNote agentId={agent.id} active={active} />
       {agent.id === 'codex' && <CodexConfigurationPlan busy={busy || pending !== null || plan !== null} context={JSON.stringify([reviewContext, selected, agent.id, dataStale])} />}
       {agent.id === 'codex' && <CodexAnimations busy={busy || pending !== null || plan !== null} context={JSON.stringify([reviewContext, selected, agent.id, dataStale])} />}
 

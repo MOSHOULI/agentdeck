@@ -269,6 +269,22 @@ function Observe-FailedInstallSession($fixture, [string]$manifest, [string]$base
         if ($before.$key -ne $after.$key) { throw 'Read-only session inspection executed a fixture operation' }
     }
 }
+function Wait-InstallWorkspaceSelected([ValidateSet('Qwen 配置检查','Agent 管理')][string]$name) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+        $tab = Find-QwenControl $name ([Windows.Automation.ControlType]::TabItem)
+        if ($null -ne $tab -and ([Windows.Automation.SelectionItemPattern]$tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)).Current.IsSelected) {
+            $control = if ($name -eq 'Qwen 配置检查') {
+                Find-QwenControl 'settings.json 绝对路径' ([Windows.Automation.ControlType]::Edit)
+            } else {
+                Find-QwenControl '刷新列表' ([Windows.Automation.ControlType]::Button)
+            }
+            if ($null -ne $control -and -not $control.Current.IsOffscreen) { return }
+        }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'Installed workspace selection or visible content did not settle'
+}
 function Assert-ResidualResultAbsent {
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     do {
@@ -396,8 +412,10 @@ function Check-FailedReviewedInstall {
 
         $tab = Wait-QwenControl 'Qwen 配置检查' ([Windows.Automation.ControlType]::TabItem)
         ([Windows.Automation.SelectionItemPattern]$tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)).Select()
+        Wait-InstallWorkspaceSelected 'Qwen 配置检查'
         $tab = Wait-QwenControl 'Agent 管理' ([Windows.Automation.ControlType]::TabItem)
         ([Windows.Automation.SelectionItemPattern]$tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)).Select()
+        Wait-InstallWorkspaceSelected 'Agent 管理'
         Observe-FailedInstallSession $fixture $manifest $baseline $residual
         Assert-ResidualResultAbsent
         Save-QwenEvidence 'failed-reviewed-install-session-navigation'
