@@ -134,7 +134,13 @@ using a fresh evidence path:
 $node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
 $npm = Join-Path (Split-Path -Parent $node) 'node_modules/npm/bin/npm-cli.js'
 cargo build --locked -p aisync-cli
-python -B scripts/codex_official_install_windows.py --node $node --npm $npm --parser (Join-Path $PWD 'target/debug/aisync.exe') --evidence "$env:RUNNER_TEMP/codex-windows-install-result.json"
+$builtParser = Join-Path $PWD 'target/debug/aisync.exe'
+$verifierDirectory = Join-Path $env:RUNNER_TEMP ('codex-static-verifier-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $verifierDirectory | Out-Null
+$parser = Join-Path $verifierDirectory 'aisync.exe'
+[IO.File]::Copy($builtParser, $parser, $false)
+if ((Get-Item $builtParser).Length -ne (Get-Item $parser).Length -or (Get-FileHash $builtParser).Hash -cne (Get-FileHash $parser).Hash) { throw 'Trusted parser copy mismatch' }
+python -B scripts/codex_official_install_windows.py --node $node --npm $npm --parser $parser --evidence "$env:RUNNER_TEMP/codex-windows-install-result.json"
 ```
 
 Offline regressions on Linux and Windows:
@@ -201,3 +207,14 @@ parsing do not provide an atomic snapshot against concurrent external writers.
 独立静态命令只解析 `codex.cmd`；另外两个启动器（`codex`、`codex.ps1`）仅接受
 普通文件与一致性检查，不代表同等的启动器内容解析。三个启动器的精确字节验证由
 外层官方包验收程序完成。解析前后检查不构成针对外部并发写入的原子快照。
+
+
+Cargo can hardlink `target/debug/aisync.exe` to its `deps` build output. CI makes
+a new, non-overwriting copy in a dedicated verifier directory and checks its
+size and SHA-256 against the reviewed build before use. The harness still
+requires a regular, single-link, non-reparse executable; it does not exempt
+Cargo outputs from that rule.
+
+Cargo 可能将顶层可执行文件硬链接到 `deps` 构建产物。CI 在独立验收目录创建
+不覆盖既有文件的新副本，核对大小及 SHA-256 后使用。验收程序仍要求普通、单链接、
+非 reparse 的可执行文件，不为 Cargo 产物放宽限制。

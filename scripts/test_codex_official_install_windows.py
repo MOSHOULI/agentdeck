@@ -77,6 +77,21 @@ class Offline(unittest.TestCase):
             with self.assertRaises(h.Failure): h.parser_tool(parser)
             with self.assertRaises(h.Failure): h.parser_tool(Path('relative.exe'))
 
+    def test_hardlinked_build_requires_independent_identical_copy(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'aisync.exe'; source.write_bytes(b'MZtrusted-build-fixture-never-executed')
+            os.link(source, root / 'deps.exe')
+            self.assertEqual(source.stat().st_nlink, 2)
+            with self.assertRaisesRegex(h.Failure, '^unsafe_regular_file$'):
+                h.parser_tool(source)
+            copied = root / 'verifier.exe'; shutil.copyfile(source, copied)
+            self.assertEqual(copied.stat().st_nlink, 1)
+            self.assertEqual(copied.stat().st_size, source.stat().st_size)
+            self.assertEqual(hashlib.sha256(copied.read_bytes()).digest(), hashlib.sha256(source.read_bytes()).digest())
+            self.assertEqual(h.parser_tool(copied), copied.resolve())
+
     def test_static_bridge_is_between_complete_layout_gates(self):
         import inspect
         source = inspect.getsource(h.run)
