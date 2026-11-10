@@ -2,8 +2,8 @@
 from pathlib import Path
 import unittest
 ROOT = Path(__file__).resolve().parents[1]
-UI = (ROOT / 'scripts/windows-install-ui-acceptance.ps1').read_text()
-LIFECYCLE = (ROOT / 'scripts/windows-installer-acceptance.ps1').read_text()
+UI = (ROOT / 'scripts/windows-install-ui-acceptance.ps1').read_text(encoding='utf-8')
+LIFECYCLE = (ROOT / 'scripts/windows-installer-acceptance.ps1').read_text(encoding='utf-8')
 class Tests(unittest.TestCase):
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
@@ -22,7 +22,7 @@ class Tests(unittest.TestCase):
             self.assertIn(text, UI)
         self.assertIn('$env:PATH = $savedPath; $env:PATHEXT = $savedExt', UI)
     def test_all_evidence_checks_names_and_values_before_persistence(self):
-        shared = (ROOT / 'scripts/windows-qwen-ui-acceptance.ps1').read_text()
+        shared = (ROOT / 'scripts/windows-qwen-ui-acceptance.ps1').read_text(encoding='utf-8')
         guard = shared[shared.index('function Assert-AcceptanceCanariesAbsent'):shared.index('function Save-QwenEvidence')]
         for token in ('SYNTHETIC-NOT-A-CREDENTIAL', 'AGENTDECK_SYNTHETIC_INSTALL_PRIVATE_CANARY',
                       '$node.Current.Name.Contains($canary)', 'ValuePattern', 'Current.Value.Contains($canary)'):
