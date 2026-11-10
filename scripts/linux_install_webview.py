@@ -258,17 +258,15 @@ def exercise(driver, fixture, home, records, phase, trace=None, observe=None):
     driver.wait(lambda: len(driver.elements("//*[@aria-label='Agent 列表']/article")) == 1)
     driver.wait(lambda: driver.elements(PREVIEW) and driver.enabled(PREVIEW))
     def preview(stage):
-        # Native evidence showed a stale 74px workspace scroll offset after
-        # filtering, corrected only when the button gained focus. That moved
-        # its hit area during the pointer click. Normalize with the existing
-        # audited one-shot wheel gesture BEFORE any preview click, not a retry.
-        phase(stage + '_scroll_top')
-        driver.wheel_scroll_workspace_top()
+        # WebKit can retain a stale scroll offset after filtering, even when
+        # content no longer scrolls. Native Enter focuses and activates the
+        # button without a moving pointer hit area. One action, never replayed.
         before = query_counts(fixture)
         observation = {'before_ui': observe(stage + '_before')} if observe else {}
         phase(stage + '_click')
         try:
-            driver.click(PREVIEW)  # No mutation or navigation click is ever replayed.
+            element = driver.one(PREVIEW)
+            driver.command('POST', '/element/' + element + '/value', {'text': '\ue007', 'value': ['\ue007']})
             if observe: observation['after_click_ui'] = observe(stage + '_after_click')
             phase(stage + '_wait_dialog')
             driver.wait(lambda: driver.elements(DIALOG))

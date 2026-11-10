@@ -30,9 +30,13 @@ class OfflineDriver:
     def wheel_scroll_workspace_top(self):
         self.events.append(('wheel_top', None))
     def one(self, selector):
+        if selector == subject.PREVIEW: return 'preview-element'
         if selector != "//*[@id='agent-search']": raise AssertionError('unexpected input')
         return 'search-element'
-    def command(self, *args): self.commands.append(args)
+    def command(self, *args):
+        self.commands.append(args)
+        if args[1] == '/element/preview-element/value':
+            self.dialog = True
     def type(self, *_): pass
     def enabled(self, *_): return True
     def value(self, *_): return 'Codex'
@@ -164,13 +168,10 @@ class FixtureTests(unittest.TestCase):
         subject.exercise(driver, self.f, self.root / 'empty-home', records, phases.append, trace)
         subject.assert_coverage(records)
         self.assertEqual(driver.clicks.count(subject.CONFIRM), 2)
-        self.assertEqual(driver.events.count(('wheel_top', None)), 3)
-        for index, event in enumerate(driver.events):
-            if event == ('click', subject.PREVIEW):
-                self.assertEqual(driver.events[index - 1], ('wheel_top', None))
+        self.assertEqual(driver.clicks.count(subject.PREVIEW), 0)
         self.assertEqual(driver.clicks.count(subject.CANCEL), 1)
         self.assertNotIn("//*[@id='workspace-panel-agents']//h1", driver.clicks)
-        self.assertEqual(driver.commands, [('POST', '/element/search-element/value', {'text': '\ue004', 'value': ['\ue004']})])
+        self.assertEqual(driver.commands, [('POST', '/element/search-element/value', {'text': '\ue004', 'value': ['\ue004']})] + [('POST', '/element/preview-element/value', {'text': '\ue007', 'value': ['\ue007']})] * 3)
         self.assertLess(phases.index('install_search_tab'), phases.index('install_initial_preview_click'))
         self.assertIn(subject.DETAILS, driver.clicks)
         self.assertNotIn('Codex', subject.DETAILS)
@@ -206,7 +207,7 @@ class FixtureTests(unittest.TestCase):
         driver.elements = lambda selector: [] if selector == subject.DIALOG else original(selector)
         with self.assertRaises(harness.Failure):
             subject.exercise(driver, self.f, self.root, [], lambda _: None, trace)
-        self.assertEqual(driver.clicks.count(subject.PREVIEW), 1)
+        self.assertEqual(sum(args[1] == '/element/preview-element/value' for args in driver.commands), 1)
         self.assertEqual(driver.clicks.count(subject.CONFIRM), 0)
         self.assertEqual(trace, [{'stage': 'install_initial_preview',
                                  'before': {'prefix_queries': 0, 'root_queries': 0},
@@ -254,19 +255,19 @@ class FixtureTests(unittest.TestCase):
         self.assertFalse((evidence / 'install_initial_preview_settled.png').exists())
         with self.assertRaises(subject.InstallFailure): subject.capture_geometry(driver, evidence, '../escape')
 
-    def test_failed_scroll_preflight_never_clicks_preview_or_confirms(self):
+    def test_failed_native_preview_activation_is_never_replayed(self):
         driver = OfflineDriver(self.f, lambda: self.fail('must not install'))
-        def fail_scroll():
-            driver.events.append(('wheel_top', None))
-            raise harness.Failure('ui_wait_expired')
-        driver.wheel_scroll_workspace_top = fail_scroll
-        phases = []
+        original = driver.command
+        def fail_activation(*args):
+            original(*args)
+            if args[1] == '/element/preview-element/value':
+                raise harness.Failure('driver_http_error')
+        driver.command = fail_activation
         with self.assertRaises(harness.Failure):
-            subject.exercise(driver, self.f, self.root, [], phases.append)
-        self.assertEqual(driver.events.count(('wheel_top', None)), 1)
+            subject.exercise(driver, self.f, self.root, [], lambda _: None)
+        self.assertEqual(sum(args[1] == '/element/preview-element/value' for args in driver.commands), 1)
         self.assertEqual(driver.clicks.count(subject.PREVIEW), 0)
         self.assertEqual(driver.clicks.count(subject.CONFIRM), 0)
-        self.assertEqual(phases[-1], 'install_initial_preview_scroll_top')
         subject.assert_absent(self.f)
 
     def test_uncertain_confirm_never_replayed(self):
