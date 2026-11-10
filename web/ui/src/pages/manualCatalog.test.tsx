@@ -34,7 +34,7 @@ describe('mainstream manual catalog surfaces', () => {
     expect(matchesInstalledFilter(agent)).toBe(false);
     const onInstall = vi.fn();
     const onConfigure = vi.fn();
-    render(<AgentCard agent={agent} selected={false} onInstall={onInstall} onConfigure={onConfigure} onUninstall={vi.fn()} onSelect={vi.fn()} />);
+    render(<AgentCard onPrepareInstall={vi.fn()} agent={agent} selected={false} onInstall={onInstall} onConfigure={onConfigure} onUninstall={vi.fn()} onSelect={vi.fn()} />);
     expect(screen.getByText('安装状态未知')).toBeInTheDocument();
     expect(screen.getByText(definition.ui_type === 'desktop' ? '桌面应用' : '终端 CLI')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '官方说明' })).toHaveAttribute('href', definition.homepage);

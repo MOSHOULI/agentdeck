@@ -1,15 +1,17 @@
-import React, { useId, useRef, useState } from 'react';
-import { installationEvidenceProblem, runtimeMode, type AgentInfo, type InstallationInstance, type InstallationSource } from '../bridge';
+import React, { useEffect, useId, useRef, useState } from 'react';
+import { installationEvidenceProblem, runtimeMode, type AgentInstallPreview, type AgentInfo, type InstallationInstance, type InstallationSource } from '../bridge';
 import { Icon } from './Icon';
 
 interface AgentCardProps {
   onOpenDshInventory?: () => void;
   agent: AgentInfo;
-  onInstall: (id: string) => void | Promise<void>;
+  onPrepareInstall: (id: string) => Promise<AgentInstallPreview | null>;
+  onInstall: (id: string, revision: string) => void | Promise<void>;
   onUninstall: (id: string) => void | Promise<void>;
   onConfigure: (id: string) => void | Promise<void>;
   onSelect: (id: string) => void;
   selected: boolean;
+  reviewContext?: string;
   busy?: boolean;
   dataStale?: boolean;
 }
@@ -112,14 +114,23 @@ export const AgentCard: React.FC<AgentCardProps> = ({
   agent,
   onOpenDshInventory,
   onInstall,
+  onPrepareInstall,
   onConfigure,
   onSelect,
   selected,
+  reviewContext,
   busy = false,
   dataStale = true,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [pending, setPending] = useState<'install' | 'configure' | null>(null);
+  const [plan, setPlan] = useState<AgentInstallPreview | null>(null);
+  const generation = useRef(0);
+  useEffect(() => {
+    generation.current++;
+    setPlan(null);
+    return () => { generation.current++; };
+  }, [agent, selected, dataStale, reviewContext]);
   const [operationError, setOperationError] = useState<string | null>(null);
   const operationLock = useRef(false);
   const detailButton = useRef<HTMLButtonElement>(null);
@@ -156,20 +167,43 @@ export const AgentCard: React.FC<AgentCardProps> = ({
       : dataStale ? '当前状态待刷新，请成功刷新列表后再操作。' : undefined;
   const disabledReason = blockedReason || configurationReason || (manual ? manualHelp : undefined);
 
+  const cancelPreview = () => {
+    generation.current++;
+    setPlan(null);
+  };
+
   const runOperation = async (operation: 'install' | 'configure') => {
-    if (operationLock.current || busy || readOnly || dataStale
+    if (operationLock.current || busy || readOnly || dataStale || plan
       || (operation === 'install' ? !canInstall : !canConfigure)) return;
     operationLock.current = true;
-    const question = operation === 'configure'
-      ? `确定为 ${agent.name} 应用默认 profile 吗？将更新个性化指令与支持的模型配置，写入前会备份相关文件。`
-      : `确定安装 ${agent.name} 吗？此操作仅安装软件，不应用默认 profile 或修改模型配置。`;
+    const token = generation.current;
     try {
-      if (!window.confirm(question)) return;
+      if (operation === 'configure' && !window.confirm(`确定为 ${agent.name} 应用默认 profile 吗？将更新个性化指令与支持的模型配置，写入前会备份相关文件。`)) return;
       setPending(operation);
       setOperationError(null);
-      await (operation === 'configure' ? onConfigure(agent.id) : onInstall(agent.id));
-    } catch (error) {
-      setOperationError(`操作未完成：${error instanceof Error ? error.message : String(error)}。请刷新列表确认当前状态。`);
+      if (operation === 'configure') await onConfigure(agent.id);
+      else {
+        const result = await onPrepareInstall(agent.id);
+        if (token === generation.current) setPlan(result);
+      }
+    } catch {
+      if (token === generation.current) setOperationError('操作未完成，请刷新列表确认当前状态。');
+    } finally {
+      operationLock.current = false;
+      setPending(null);
+    }
+  };
+
+  const confirmInstall = async () => {
+    if (!plan || operationLock.current || busy || readOnly || dataStale || !canInstall) return;
+    operationLock.current = true;
+    const revision = plan.revision;
+    setPlan(null);
+    setPending('install');
+    try {
+      await onInstall(agent.id, revision);
+    } catch {
+      setOperationError('安装未确认完成，软件可能已安装。请刷新列表确认；不会自动重试、回滚或卸载。');
     } finally {
       operationLock.current = false;
       setPending(null);
@@ -186,7 +220,10 @@ export const AgentCard: React.FC<AgentCardProps> = ({
       className={`agent-card${selected ? ' agent-card-selected' : ''}`}
       aria-label={agent.name}
       onKeyDown={(event) => {
-        if (expanded && event.key === 'Escape') {
+        if ((plan || pending === 'install') && event.key === 'Escape') {
+          event.stopPropagation();
+          cancelPreview();
+        } else if (expanded && event.key === 'Escape') {
           event.stopPropagation();
           closeDetails();
         }
@@ -242,11 +279,12 @@ export const AgentCard: React.FC<AgentCardProps> = ({
             disabled={Boolean(blockedReason) || manual}
             title={disabledReason}
             aria-describedby={!agent.installed && configurationReason ? configurationNoteId : undefined}
+            data-testid={`install-preview-${agent.id}`}
             aria-label={`${agent.installed ? '卸载' : '安装'} ${agent.name}`}
             onClick={agent.installed ? undefined : () => { void runOperation('install'); }}
           >
             <Icon name={agent.installed ? 'trash' : 'download'} size={14} />
-            {pending === 'install' ? '安装中…' : agent.installed ? '手动卸载' : installUnknown || evidence.ambiguous ? '安装不可用' : manual ? '手动安装' : '安装'}
+            {pending === 'install' ? '处理中…' : agent.installed ? '手动卸载' : installUnknown || evidence.ambiguous ? '安装不可用' : manual ? '手动安装' : '安装'}
           </button>
           {supportsConfigure && <button
             type="button"
@@ -259,6 +297,26 @@ export const AgentCard: React.FC<AgentCardProps> = ({
           >{pending === 'configure' ? '应用中…' : '应用默认配置'}</button>}
         </div>
       </div>
+
+      {pending === 'install' && !plan && <p role="status">安装操作处理中，请等待当前请求完成。<button type="button" className="button" onClick={cancelPreview}>取消预览展示</button></p>}
+      {plan && <section role="dialog" data-testid="install-review-dialog" aria-label={`${agent.name} 安装计划`} className="agent-details">
+        <h3>检查 npm 安装计划</h3>
+        <dl className="agent-facts">
+          {([
+            ['npm 包', plan.package], ['启动命令', plan.executable], ['npm prefix', plan.prefix],
+            ['npm 全局目录', plan.globalRoot], ['包目录', plan.packageRoot],
+            ['启动文件目录', plan.launcherDirectory], ['npm 规范入口', plan.managerPath],
+            ['安装器 Node', plan.nodePath],
+          ] as const).map(([label, value]) => <div key={label}><dt>{label}</dt><dd className="agent-path">{value}</dd></div>)}
+        </dl>
+        <p>版本由当前 npm 配置选择，未固定或解析版本；此预览不验证 npm registry 的可信性。</p>
+        <p>安装器 Node 仅用于此次安装，不保证 Agent 以后使用相同 Node。</p>
+        <p>{plan.scriptPolicy === 'disabled' ? '生命周期脚本：禁用（ignore-scripts）。' : '生命周期脚本：遵循当前 npm 配置，安装时可能执行脚本。'}安装会下载软件，依赖或包的行为取决于 npm 配置。</p>
+        <p>仅安装软件，不应用 profile 或模型配置，不创建配置备份。不自动回滚或卸载；失败后可能已有部分软件写入。</p>
+        <p>预览仅进行有限的 npm 路径查询，不安装软件、不初始化 profile、vault 或备份；npm 可能读取配置或更新缓存。执行前将重新核对计划，变化后需重新预览。</p>
+        <button type="button" className="button" data-testid="install-review-cancel" onClick={cancelPreview}>取消</button>
+        <button type="button" className="button button-primary" data-testid="install-review-confirm" disabled={busy || dataStale || readOnly || !canInstall} onClick={() => { void confirmInstall(); }}>确认安装软件</button>
+      </section>}
 
       {manual && (
         <div className="agent-manual-note">

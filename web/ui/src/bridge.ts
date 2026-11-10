@@ -270,10 +270,88 @@ export async function getAgents(): Promise<AgentInfo[]> {
 
 export interface InstallOutcome { warnings: string[]; }
 
-/** 仅安装指定 agent 软件，不应用 profile 或修改模型配置 */
-export async function installAgent(id: string): Promise<InstallOutcome> {
+export interface AgentInstallPreview {
+  schemaVersion: 1;
+  agentId: string;
+  package: string;
+  executable: string;
+  managerPath: string;
+  nodePath: string;
+  prefix: string;
+  globalRoot: string;
+  packageRoot: string;
+  launcherDirectory: string;
+  scriptPolicy: 'disabled' | 'npm_configured';
+  versionPolicy: 'npm_configured';
+  revision: string;
+}
+
+const installPackages: Record<string, readonly [string, string]> = {
+  codex: ['@openai/codex', 'codex'],
+  opencode: ['opencode-ai', 'opencode'],
+  'gemini-cli': ['@google/gemini-cli', 'gemini'],
+  pi: ['@earendil-works/pi-coding-agent', 'pi'],
+};
+export function validInstallRevision(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+}
+function safeInstallPath(value: unknown): value is string {
+  return typeof value === 'string' && new TextEncoder().encode(value).length <= 32768 && value.length > 0 && value.trim() === value
+    && /^(?:\/|(?:\\\\\?\\)?[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+)/.test(value)
+    && !/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/.test(value)
+    && !value.split(/[\\/]/).some(part => part === '..' || part === '.');
+}
+/** Compare the promised layout lexically; never rewrite the displayed evidence. */
+function consistentInstallLayout(raw: Record<string, unknown>, packageName: string): boolean {
+  const prefix = raw.prefix as string;
+  const windows = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(prefix);
+  // Rust Path::join can retain forward slashes inside a scoped npm package.
+  // Only Windows separators are equivalent here; POSIX backslashes are literal.
+  const comparable = (value: string) => (windows ? value.replace(/\\/g, '/') : value).replace(/\/+$/, '');
+  const base = comparable(prefix);
+  const root = `${base}/${windows ? 'node_modules' : 'lib/node_modules'}`;
+  return comparable(raw.globalRoot as string) === root
+    && comparable(raw.packageRoot as string) === `${root}/${packageName}`
+    && comparable(raw.launcherDirectory as string) === (windows ? base : `${base}/bin`);
+}
+
+/** Project an untrusted response, never forwarding backend prose or extra fields. */
+export function parseInstallPreview(value: unknown, id: string): AgentInstallPreview {
+  const fail = () => { throw new Error('安装预览无效，请刷新后重新检查。'); };
+  const expected = Object.prototype.hasOwnProperty.call(installPackages, id) ? installPackages[id] : undefined;
+  if (!expected || !value || typeof value !== 'object' || Array.isArray(value)) return fail();
+  const raw = value as Record<string, unknown>;
+  const scriptPolicy = id === 'pi' ? 'disabled' : 'npm_configured';
+  if (raw.schemaVersion !== 1 || raw.agentId !== id || raw.package !== expected[0]
+    || raw.executable !== expected[1] || raw.scriptPolicy !== scriptPolicy
+    || raw.versionPolicy !== 'npm_configured' || !validInstallRevision(raw.revision)) return fail();
+  const paths = ['managerPath', 'nodePath', 'prefix', 'globalRoot', 'packageRoot', 'launcherDirectory'] as const;
+  for (const key of paths) if (!safeInstallPath(raw[key])) return fail();
+  if (!consistentInstallLayout(raw, expected[0])) return fail();
+  return {
+    schemaVersion: 1, agentId: id, package: expected[0], executable: expected[1], scriptPolicy,
+    versionPolicy: 'npm_configured', revision: raw.revision,
+    managerPath: raw.managerPath as string, nodePath: raw.nodePath as string,
+    prefix: raw.prefix as string, globalRoot: raw.globalRoot as string,
+    packageRoot: raw.packageRoot as string, launcherDirectory: raw.launcherDirectory as string,
+  };
+}
+
+export async function previewAgentInstall(id: string): Promise<AgentInstallPreview> {
   useDemo(true);
-  return invoke<InstallOutcome>('install_agent', { id });
+  if (!Object.prototype.hasOwnProperty.call(installPackages, id)) throw new Error('此 Agent 不支持安装预览。');
+  try {
+    return parseInstallPreview(await invoke<unknown>('preview_agent_install', { id }), id);
+  } catch {
+    throw new Error('无法取得有效安装预览，请刷新后重新检查。预览可能读取 npm 配置或更新缓存，但不会安装软件或应用配置。');
+  }
+}
+
+/** Only dispatch an explicitly reviewed revision. No unconfirmed fallback. */
+export async function installAgent(id: string, revision: string): Promise<InstallOutcome> {
+  useDemo(true);
+  if (!Object.prototype.hasOwnProperty.call(installPackages, id) || !validInstallRevision(revision)) throw new Error('请先检查有效安装预览。');
+  return invoke<InstallOutcome>('install_agent', { id, revision });
 }
 
 /** 单独应用默认 profile 支持的配置（调用方必须先明确确认） */

@@ -26,6 +26,7 @@ pub fn run() {
             commands::qwen::apply_qwen_vim,
             commands::qwen::restore_qwen_vim,
             commands::deploy::get_agents,
+            commands::deploy::preview_agent_install,
             commands::deploy::install_agent,
             commands::deploy::configure_agent,
             commands::deploy::uninstall_agent,

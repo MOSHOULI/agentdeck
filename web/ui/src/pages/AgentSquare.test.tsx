@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { installPlan } from '../test-fixtures/installPlan';
 import { AgentSquare } from './AgentSquare';
 import { useAgentStore } from '../stores/agentStore';
 import type { AgentInfo } from '../bridge';
@@ -8,7 +9,7 @@ import { notDetectedAgent as base, installedAgent, agentCatalog as agents, ambig
 vi.mock('../bridge', async (importOriginal) => ({
   ...await importOriginal<typeof import('../bridge')>(),
   runtimeMode: vi.fn(() => 'native'),
-  getAgents: vi.fn(), installAgent: vi.fn(), configureAgent: vi.fn(), uninstallAgent: vi.fn(),
+  getAgents: vi.fn(), previewAgentInstall: vi.fn(), installAgent: vi.fn(), configureAgent: vi.fn(), uninstallAgent: vi.fn(),
   verifyAgentAuth: vi.fn(), collectMemory: vi.fn(), searchMemory: vi.fn(),
   injectMemory: vi.fn(), toggleAutoInject: vi.fn(),
   listApiKeys: vi.fn(), listBackups: vi.fn(), getMcpServers: vi.fn(), checkUpdates: vi.fn(),
@@ -19,6 +20,7 @@ describe('AgentSquare', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(bridge.previewAgentInstall).mockReset().mockResolvedValue(installPlan);
     vi.mocked(bridge.installAgent).mockReset().mockResolvedValue({ warnings: [] });
     vi.mocked(bridge.configureAgent).mockReset().mockResolvedValue({ warnings: [] });
     vi.mocked(bridge.getAgents).mockReset().mockResolvedValue(agents);
@@ -166,6 +168,7 @@ describe('AgentSquare', () => {
     await screen.findByRole('article', { name: 'OpenCode' });
     vi.mocked(bridge.getAgents).mockRejectedValueOnce(new Error('refresh offline'));
     fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    fireEvent.click(await screen.findByRole('button', { name: '确认安装软件' }));
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('软件安装操作已完成，未应用配置'));
     expect(await screen.findByRole('alert')).toHaveTextContent('状态刷新失败');
     expect(screen.queryByText(/安装失败/)).not.toBeInTheDocument();
@@ -182,6 +185,7 @@ describe('AgentSquare', () => {
     render(<AgentSquare />);
     await screen.findByRole('article', { name: 'OpenCode' });
     fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    fireEvent.click(await screen.findByRole('button', { name: '确认安装软件' }));
     fireEvent.click(screen.getByRole('button', { name: '已安装' }));
     expect(screen.queryByRole('article', { name: 'OpenCode' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '全部' }));
@@ -189,9 +193,29 @@ describe('AgentSquare', () => {
     expect(install).toBeDisabled();
     fireEvent.click(install);
     expect(bridge.installAgent).toHaveBeenCalledTimes(1);
-    expect(window.confirm).toHaveBeenCalledTimes(1);
+    expect(window.confirm).not.toHaveBeenCalled();
     await act(async () => finish({ warnings: [] }));
     await waitFor(() => expect(install).toBeEnabled());
+  });
+
+  it('holds the preview lock through filter unmount and drops the old result', async () => {
+    let finish!: (value: typeof installPlan) => void;
+    vi.mocked(bridge.previewAgentInstall).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    render(<AgentSquare />);
+    await screen.findByRole('article', { name: 'OpenCode' });
+    fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    expect(useAgentStore.getState().loading).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '已安装' }));
+    fireEvent.click(screen.getByRole('button', { name: '全部' }));
+    const install = screen.getByRole('button', { name: '安装 OpenCode' });
+    expect(install).toBeDisabled();
+    fireEvent.click(install);
+    expect(bridge.previewAgentInstall).toHaveBeenCalledTimes(1);
+    await act(async () => finish(installPlan));
+    expect(useAgentStore.getState().loading).toBe(false);
+    expect(screen.queryByRole('button', { name: '确认安装软件' })).not.toBeInTheDocument();
+    expect(bridge.installAgent).not.toHaveBeenCalled();
+    expect(install).toBeEnabled();
   });
 
   it('allows configuration only after a separate confirmation, including after installation', async () => {
@@ -199,6 +223,7 @@ describe('AgentSquare', () => {
     await screen.findByRole('article', { name: 'OpenCode' });
     vi.mocked(bridge.getAgents).mockResolvedValue([installedAgent]);
     fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    fireEvent.click(await screen.findByRole('button', { name: '确认安装软件' }));
     const configure = await screen.findByRole('button', { name: '应用默认配置 OpenCode' });
     await waitFor(() => expect(configure).toBeEnabled());
     expect(bridge.configureAgent).not.toHaveBeenCalled();
@@ -219,6 +244,7 @@ describe('AgentSquare', () => {
     vi.mocked(bridge.installAgent).mockRejectedValueOnce(new Error('installer failed'));
     vi.mocked(bridge.getAgents).mockRejectedValueOnce(new Error('refresh failed'));
     fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    fireEvent.click(await screen.findByRole('button', { name: '确认安装软件' }));
     await screen.findByRole('button', { name: '关闭错误提示' });
     await waitFor(() => expect(useAgentStore.getState().loading).toBe(false));
     expect(screen.getAllByRole('alert')).toHaveLength(2);
@@ -382,11 +408,13 @@ describe('AgentSquare', () => {
     await screen.findByRole('article', { name: 'OpenCode' });
     const capability = screen.getByRole('combobox');
     fireEvent.change(capability, { target: { value: 'automatic' } });
-    vi.mocked(window.confirm).mockReturnValueOnce(false);
     fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    await screen.findByRole('button', { name: '确认安装软件' });
+    fireEvent.click(screen.getByTestId('install-review-cancel'));
     expect(bridge.installAgent).not.toHaveBeenCalled();
     expect(capability).toHaveValue('automatic');
     fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    fireEvent.click(await screen.findByRole('button', { name: '确认安装软件' }));
     expect(bridge.installAgent).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('article')).not.toBeInTheDocument();
     fireEvent.change(capability, { target: { value: 'all' } });

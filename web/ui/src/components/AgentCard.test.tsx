@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { installPlan } from '../test-fixtures/installPlan';
 import { AgentCard } from './AgentCard';
 import { runtimeMode, type AgentInfo } from '../bridge';
 import nativeAgentContract from '../../../../tests/fixtures/agent-info-installed.json';
@@ -12,7 +13,7 @@ vi.mock('../bridge', async (importOriginal) => ({
 }));
 
 function mountAgent(overrides: Partial<React.ComponentProps<typeof AgentCard>> = {}) {
-  const props = { agent, selected: false, dataStale: false, onInstall: vi.fn(), onUninstall: vi.fn(), onConfigure: vi.fn(), onSelect: vi.fn(), ...overrides };
+  const props = { agent, selected: false, dataStale: false, onPrepareInstall: vi.fn().mockResolvedValue(installPlan), onInstall: vi.fn(), onUninstall: vi.fn(), onConfigure: vi.fn(), onSelect: vi.fn(), ...overrides };
   return { ...render(<AgentCard {...props} />), props };
 }
 
@@ -292,11 +293,41 @@ describe('AgentCard', () => {
     expect(screen.getByRole('button', { name: '卸载 OpenCode' })).toBeDisabled();
   });
 
+  it('shows the actual bounded plan and limitations before any installation', async () => {
+    const { props } = mountAgent();
+    fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    const dialog = await screen.findByRole('dialog', { name: 'OpenCode 安装计划' });
+    for (const value of [installPlan.package, installPlan.executable, installPlan.prefix,
+      installPlan.globalRoot, installPlan.packageRoot, installPlan.launcherDirectory,
+      installPlan.managerPath, installPlan.nodePath]) {
+      expect(within(dialog).getByText(value)).toBeInTheDocument();
+    }
+    expect(dialog).toHaveTextContent('版本由当前 npm 配置选择，未固定或解析版本');
+    expect(dialog).toHaveTextContent('安装器 Node 仅用于此次安装');
+    expect(dialog).toHaveTextContent('生命周期脚本：遵循当前 npm 配置');
+    expect(dialog).toHaveTextContent('不创建配置备份');
+    expect(dialog).toHaveTextContent('不自动回滚或卸载');
+    expect(dialog).toHaveTextContent('npm 可能读取配置或更新缓存');
+    expect(props.onInstall).not.toHaveBeenCalled();
+    expect(window.confirm).not.toHaveBeenCalled();
+  });
+
+  it('shows disabled lifecycle scripts for the reviewed Pi plan', async () => {
+    const piPlan = { ...installPlan, agentId: 'pi', package: '@earendil-works/pi-coding-agent', executable: 'pi', scriptPolicy: 'disabled' as const };
+    mountAgent({ agent: { ...agent, id: 'pi', name: 'Pi' }, onPrepareInstall: vi.fn().mockResolvedValue(piPlan) });
+    fireEvent.click(screen.getByRole('button', { name: '安装 Pi' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Pi 安装计划' });
+    expect(dialog).toHaveTextContent('生命周期脚本：禁用（ignore-scripts）');
+    expect(dialog).not.toHaveTextContent('生命周期脚本：遵循当前 npm 配置');
+  });
+
   it('confirms software-only installation without configuring or selecting the row', async () => {
     const { props } = mountAgent();
     fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('此操作仅安装软件，不应用默认 profile 或修改模型配置'));
-    expect(props.onInstall).toHaveBeenCalledWith('opencode');
+    expect(props.onInstall).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: '确认安装软件' }));
+    expect(window.confirm).not.toHaveBeenCalled();
+    expect(props.onInstall).toHaveBeenCalledWith('opencode', installPlan.revision);
     expect(props.onSelect).not.toHaveBeenCalled();
     expect(props.onConfigure).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.getByRole('button', { name: '安装 OpenCode' })).toBeEnabled());
@@ -332,32 +363,74 @@ describe('AgentCard', () => {
   });
 
   it('canceling installation never performs an operation and permits a later confirmation', async () => {
-    vi.mocked(window.confirm).mockReturnValue(false);
     const { props } = mountAgent();
     const action = screen.getByRole('button', { name: '安装 OpenCode' });
     fireEvent.click(action);
+    await screen.findByRole('button', { name: '确认安装软件' });
+    fireEvent.click(screen.getByTestId('install-review-cancel'));
     expect(props.onInstall).not.toHaveBeenCalled();
     expect(props.onConfigure).not.toHaveBeenCalled();
     expect(props.onUninstall).not.toHaveBeenCalled();
     expect(action).toBeEnabled();
-    vi.mocked(window.confirm).mockReturnValue(true);
     fireEvent.click(action);
+    fireEvent.click(await screen.findByRole('button', { name: '确认安装软件' }));
     expect(props.onInstall).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(action).toBeEnabled());
   });
 
-  it('locks repeated install clicks until the operation settles', async () => {
+  it('locks repeated preview and install clicks until the operation settles', async () => {
     let finish!: () => void;
     const onInstall = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
-    mountAgent({ onInstall });
+    const { props } = mountAgent({ onInstall });
     const action = screen.getByRole('button', { name: '安装 OpenCode' });
     fireEvent.click(action);
     fireEvent.click(action);
+    expect(props.onPrepareInstall).toHaveBeenCalledTimes(1);
+    const confirm = await screen.findByRole('button', { name: '确认安装软件' });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
     expect(action).toBeDisabled();
     expect(onInstall).toHaveBeenCalledTimes(1);
-    expect(window.confirm).toHaveBeenCalledTimes(1);
+    expect(window.confirm).not.toHaveBeenCalled();
     await act(async () => finish());
     expect(action).toBeEnabled();
+  });
+
+  it('canceling a pending preview discards its result but retains the request lock until settlement', async () => {
+    let finish!: (value: typeof installPlan) => void;
+    const onPrepareInstall = vi.fn(() => new Promise<typeof installPlan>((resolve) => { finish = resolve; }));
+    const { props } = mountAgent({ onPrepareInstall });
+    const action = screen.getByRole('button', { name: '安装 OpenCode' });
+    fireEvent.click(action);
+    fireEvent.click(screen.getByRole('button', { name: '取消预览展示' }));
+    expect(action).toBeDisabled();
+    fireEvent.click(action);
+    expect(onPrepareInstall).toHaveBeenCalledTimes(1);
+    await act(async () => finish(installPlan));
+    expect(screen.queryByRole('button', { name: '确认安装软件' })).not.toBeInTheDocument();
+    expect(props.onInstall).not.toHaveBeenCalled();
+    expect(action).toBeEnabled();
+  });
+
+  it('discards preview results after unmount without installing', async () => {
+    let finish!: (value: typeof installPlan) => void;
+    const onPrepareInstall = vi.fn(() => new Promise<typeof installPlan>((resolve) => { finish = resolve; }));
+    const { props, unmount } = mountAgent({ onPrepareInstall });
+    fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    expect(onPrepareInstall).toHaveBeenCalledTimes(1);
+    unmount();
+    await act(async () => finish(installPlan));
+    expect(props.onInstall).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: '确认安装软件' })).not.toBeInTheDocument();
+  });
+
+  it.each(['agent', 'selection', 'freshness'] as const)('discards a reviewed plan when %s changes', async (change) => {
+    const { props, rerender } = mountAgent();
+    fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+    await screen.findByRole('button', { name: '确认安装软件' });
+    rerender(<AgentCard {...props} {...(change === 'agent' ? { agent: { ...agent } } : change === 'selection' ? { selected: true } : { dataStale: true })} />);
+    expect(screen.queryByRole('button', { name: '确认安装软件' })).not.toBeInTheDocument();
+    expect(props.onInstall).not.toHaveBeenCalled();
   });
 
   it('disables operations while another workspace operation is busy', () => {
@@ -509,6 +582,7 @@ describe('AgentCard', () => {
     expect(action).toBeDisabled();
     fireEvent.click(action);
     expect(props.onInstall).not.toHaveBeenCalled();
+    expect(props.onPrepareInstall).not.toHaveBeenCalled();
     expect(window.confirm).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: '查看 OpenCode 详情' }));
     expect(screen.getByText(mode === 'demo' ? /只读演示：/ : /未连接桌面后端/)).toBeInTheDocument();
@@ -527,7 +601,8 @@ describe('AgentCard', () => {
   it('reports unexpected operation failure without inventing an installed state', async () => {
     mountAgent({ onInstall: vi.fn().mockRejectedValue(new Error('连接中断')) });
     fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('连接中断');
+    fireEvent.click(await screen.findByRole('button', { name: '确认安装软件' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('安装未确认完成，软件可能已安装');
     expect(screen.getByText('PATH 未检测到')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '安装 OpenCode' })).toBeEnabled();
   });

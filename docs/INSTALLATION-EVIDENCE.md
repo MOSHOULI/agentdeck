@@ -80,8 +80,8 @@ not a guaranteed deadline for every filesystem operation or the entire refresh.
 
 Installing software and applying configuration are separate actions. Installation
 requires a supported fixed npm adapter, not just a registry shell command or a
-`not_detected` PATH result. The current allowlist binds Codex, Claude Code, OpenCode,
-Gemini CLI and Pi to their exact package and verification-command mappings. The
+`not_detected` PATH result. The current allowlist binds Codex, OpenCode, Gemini CLI
+and Pi to their exact package and verification-command mappings. The
 `opencode-ai` recipe is the documented OpenCode V1 route, not a claim of V2 support. The
 registry's method and recipe must also match the adapter. Manual entries and
 arbitrary shell recipes are not executed by this install path. See the
@@ -122,7 +122,10 @@ installed or partially changed**. AgentDeck reports the uncertainty and performs
 existing package will block a fresh install rather than silently becoming an upgrade.
 
 Installation does not initialize a profile, vault or Git backup and does not apply
-configuration. The desktop action requires confirmation; the CLI requires `--yes`.
+configuration. The desktop action now shows an [inspected npm installation plan](INSTALL-PREVIEW.md)
+and requires its revision on confirmation; changed plans are rejected before the
+installer. The CLI retains its explicit `--yes` contract. Claude Code's deprecated
+npm channel remains disabled, including through retained registries.
 The ephemeral backend plan is rebuilt locally, not accepted from the UI as a
 reusable authorization token or retained as proof of historical ownership.
 

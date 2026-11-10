@@ -15,7 +15,10 @@ const FILE_LIMIT: usize = 128 * 1024;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 
 mod installation;
-pub(super) use installation::{can_install, install_agent};
+pub use installation::InstallPreview;
+pub(super) use installation::{
+    can_install, install_agent, install_agent_from_preview, preview_install,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

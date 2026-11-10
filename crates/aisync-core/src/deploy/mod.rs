@@ -9,7 +9,8 @@ use crate::registry::AgentDefinition;
 mod inspection;
 mod process_guard;
 pub use inspection::{
-    InstallationDetails, InstallationInstance, InstallationSource, inspect_installation,
+    InstallPreview, InstallationDetails, InstallationInstance, InstallationSource,
+    inspect_installation,
 };
 
 use std::process::{Child, Command};
@@ -94,8 +95,20 @@ fn wait_for_shell_with_timeout(mut child: Child, timeout: Duration) -> std::io::
     }
 }
 
-/// Install using a supported, frozen package-manager plan. PATH absence alone
-/// never authorizes a reinstall of a package already present in its global root.
+/// Inspect the actual installation target for review. Queries run local npm code;
+/// this is not a sandbox or permission token, nor a pinned registry/version/closure.
+pub fn preview_install(agent: &AgentDefinition) -> crate::Result<InstallPreview> {
+    inspection::preview_install(agent)
+}
+
+/// Rebuild the inspected target and reject stale or missing confirmation before installation.
+pub fn install_agent_from_preview(agent: &AgentDefinition, revision: &str) -> crate::Result<()> {
+    inspection::install_agent_from_preview(agent, revision)
+}
+
+/// Direct CLI/core installation retains caller-managed explicit confirmation.
+/// Desktop callers must use install_agent_from_preview instead. PATH absence
+/// never authorizes reinstall of an existing global package.
 pub fn install_agent(agent: &AgentDefinition) -> crate::Result<()> {
     inspection::install_agent(agent)
 }

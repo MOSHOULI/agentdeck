@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { installPlan } from './test-fixtures/installPlan';
 import App from './App';
 import { useAgentStore } from './stores/agentStore';
 import { useWorkspaceActivityStore } from './stores/workspaceActivity';
@@ -97,6 +98,7 @@ it('retains an in-flight operation and its busy lock across navigation', async (
 it.each(['install', 'configure'] as const)('retains the in-flight %s lock across workspace navigation', async (operation) => {
   vi.spyOn(bridge, 'runtimeMode').mockReturnValue('native');
   vi.spyOn(window, 'confirm').mockReturnValue(true);
+  vi.spyOn(bridge, 'previewAgentInstall').mockResolvedValue(installPlan);
   const target = operation === 'install' ? notDetectedAgent : installedAgent;
   vi.spyOn(bridge, 'getAgents').mockResolvedValue([target]);
   let finish!: (outcome: bridge.InstallOutcome) => void;
@@ -106,6 +108,7 @@ it.each(['install', 'configure'] as const)('retains the in-flight %s lock across
   const actionName = operation === 'install' ? '安装 OpenCode' : '应用默认配置 OpenCode';
   const action = screen.getByRole('button', { name: actionName });
   fireEvent.click(action);
+  if (operation === 'install') fireEvent.click(await screen.findByRole('button', { name: '确认安装软件' }));
   fireEvent.click(action);
   expect(action).toBeDisabled();
   expect(mutation).toHaveBeenCalledTimes(1);
@@ -116,11 +119,32 @@ it.each(['install', 'configure'] as const)('retains the in-flight %s lock across
   expect(action).toBeDisabled();
   fireEvent.click(action);
   expect(mutation).toHaveBeenCalledTimes(1);
-  expect(window.confirm).toHaveBeenCalledTimes(1);
+  expect(window.confirm).toHaveBeenCalledTimes(operation === 'install' ? 0 : 1);
   await act(async () => { finish({ warnings: [] }); await pending; });
   await waitFor(() => expect(useAgentStore.getState().loading).toBe(false));
   expect(action).toBeEnabled();
   expect(within(screen.getByRole('tabpanel', { name: /^Agent 管理/ })).getByRole('status')).toHaveTextContent(operation === 'install' ? '软件安装操作已完成' : '默认 profile 配置操作已完成');
+});
+
+it('keeps preview activity visible through navigation while discarding the hidden review', async () => {
+  vi.spyOn(bridge, 'runtimeMode').mockReturnValue('native');
+  vi.spyOn(bridge, 'getAgents').mockResolvedValue([notDetectedAgent]);
+  let finish!: (value: typeof installPlan) => void;
+  const preview = vi.spyOn(bridge, 'previewAgentInstall').mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+  const install = vi.spyOn(bridge, 'installAgent');
+  await renderReadyApp(true);
+  fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+  expect(preview).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('tab', { name: /^记忆管理/ }));
+  expect(screen.getByText(/进行中：.*Agent 管理/)).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: /^Agent 管理/ }));
+  expect(screen.getByRole('button', { name: '安装 OpenCode' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: '安装 OpenCode' }));
+  expect(preview).toHaveBeenCalledTimes(1);
+  await act(async () => finish(installPlan));
+  expect(screen.queryByRole('button', { name: '确认安装软件' })).not.toBeInTheDocument();
+  expect(install).not.toHaveBeenCalled();
+  expect(screen.queryByText(/进行中：.*Agent 管理/)).not.toBeInTheDocument();
 });
 
 it('keeps agent activity visible while a different workspace is open', async () => {

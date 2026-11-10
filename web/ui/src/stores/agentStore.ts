@@ -12,6 +12,7 @@ interface AgentState {
   agents: AgentInfo[];
   selectedAgentId: string | null;
   loading: boolean;
+  previewing: boolean;
   error: string | null;
   notice: string | null;
   refreshError: string | null;
@@ -22,7 +23,8 @@ interface AgentState {
 
   // 操作
   loadAgents: () => Promise<void>;
-  installAgent: (id: string) => Promise<void>;
+  prepareInstall: (id: string) => Promise<bridge.AgentInstallPreview | null>;
+  installAgent: (id: string, revision: string) => Promise<void>;
   configureAgent: (id: string) => Promise<void>;
   uninstallAgent: (id: string) => Promise<void>;
   verifyAuth: (id: string) => Promise<boolean>;
@@ -46,7 +48,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
     }
   };
 
-  const runMutation = async (id: string, operation: 'install' | 'configure' | 'uninstall') => {
+  const runMutation = async (id: string, operation: 'install' | 'configure' | 'uninstall', revision?: string) => {
     if (get().loading) return;
     if (get().dataStale) {
       set({ error: get().error || '本地状态尚未刷新，请先刷新列表。' });
@@ -73,9 +75,13 @@ export const useAgentStore = create<AgentState>((set, get) => {
       set({ error: operation === 'install' ? '当前状态不允许自动安装，请刷新列表或查看官方说明。' : '仅能为已检测安装且支持配置的 Agent 应用配置。' });
       return;
     }
+    if (operation === 'install' && !bridge.validInstallRevision(revision)) {
+      set({ error: '请先检查有效安装预览。' });
+      return;
+    }
     set({ loading: true, dataStale: true, error: null, notice: null, refreshError: null });
     try {
-      const outcome = await (operation === 'install' ? bridge.installAgent(id) : bridge.configureAgent(id));
+      const outcome = await (operation === 'install' ? bridge.installAgent(id, revision!) : bridge.configureAgent(id));
       const notice = operation === 'install'
         ? '软件安装操作已完成，未应用配置。'
         : '默认 profile 配置操作已完成（写前备份）。';
@@ -93,6 +99,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
     agents: [],
     selectedAgentId: null,
     loading: false,
+    previewing: false,
     error: null,
     notice: null,
     refreshError: null,
@@ -106,7 +113,24 @@ export const useAgentStore = create<AgentState>((set, get) => {
       set({ loading: false });
     },
 
-    installAgent: (id: string) => runMutation(id, 'install'),
+    prepareInstall: async (id: string) => {
+      if (get().loading || get().dataStale) return null;
+      const agent = get().agents.find(entry => entry.id === id);
+      if (!agent || agent.canInstall !== true || agent.installed !== false
+        || agent.installationStatus !== 'not_detected' || bridge.installationEvidenceProblem(agent)) return null;
+      set({ loading: true, previewing: true, error: null });
+      try {
+        const plan = await bridge.previewAgentInstall(id);
+        return get().agents.find(entry => entry.id === id) === agent && !get().dataStale ? plan : null;
+      } catch {
+        set({ error: '无法取得有效安装预览，请刷新后重新检查。' });
+        return null;
+      } finally {
+        // Cancellation/unmount only discards the UI result, not this global lock.
+        set({ loading: false, previewing: false });
+      }
+    },
+    installAgent: (id: string, revision: string) => runMutation(id, 'install', revision),
     configureAgent: (id: string) => runMutation(id, 'configure'),
     uninstallAgent: (id: string) => runMutation(id, 'uninstall'),
 
