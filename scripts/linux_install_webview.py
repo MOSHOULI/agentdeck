@@ -8,12 +8,16 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 
 STAGES = ('preview_cancel', 'stale_revision', 'confirmed_install', 'observed_source', 'no_configuration')
 PREVIEW = "//*[@data-testid='install-preview-codex']"
 DIALOG = "//*[@data-testid='install-review-dialog']"
 CONFIRM = "//*[@data-testid='install-review-confirm']"
 CANCEL = "//*[@data-testid='install-review-cancel']"
+CARD = PREVIEW + '/ancestor::article'
+DETAILS = CARD + "//button[contains(@class, 'agent-detail-button')]"
+SOURCE = CARD + "//section[contains(@class, 'agent-installation-evidence')]"
 
 
 class InstallFailure(Exception):
@@ -52,7 +56,8 @@ def prepare(root, path):
              'manager': root / 'manager/lib/node_modules/npm/bin/npm-cli.js',
              'prefix': root / 'prefix', 'global': root / 'prefix/lib/node_modules',
              'package': root / 'prefix/lib/node_modules/@openai/codex',
-             'bin': root / 'prefix/bin', 'marker': root / 'install-marker'}
+             'bin': root / 'prefix/bin', 'marker': root / 'install-marker',
+             'queries': root / 'query-events'}
     for directory in (paths['manager'].parent, paths['manager_bin'], paths['bin'], paths['global']):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Intermediate directories also remain private independently of umask.
@@ -60,6 +65,7 @@ def prepare(root, path):
         if directory.is_dir(): directory.chmod(0o700)
     private_write(paths['manager'].parent.parent / 'package.json', json.dumps({
         'name': 'npm', 'version': '0.0.0', 'bin': {'npm': 'bin/npm-cli.js'}}))
+    private_write(paths['queries'], '')
     expected = ['install', '--global', '--prefix', str(paths['prefix']), '--force=false',
                 '--no-audit', '--no-fund', '--no-progress', '@openai/codex']
     constants = {key: str(value) for key, value in paths.items()}
@@ -79,13 +85,18 @@ function safeDirectory(target) {
     if (!s.isDirectory() || s.isSymbolicLink() || (s.mode & 0o777) !== 0o700 || s.uid !== process.getuid()) throw Error('unsafe');
   }
 }
+function query(kind) {
+  const s = fs.lstatSync(p.queries);
+  if (!s.isFile() || s.nlink !== 1 || s.uid !== process.getuid() || (s.mode & 0o777) !== 0o600 || s.size >= 4096) throw Error('query log');
+  fs.appendFileSync(p.queries, kind);
+}
 function absent(target) { try { fs.lstatSync(target); } catch (e) { if (e.code === 'ENOENT') return; throw e; } throw Error('exists'); }
 try {
   for (const directory of [p.prefix, p.global, p.bin, path.dirname(p.manager)]) safeDirectory(directory);
   if (fs.realpathSync(process.argv[1]) !== p.manager) throw Error('entry');
   const args = JSON.stringify(process.argv.slice(2));
-  if (args === '["prefix","--global"]') { console.log(p.prefix); }
-  else if (args === '["root","--global"]') { console.log(p.global); }
+  if (args === '["prefix","--global"]') { query('p'); console.log(p.prefix); }
+  else if (args === '["root","--global"]') { query('r'); console.log(p.global); }
   else if (args === JSON.stringify(expected)) {
     absent(p.marker); absent(p.package); absent(path.join(p.bin, 'codex'));
     const scope = path.dirname(p.package);
@@ -106,6 +117,19 @@ try {
     (paths['manager_bin'] / 'node').symlink_to(node)
     paths['path'] = os.pathsep.join((str(paths['manager_bin']), str(paths['bin']), path))
     return paths
+
+
+def query_counts(fixture):
+    """Bounded fixed-enum evidence, never shell output or external paths."""
+    path = fixture['queries']
+    meta = path.lstat()
+    if not stat.S_ISREG(meta.st_mode) or meta.st_nlink != 1 or meta.st_uid != os.geteuid() or stat.S_IMODE(meta.st_mode) != 0o600 or meta.st_size > 4096:
+        raise InstallFailure('unsafe_query_evidence')
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as stream:
+        data = stream.read(4097)
+    if len(data) > 4096 or any(byte not in b'pr' for byte in data):
+        raise InstallFailure('unsafe_query_evidence')
+    return {'prefix_queries': data.count(b'p'), 'root_queries': data.count(b'r')}
 
 
 def assert_absent(fixture):
@@ -151,22 +175,39 @@ def assert_coverage(records):
         raise InstallFailure('incomplete_coverage')
 
 
-def exercise(driver, fixture, home, records, phase):
+def exercise(driver, fixture, home, records, phase, trace=None):
     driver.click("//*[@role='tab' and @aria-label='Agent 管理']")
+    phase('install_search')
     driver.type("//*[@id='agent-search']", 'Codex')
+    # End the native edit on a non-action heading before taking a review token.
+    # WebKit may defer the search change event until blur; never use the preview
+    # action itself to commit that edit. This is a real pointer click, not script.
+    driver.click("//*[@id='workspace-panel-agents']//h1")
+    driver.wait(lambda: driver.value("//*[@id='agent-search']") == 'Codex')
+    driver.wait(lambda: len(driver.elements("//*[@aria-label='Agent 列表']/article")) == 1)
     driver.wait(lambda: driver.elements(PREVIEW) and driver.enabled(PREVIEW))
-    def preview():
+    def preview(stage):
+        before = query_counts(fixture)
+        phase(stage + '_click')
         driver.click(PREVIEW)  # No mutation or navigation click is ever replayed.
-        driver.wait(lambda: driver.elements(DIALOG))
+        phase(stage + '_wait_dialog')
+        try:
+            driver.wait(lambda: driver.elements(DIALOG))
+        finally:
+            if trace is not None:
+                trace.append({'stage': stage, 'before': before, 'after': query_counts(fixture)})
+        phase(stage + '_assert_plan')
         assert_plan(driver, fixture)
     def done(stage): records.append({'stage': stage, 'verified': True})
     phase('install_preview_cancel')
-    preview(); assert_absent(fixture)
+    preview('install_initial_preview'); assert_absent(fixture)
+    phase('install_cancel_click')
     driver.click(CANCEL)
+    phase('install_cancel_wait_closed')
     driver.wait(lambda: not driver.elements(DIALOG))
     assert_absent(fixture); done('preview_cancel')
     phase('install_stale_revision')
-    preview()
+    preview('install_stale_preview')
     with fixture['manager'].open('a') as stream: stream.write('\n// harmless synthetic revision change\n')
     driver.click(CONFIRM)
     driver.wait(lambda: driver.elements("//*[@role='alert' and contains(@class, 'agent-notice')]") and '安装失败' in driver.text("//*[@role='alert' and contains(@class, 'agent-notice')]"))
@@ -175,13 +216,13 @@ def exercise(driver, fixture, home, records, phase):
     assert_absent(fixture); done('stale_revision')
     phase('install_confirmed')
     driver.wait(lambda: driver.enabled(PREVIEW))
-    preview(); driver.click(CONFIRM)
+    preview('install_fresh_preview'); driver.click(CONFIRM)
     driver.wait(lambda: fixture['marker'].exists())
     driver.wait(lambda: driver.elements("//*[@role='status' and contains(@class, 'agent-notice')]") and '软件安装操作已完成，未应用配置' in driver.text("//*[@role='status' and contains(@class, 'agent-notice')]"))
     assert_installed(fixture); done('confirmed_install')
     phase('install_observed_source')
-    driver.click("//button[@aria-label='查看 Codex 详情']")
-    source = "//section[@aria-label='Codex 安装实例与来源证据']"
+    driver.click(DETAILS)
+    source = SOURCE
     driver.wait(lambda: driver.elements(source))
     driver.wait(lambda: '实测版本 1.2.3' in driver.text(source))
     text = driver.text(source)

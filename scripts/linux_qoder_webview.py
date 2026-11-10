@@ -703,7 +703,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
     env = dict(os.environ, HOME=str(home))
     for key, name in [('XDG_CONFIG_HOME', 'config'), ('XDG_CACHE_HOME', 'cache'), ('XDG_DATA_HOME', 'data'), ('XDG_STATE_HOME', 'state'), ('XDG_RUNTIME_DIR', 'runtime')]:
         directory = home / name; directory.mkdir(mode=0o700); env[key] = str(directory)
-    client = Driver(); process = None; records = []; write_records = []; scope_records = []; dsh_records = []; qwen_records = []; install_records = []; passed = False
+    client = Driver(); process = None; records = []; write_records = []; scope_records = []; dsh_records = []; qwen_records = []; install_records = []; install_trace = []; passed = False
     log = bytearray(); logger = None
     diagnostic = {'phase': 'start_driver', 'failure_code': None}
     def phase(value): diagnostic['phase'] = value
@@ -756,7 +756,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         qwen.assert_coverage(qwen_records)
         if snapshot(fixture_root, exact) != readonly_before or snapshot(dsh_archive.parent) != dsh_source_before:
             raise Failure('incomplete_gui_coverage')
-        install_gui.exercise(client, install_fixture, home, install_records, phase)
+        install_gui.exercise(client, install_fixture, home, install_records, phase, install_trace)
         install_gui.assert_coverage(install_records)
         phase('acceptance_complete')
         passed = True
@@ -786,7 +786,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         if CANARY.encode() in retained:
             retained = b'Synthetic private content suppressed.\n'; passed = False
         (evidence / 'driver.log').write_bytes(retained)
-        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'reviewed_install_checks': install_records, 'synthetic_install_gui_verified': passed and install_records == [{'stage': name, 'verified': True} for name in install_gui.STAGES], 'real_agent_package_installed_or_executed': False, 'registry_or_lifecycle_compatibility_verified': False, 'qwen_owned_checks': qwen_records, 'qwen_owned_gui_verified': passed and qwen_records == [{'stage': name, 'verified': True} for name in qwen.STAGES], 'qwen_executed': False, 'desktop_write_checks': write_records, 'scope_checks': scope_records, 'dsh_root_checks': dsh_records, 'dsh_root_gui_verified': passed and len(dsh_records)==3, 'dsh_executed': False, 'synthetic_scope_gui_verified': passed and len(scope_records)==2, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_directory_mode': '0700'}, indent=2))
+        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'reviewed_install_checks': install_records, 'reviewed_install_query_trace': install_trace, 'synthetic_install_gui_verified': passed and install_records == [{'stage': name, 'verified': True} for name in install_gui.STAGES], 'real_agent_package_installed_or_executed': False, 'registry_or_lifecycle_compatibility_verified': False, 'qwen_owned_checks': qwen_records, 'qwen_owned_gui_verified': passed and qwen_records == [{'stage': name, 'verified': True} for name in qwen.STAGES], 'qwen_executed': False, 'desktop_write_checks': write_records, 'scope_checks': scope_records, 'dsh_root_checks': dsh_records, 'dsh_root_gui_verified': passed and len(dsh_records)==3, 'dsh_executed': False, 'synthetic_scope_gui_verified': passed and len(scope_records)==2, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_directory_mode': '0700'}, indent=2))
     if not passed:
         raise Failure('acceptance_not_confirmed')
 

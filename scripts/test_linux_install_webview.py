@@ -27,6 +27,7 @@ class OfflineDriver:
             if self.confirmations == 2: self.install()
     def type(self, *_): pass
     def enabled(self, *_): return True
+    def value(self, *_): return 'Codex'
     def elements(self, selector):
         return ([{}] if self.dialog else []) if selector == subject.DIALOG else [{}]
     def wait(self, predicate, **_):
@@ -73,6 +74,7 @@ class FixtureTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, str(self.f[key]) + '\n')
             subject.assert_absent(self.f)
+        self.assertEqual(subject.query_counts(self.f), {'prefix_queries': 1, 'root_queries': 1})
         result = self.run_fixture(self.install_args())
         self.assertEqual(result.returncode, 0, result.stderr)
         subject.assert_installed(self.f)
@@ -148,13 +150,42 @@ class FixtureTests(unittest.TestCase):
         with self.assertRaises(subject.InstallFailure): subject.assert_no_configuration(home)
 
     def test_offline_assertion_model_covers_success_not_native_gui(self):
-        records = []
+        records = []; trace = []; phases = []
         def install(): self.assertEqual(self.run_fixture(self.install_args()).returncode, 0)
         driver = OfflineDriver(self.f, install)
-        subject.exercise(driver, self.f, self.root / 'empty-home', records, lambda _: None)
+        subject.exercise(driver, self.f, self.root / 'empty-home', records, phases.append, trace)
         subject.assert_coverage(records)
         self.assertEqual(driver.clicks.count(subject.CONFIRM), 2)
         self.assertEqual(driver.clicks.count(subject.CANCEL), 1)
+        self.assertLess(driver.clicks.index("//*[@id='workspace-panel-agents']//h1"), driver.clicks.index(subject.PREVIEW))
+        self.assertIn(subject.DETAILS, driver.clicks)
+        self.assertNotIn('Codex', subject.DETAILS)
+        self.assertEqual([entry['stage'] for entry in trace], ['install_initial_preview', 'install_stale_preview', 'install_fresh_preview'])
+        self.assertIn('install_initial_preview_wait_dialog', phases)
+        self.assertIn('install_cancel_wait_closed', phases)
+
+    def test_query_evidence_rejects_corrupt_or_linked_file(self):
+        self.f['queries'].write_text('not-enum')
+        with self.assertRaises(subject.InstallFailure): subject.query_counts(self.f)
+        self.f['queries'].unlink()
+        outside = self.root / 'outside'; outside.write_text('')
+        self.f['queries'].symlink_to(outside)
+        with self.assertRaises(subject.InstallFailure): subject.query_counts(self.f)
+        self.assertEqual(self.run_fixture(['prefix', '--global']).returncode, 64)
+        self.assertEqual(outside.read_text(), '')
+
+    def test_failed_dialog_wait_preserves_query_evidence_without_reclick(self):
+        trace = []
+        driver = OfflineDriver(self.f, lambda: self.fail('must not install'))
+        original = driver.elements
+        driver.elements = lambda selector: [] if selector == subject.DIALOG else original(selector)
+        with self.assertRaises(harness.Failure):
+            subject.exercise(driver, self.f, self.root, [], lambda _: None, trace)
+        self.assertEqual(driver.clicks.count(subject.PREVIEW), 1)
+        self.assertEqual(driver.clicks.count(subject.CONFIRM), 0)
+        self.assertEqual(trace, [{'stage': 'install_initial_preview',
+                                 'before': {'prefix_queries': 0, 'root_queries': 0},
+                                 'after': {'prefix_queries': 0, 'root_queries': 0}}])
 
     def test_uncertain_confirm_never_replayed(self):
         driver = OfflineDriver(self.f, lambda: self.fail('must not install'), fault='timeout')
