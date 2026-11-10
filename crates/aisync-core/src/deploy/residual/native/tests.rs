@@ -1,5 +1,8 @@
 use super::*;
 use std::fs;
+use windows_sys::Win32::System::WindowsProgramming::{
+    DRIVE_CDROM, DRIVE_NO_ROOT_DIR, DRIVE_RAMDISK, DRIVE_REMOTE, DRIVE_REMOVABLE, DRIVE_UNKNOWN,
+};
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {

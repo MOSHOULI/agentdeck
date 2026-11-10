@@ -14,6 +14,7 @@ use std::{
 use windows_sys::Win32::{
     Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, INVALID_HANDLE_VALUE},
     Storage::FileSystem::*,
+    System::WindowsProgramming::DRIVE_FIXED,
 };
 
 #[derive(Debug, PartialEq, Eq)]
