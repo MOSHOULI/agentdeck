@@ -51,12 +51,12 @@ fn other_platforms_do_not_offer_windows_observation() {
 mod windows {
     use super::*;
     use std::{fs, path::PathBuf};
-    struct Fixture(PathBuf);
+    struct Fixture(PathBuf, Option<fs::Permissions>);
     impl Fixture {
         fn new() -> Self {
             let p = std::env::temp_dir().join(format!("codex-observe-{}", uuid::Uuid::new_v4()));
             fs::create_dir(&p).unwrap();
-            Self(p)
+            Self(p, None)
         }
         fn config(&self) -> PathBuf {
             self.0.join("config.toml")
@@ -64,22 +64,22 @@ mod windows {
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
-            if let Ok(m) = fs::metadata(self.config()) {
-                let mut p = m.permissions();
-                p.set_readonly(false);
-                let _ = fs::set_permissions(self.config(), p);
+            // Restore precisely the fixture permissions saved before the readonly test.
+            if let Some(original) = self.1.take() {
+                let _ = fs::set_permissions(self.config(), original);
             }
             let _ = fs::remove_dir_all(&self.0);
         }
     }
     #[test]
     fn native_existing_readonly_and_missing_are_zero_write() {
-        let f = Fixture::new();
+        let mut f = Fixture::new();
         assert_eq!(observe(&f.config()).state, ObservationState::Missing);
         assert_eq!(fs::read_dir(&f.0).unwrap().count(), 0);
         let bytes = b"secret='PRIVATE_CANARY'\r\n[tui]\r\nanimations=true\r\n";
         fs::write(f.config(), bytes).unwrap();
         let mut permissions = fs::metadata(f.config()).unwrap().permissions();
+        f.1 = Some(permissions.clone());
         permissions.set_readonly(true);
         fs::set_permissions(f.config(), permissions).unwrap();
         let before = fs::metadata(f.config()).unwrap();
