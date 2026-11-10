@@ -756,7 +756,8 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         qwen.assert_coverage(qwen_records)
         if snapshot(fixture_root, exact) != readonly_before or snapshot(dsh_archive.parent) != dsh_source_before:
             raise Failure('incomplete_gui_coverage')
-        install_gui.exercise(client, install_fixture, home, install_records, phase, install_trace)
+        install_gui.exercise(client, install_fixture, home, install_records, phase, install_trace,
+                             lambda stage: install_gui.capture_geometry(client, evidence, stage))
         install_gui.assert_coverage(install_records)
         phase('acceptance_complete')
         passed = True

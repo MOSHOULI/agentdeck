@@ -5,6 +5,8 @@ It does not certify registry, real-package or lifecycle-script compatibility.
 The caller enforces hosted Linux and retains the WebKit sandbox.
 """
 import json
+import base64
+import math
 import os
 from pathlib import Path
 import shutil
@@ -170,12 +172,78 @@ def assert_plan(driver, fixture):
         if value not in text: raise InstallFailure('policy_mismatch')
 
 
+def capture_geometry(driver, evidence, stage):
+    """Read-only W3C evidence. Never scripts, hit-test mutation, or click replay."""
+    if stage not in {prefix + suffix for prefix in ('install_initial_preview', 'install_stale_preview', 'install_fresh_preview') for suffix in ('_before', '_after_click', '_settled')}:
+        raise InstallFailure('invalid_diagnostic_stage')
+    result = {}
+    last_response = getattr(driver, 'last_response', None)
+    def read(name, endpoint, kind):
+        try:
+            value = driver.command('GET', endpoint)
+            if kind == 'rect':
+                if not isinstance(value, dict): raise ValueError()
+                value = {key: value[key] for key in ('x', 'y', 'width', 'height')}
+                if any(type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 1_000_000 for v in value.values()): raise ValueError()
+                if value['width'] < 0 or value['height'] < 0: raise ValueError()
+            elif kind == 'boolean':
+                if type(value) is not bool: raise ValueError()
+            elif kind == 'number':
+                if type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 1_000_000: raise ValueError()
+            elif kind == 'css':
+                if value not in {'auto', 'none', 'visible', 'hidden', 'clip', 'scroll', 'block', 'inline', 'flex', 'grid', 'inline-flex', '0', '1'}: value = 'other'
+            result[name] = value
+        except Exception:
+            result[name] = {'state': 'unavailable'}
+    elements = {}
+    for label, selector in (('button', PREVIEW), ('card', CARD), ('search', "//*[@id='agent-search']"),
+                            ('workspace', "//*[@id='workspace-content']"),
+                            ('actions', CARD + "//*[contains(@class, 'agent-row-actions')]")):
+        try:
+            element = driver.one(selector)
+            if not isinstance(element, str): raise ValueError()
+            elements[label] = element
+            read(label + '_rect', '/element/' + element + '/rect', 'rect')
+            read(label + '_displayed', '/element/' + element + '/displayed', 'boolean')
+            read(label + '_enabled', '/element/' + element + '/enabled', 'boolean')
+            for prop in ('pointer-events', 'visibility', 'overflow-x', 'overflow-y', 'opacity'):
+                read(label + '_' + prop, '/element/' + element + '/css/' + prop, 'css')
+            for prop in ('scrollLeft', 'scrollTop', 'clientWidth', 'clientHeight', 'scrollWidth', 'scrollHeight'):
+                read(label + '_' + prop, '/element/' + element + '/property/' + prop, 'number')
+        except Exception:
+            result[label] = {'state': 'unavailable'}
+    read('window_rect', '/window/rect', 'rect')
+    try:
+        active = driver.command('GET', '/element/active')
+        identifier = active['element-6066-11e4-a52e-4f735466cecf']
+        result['active_element'] = next((name for name, element in elements.items() if element == identifier), 'other')
+    except Exception:
+        result['active_element'] = 'unavailable'
+    try:
+        # Only synthetic isolated HOME content is eligible. Inspect bounded DOM
+        # for the private fixture canary before retaining the screenshot.
+        source = driver.command('GET', '/source')
+        if not isinstance(source, str) or len(source.encode()) > 1_048_576 or 'QODER-SYNTHETIC-PRIVATE-CONTENT-NOT-FOR-UI' in source:
+            raise ValueError()
+        encoded = driver.command('GET', '/screenshot')
+        if not isinstance(encoded, str) or len(encoded) > 1_000_000: raise ValueError()
+        png = base64.b64decode(encoded, validate=True)
+        if not png.startswith(b'\x89PNG\r\n\x1a\n'): raise ValueError()
+        name = stage + '.png'
+        (evidence / name).write_bytes(png)
+        result['screenshot'] = name
+    except Exception:
+        result['screenshot'] = 'unavailable_or_suppressed'
+    if hasattr(driver, 'last_response'): driver.last_response = last_response
+    return result
+
+
 def assert_coverage(records):
     if records != [{'stage': stage, 'verified': True} for stage in STAGES]:
         raise InstallFailure('incomplete_coverage')
 
 
-def exercise(driver, fixture, home, records, phase, trace=None):
+def exercise(driver, fixture, home, records, phase, trace=None, observe=None):
     driver.click("//*[@role='tab' and @aria-label='Agent 管理']")
     phase('install_search')
     driver.type("//*[@id='agent-search']", 'Codex')
@@ -191,14 +259,17 @@ def exercise(driver, fixture, home, records, phase, trace=None):
     driver.wait(lambda: driver.elements(PREVIEW) and driver.enabled(PREVIEW))
     def preview(stage):
         before = query_counts(fixture)
+        observation = {'before_ui': observe(stage + '_before')} if observe else {}
         phase(stage + '_click')
-        driver.click(PREVIEW)  # No mutation or navigation click is ever replayed.
-        phase(stage + '_wait_dialog')
         try:
+            driver.click(PREVIEW)  # No mutation or navigation click is ever replayed.
+            if observe: observation['after_click_ui'] = observe(stage + '_after_click')
+            phase(stage + '_wait_dialog')
             driver.wait(lambda: driver.elements(DIALOG))
         finally:
+            if observe: observation['settled_ui'] = observe(stage + '_settled')
             if trace is not None:
-                trace.append({'stage': stage, 'before': before, 'after': query_counts(fixture)})
+                trace.append({'stage': stage, 'before': before, 'after': query_counts(fixture), **observation})
         phase(stage + '_assert_plan')
         assert_plan(driver, fixture)
     def done(stage): records.append({'stage': stage, 'verified': True})

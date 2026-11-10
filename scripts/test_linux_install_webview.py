@@ -1,5 +1,6 @@
 """Offline fixture/harness assertions. These do NOT certify native GUI or IPC."""
 import json
+import base64
 import os
 from pathlib import Path
 import shutil
@@ -205,6 +206,35 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(driver.clicks.count(subject.PREVIEW), 0)
         self.assertEqual(driver.clicks.count(subject.CONFIRM), 0)
         subject.assert_absent(self.f)
+
+    def test_geometry_is_bounded_readonly_and_screenshot_canary_suppressed(self):
+        driver = Mock()
+        driver.one.return_value = 'synthetic-element'
+        driver.last_response = {'operation': 'click'}
+        png = b'\x89PNG\r\n\x1a\nsynthetic-placeholder-not-rendered'
+        def read(method, endpoint):
+            self.assertEqual(method, 'GET')
+            self.assertNotIn('script', endpoint)
+            if endpoint.endswith('/rect'): return {'x': 1, 'y': 2, 'width': 65, 'height': 32}
+            if endpoint.endswith(('/enabled', '/displayed')): return True
+            if '/property/' in endpoint: return 32
+            if '/css/' in endpoint: return 'visible'
+            if endpoint == '/element/active': return {harness.ELEMENT: 'synthetic-element'}
+            if endpoint == '/source': return '<html>synthetic</html>'
+            if endpoint == '/screenshot': return base64.b64encode(png).decode()
+            self.fail('unexpected endpoint')
+        driver.command.side_effect = read
+        evidence = self.root / 'evidence'; evidence.mkdir()
+        report = subject.capture_geometry(driver, evidence, 'install_initial_preview_before')
+        self.assertEqual(report['button_rect']['width'], 65)
+        self.assertEqual(report['active_element'], 'button')
+        self.assertEqual((evidence / report['screenshot']).read_bytes(), png)
+        self.assertEqual(driver.last_response, {'operation': 'click'})
+        driver.command.side_effect = lambda method, endpoint: harness.CANARY if endpoint == '/source' else read(method, endpoint)
+        report = subject.capture_geometry(driver, evidence, 'install_initial_preview_settled')
+        self.assertEqual(report['screenshot'], 'unavailable_or_suppressed')
+        self.assertFalse((evidence / 'install_initial_preview_settled.png').exists())
+        with self.assertRaises(subject.InstallFailure): subject.capture_geometry(driver, evidence, '../escape')
 
     def test_uncertain_confirm_never_replayed(self):
         driver = OfflineDriver(self.f, lambda: self.fail('must not install'), fault='timeout')
