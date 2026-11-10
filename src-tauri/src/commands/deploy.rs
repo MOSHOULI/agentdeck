@@ -75,7 +75,8 @@ fn to_agent_info(agent: AgentDefinition, details: InstallationDetails) -> AgentI
     // A registry method is not evidence of this machine's installation source.
     let can_uninstall = aisync_core::deploy::can_uninstall(&agent);
     let uninstall_help = aisync_core::deploy::uninstall_block_reason(&agent).map(str::to_owned);
-    let can_configure = aisync_core::deploy::can_configure(&agent) && !details.ambiguous;
+    let can_configure =
+        agent.id != "codex" && aisync_core::deploy::can_configure(&agent) && !details.ambiguous;
     let install_help = if can_install {
         None
     } else if can_verify_install {
@@ -182,9 +183,32 @@ pub async fn install_agent(
     .map_err(|e| e.to_string())
 }
 
+/// Read-only planning: no profile initialization, installation probe, or backup.
+#[tauri::command]
+pub async fn preview_codex_configuration()
+-> Result<aisync_core::config::CodexConfigurationPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = aisync_core::home_dir().ok_or_else(|| "无法确定配置目录。".to_string())?;
+        let registry =
+            registry::load_registry_read_only().map_err(|_| "配置计划未完成。".to_string())?;
+        let agent = registry
+            .agents
+            .get("codex")
+            .ok_or_else(|| "配置计划未完成。".to_string())?;
+        let source = home.join(".agentdeck").join("profiles").join("default");
+        aisync_core::config::preview_codex_configuration(agent, &source, &home)
+            .map_err(|_| "配置计划未完成，请检查文件、路径及受支持格式。".to_string())
+    })
+    .await
+    .map_err(|_| "配置计划未完成。".to_string())?
+}
+
 /// Apply the optional profile only after a separate explicit user action.
 #[tauri::command]
 pub async fn configure_agent(id: String) -> Result<aisync_core::deploy::InstallOutcome, String> {
+    if id == "codex" {
+        return Err("Codex 当前仅提供只读配置计划，不支持应用；未创建备份或执行探测。".to_string());
+    }
     let agent = find_agent(&id).map_err(|e| e.to_string())?;
     if !aisync_core::deploy::can_configure(&agent) {
         return Err("此 Agent 暂无可用的配置适配器，未更改配置。".to_string());
@@ -258,6 +282,72 @@ mod tests {
             }
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn codex_plan_ipc_does_not_initialize_or_probe() {
+        const CHILD: &str = "AGENTDECK_CODEX_PLAN_IPC_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let home = aisync_core::home_dir().unwrap();
+            assert_eq!(std::fs::read_dir(&home).unwrap().count(), 0);
+            let plan = tauri::async_runtime::block_on(preview_codex_configuration()).unwrap();
+            let value = serde_json::to_value(plan).unwrap();
+            assert_eq!(value["applySupported"], false);
+            assert_eq!(value["usesBundledDefaults"], true);
+            assert_eq!(value["targets"].as_array().unwrap().len(), 2);
+            assert!(tauri::async_runtime::block_on(configure_agent("codex".into())).is_err());
+            assert_eq!(std::fs::read_dir(&home).unwrap().count(), 0);
+            return;
+        }
+        let base = std::path::PathBuf::from(
+            std::env::var_os("AGENTDECK_TEST_HOME").expect("run with scripts/run-isolated.py"),
+        );
+        assert!(base.is_absolute());
+        let root = base.join(format!(
+            "codex-plan-ipc-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "commands::deploy::tests::codex_plan_ipc_does_not_initialize_or_probe",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("AGENTDECK_TEST_HOME", &root)
+            .env("HOME", &root)
+            .env("USERPROFILE", &root)
+            .env("APPDATA", root.join("AppData/Roaming"))
+            .env("LOCALAPPDATA", root.join("AppData/Local"))
+            .env("XDG_CONFIG_HOME", root.join(".config"))
+            .env("XDG_DATA_HOME", root.join(".local/share"))
+            .env_remove("CODEX_HOME")
+            .env("PATH", "")
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(
+            result.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed"));
+    }
+
+    #[test]
+    fn codex_legacy_configuration_rejects_before_lookup_or_side_effects() {
+        let error =
+            tauri::async_runtime::block_on(configure_agent("codex".to_string())).unwrap_err();
+        assert_eq!(
+            error,
+            "Codex 当前仅提供只读配置计划，不支持应用；未创建备份或执行探测。"
+        );
     }
 
     #[test]

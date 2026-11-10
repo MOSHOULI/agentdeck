@@ -127,3 +127,5 @@ Publisher registry signing uses the existing protected private key. That key is 
 Explicit, version-gated read-only CLI inspection is documented in [Qwen configuration inspection](docs/QWEN-CONFIG-INSPECTION.md). It is not configuration switching or restoration. A separate [experimental owned Vim preference](docs/QWEN-OWNED-SETTING.md) supports one field with explicit paths and an exact version; full runtime effectiveness is not verified.
 
 Qoder CLI explicit scope inventory: `aisync qoder inspect --user-settings /absolute/settings.json`. Redacted summaries and potential cross-file MCP overlap counts only, without BYOK edits, effective-config or runtime-version claims. See [scope inspection boundaries](docs/QODER-SCOPE-INSPECTION.md).
+
+Codex desktop profile configuration now exposes a [read-only configuration plan](docs/CODEX-CONFIG-PLAN.md), not a write confirmation. The previous desktop apply shortcut is unavailable until a matching safe writer and recovery protocol are validated. Other adapters and separate legacy entry points retain their existing boundaries.
