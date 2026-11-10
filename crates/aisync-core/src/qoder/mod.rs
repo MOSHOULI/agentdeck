@@ -268,3 +268,5 @@ fn parse_jsonc(bytes: &[u8]) -> Result<Value, InspectionIssue> {
 }
 #[cfg(test)]
 mod tests;
+
+pub mod deployment;
