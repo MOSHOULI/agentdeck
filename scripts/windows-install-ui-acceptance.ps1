@@ -178,6 +178,11 @@ function Get-FailedInstallState($fixture) {
     $items += @(Get-ChildItem -LiteralPath $fixture.prefix -Recurse -Force)
     if ($items.Count -gt 32) { throw 'Unexpected failed installation residual size' }
     $values = foreach ($item in ($items | Sort-Object FullName)) {
+        # Directory enumeration caches metadata. Query the same entry again so
+        # a pre-existing cached parent mtime is not compared with a later live
+        # query. Keep all timestamp/attribute/ACL/byte assertions intact.
+        $item.Refresh()
+        if (-not $item.Exists) { throw 'Failed installation residual disappeared during snapshot' }
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Failed installation residual became a reparse point' }
         [ordered]@{ path = $item.FullName; directory = $item.PSIsContainer;
             hash = if ($item.PSIsContainer) { '' } else { (Get-FileHash -LiteralPath $item.FullName).Hash };

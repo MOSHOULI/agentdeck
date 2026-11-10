@@ -62,6 +62,13 @@ class Tests(unittest.TestCase):
             self.assertIn(check, guard)
         self.assertEqual(flow.count('Assert-FailedInstallObservation $fixture $manifest $baseline $residual'), 5)
 
+    def test_residual_metadata_is_refreshed_without_dropping_time_checks(self):
+        snapshot = UI[UI.index('function Get-FailedInstallState'):UI.index('function Get-FailedStateDifference')]
+        self.assertLess(snapshot.index('$item.Refresh()'), snapshot.index('$item.Attributes'))
+        self.assertIn('$item.Exists', snapshot)
+        self.assertIn('created = $item.CreationTimeUtc.Ticks; modified = $item.LastWriteTimeUtc.Ticks', snapshot)
+        self.assertIn('acl = (Get-Acl -LiteralPath $item.FullName).Sddl', snapshot)
+
     def test_failed_residual_diagnostics_are_fixed_and_do_not_relax_guard(self):
         diff = UI[UI.index('function Get-FailedStateDifference'):UI.index('function Assert-FailedInstallObservation')]
         self.assertIn("@('path','directory','hash','length','created','modified','attributes','acl')", diff)
