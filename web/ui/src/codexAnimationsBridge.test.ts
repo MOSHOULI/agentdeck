@@ -19,3 +19,11 @@ it.each(['/', '/?demo=1'])('does not perform or simulate file operations outside
   delete (window as unknown as Record<string,unknown>).__TAURI_INTERNALS__; window.history.replaceState({},'',url);
   await expect(bridge.previewCodexAnimations(false)).rejects.toThrow(); await expect(bridge.applyCodexAnimations(false,token)).rejects.toThrow(); await expect(bridge.inspectCodexAnimationsRecovery()).rejects.toThrow(); await expect(bridge.restoreCodexAnimations(token)).rejects.toThrow(); expect(invoke).not.toHaveBeenCalled();
 });
+it('reads capabilities and projects observation without tokens',async()=>{
+  vi.mocked(invoke).mockResolvedValue('windows_read_only'); expect(await bridge.getCodexAnimationsCapability()).toBe('windows_read_only'); expect(invoke).toHaveBeenLastCalledWith('get_codex_animations_capability');
+  vi.mocked(invoke).mockResolvedValue({schemaVersion:1,readOnly:true,state:'ready',current:true,applySupported:false,restoreSupported:false,token:'secret'}); expect(await bridge.observeCodexAnimations()).not.toHaveProperty('token'); expect(invoke).toHaveBeenLastCalledWith('observe_codex_animations');
+});
+it.each(['/', '/?demo=1'])('never observes native files or capabilities in browser %s',async url=>{
+  delete (window as unknown as Record<string,unknown>).__TAURI_INTERNALS__; window.history.replaceState({},'',url);
+  await expect(bridge.getCodexAnimationsCapability()).rejects.toThrow(); await expect(bridge.observeCodexAnimations()).rejects.toThrow(); expect(invoke).not.toHaveBeenCalled();
+});

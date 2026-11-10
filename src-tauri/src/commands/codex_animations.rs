@@ -6,6 +6,9 @@ fn location() -> Result<PathBuf, String> {
     if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         return Err("仅 Linux x86_64 支持动画配置操作。".into());
     }
+    selected_location()
+}
+fn selected_location() -> Result<PathBuf, String> {
     let home = aisync_core::home_dir().ok_or(ERROR)?;
     let dir = home.join(".codex");
     if let Some(value) = std::env::var_os("CODEX_HOME")
@@ -90,9 +93,48 @@ pub async fn restore_codex_animations(token: String) -> Result<bool, String> {
     .await
     .map_err(|_| ERROR.to_string())?
 }
+#[tauri::command]
+pub fn get_codex_animations_capability() -> &'static str {
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        "linux_managed"
+    } else if cfg!(target_os = "windows") {
+        "windows_read_only"
+    } else {
+        "unsupported"
+    }
+}
+#[tauri::command]
+pub async fn observe_codex_animations()
+-> Result<aisync_core::config::codex_animations_observation::Observation, String> {
+    if !cfg!(target_os = "windows") {
+        return Err("此只读检查仅支持 Windows。".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(aisync_core::config::codex_animations_observation::observe(
+            &selected_location()?,
+        ))
+    })
+    .await
+    .map_err(|_| ERROR.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn capabilities_are_fixed_and_do_not_discover_files() {
+        let value = get_codex_animations_capability();
+        assert_eq!(
+            value,
+            if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+                "linux_managed"
+            } else if cfg!(target_os = "windows") {
+                "windows_read_only"
+            } else {
+                "unsupported"
+            }
+        );
+    }
     #[test]
     fn tokens_are_bounded_and_lower_hex_only() {
         assert!(valid_token(&"a".repeat(64)));
@@ -111,6 +153,25 @@ mod tests {
                 assert_eq!(location().unwrap(), home.join(".codex/config.toml"));
             } else {
                 assert!(location().is_err());
+            }
+            if allowed {
+                assert_eq!(
+                    selected_location().unwrap(),
+                    home.join(".codex/config.toml")
+                );
+            } else {
+                assert!(selected_location().is_err());
+            }
+            let observation = tauri::async_runtime::block_on(observe_codex_animations());
+            if cfg!(target_os = "windows") && allowed {
+                let value = serde_json::to_value(observation.unwrap()).unwrap();
+                assert_eq!(value["state"], "missing");
+                assert_eq!(value["readOnly"], true);
+                assert_eq!(value["applySupported"], false);
+                assert_eq!(value["restoreSupported"], false);
+                assert!(value.get("token").is_none());
+            } else {
+                assert!(observation.is_err());
             }
             assert!(tauri::async_runtime::block_on(preview_codex_animations(false)).is_err());
             assert!(

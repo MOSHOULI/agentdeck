@@ -2,9 +2,9 @@
 
 ## 当前范围 / Current scope
 
-纯内存 `tui.animations` 协议之上，现增加 `config::codex_animations_fs` 库 API：`preview(path, after)`、`apply(path, after, token)`、`recovery_preview(path)`、`restore_preview(path)`、`restore_checked(path, token)` 和底层 `restore(path)`。文件操作仅支持 Linux x86_64；Windows、macOS 及其他目标返回 Unsupported。调用方必须显式提供已有 `config.toml` 的绝对路径，不自动发现安装、不根据 `CODEX_HOME` 选取路径、不创建配置目录或缺失配置，不执行 Codex。
+纯内存 `tui.animations` 协议之上，现增加 `config::codex_animations_fs` 库 API：`preview(path, after)`、`apply(path, after, token)`、`recovery_preview(path)`、`restore_preview(path)`、`restore_checked(path, token)` 和底层 `restore(path)`。该读写与恢复库 API 仅支持 Linux x86_64；Windows、macOS 及其他目标返回 Unsupported。调用方必须显式提供已有 `config.toml` 的绝对路径，不自动发现安装、不根据 `CODEX_HOME` 选取路径、不创建配置目录或缺失配置，不执行 Codex。
 
-The in-memory `tui.animations` protocol now has a `config::codex_animations_fs` library API: `preview(path, after)`, `apply(path, after, token)`, `recovery_preview(path)`, `restore_preview(path)`, `restore_checked(path, token)`, and the low-level `restore(path)`. File operations support Linux x86_64 only; Windows, macOS, and other targets return Unsupported. The caller supplies an absolute path to an existing `config.toml`. This layer does not discover installations, select a path from `CODEX_HOME`, create configuration directories or missing configuration, or execute Codex.
+The in-memory `tui.animations` protocol now has a `config::codex_animations_fs` library API: `preview(path, after)`, `apply(path, after, token)`, `recovery_preview(path)`, `restore_preview(path)`, `restore_checked(path, token)`, and the low-level `restore(path)`. This read/write and recovery library API supports Linux x86_64 only; Windows, macOS, and other targets return Unsupported. The caller supplies an absolute path to an existing `config.toml`. This layer does not discover installations, select a path from `CODEX_HOME`, create configuration directories or missing configuration, or execute Codex.
 
 桌面 Codex 卡片新增独立终端动画预览、确认应用、恢复观察与确认恢复入口；仅 Linux x86_64 原生模式可执行。IPC 固定选择应用 home 下的 `~/.codex/config.toml`，核对固定注册表适配器；显式为空或不同的 `CODEX_HOME` 拒绝，不接受前端任意路径。浏览器演示模式不执行文件操作，也不模拟成功。没有新增 CLI。旧 Codex 桌面批量配置快捷入口仍拒绝；只读计划的 `revision` 不是写入 token。
 
@@ -13,6 +13,20 @@ The desktop Codex card adds separate animation preview, confirmed application, r
 IPC 为 `preview_codex_animations`、`apply_codex_animations`、`inspect_codex_animations_recovery` 和 `restore_codex_animations`。应用与恢复分别确认并使用不同 token。修改目标值或切换上下文会丢弃旧确认；清除展示或离开页面不代表中止已发出的写入。结果不确定时不自动重试，应重新检查恢复状态并保留 receipt。固定错误提示不回传配置正文或原始系统错误。
 
 IPC commands are `preview_codex_animations`, `apply_codex_animations`, `inspect_codex_animations_recovery`, and `restore_codex_animations`. Application and restoration require separate confirmations and different tokens. Changing the requested value or context discards an old confirmation. Clearing the display or leaving the page does not cancel an already-dispatched write. Uncertain outcomes must not trigger automatic retries: inspect recovery again and preserve the receipt. Fixed error messages do not expose configuration contents or raw system errors.
+
+## Windows 只读观察 / Windows read-only observation
+
+`get_codex_animations_capability` 仅返回固定枚举 `linux_managed`、`windows_read_only` 或 `unsupported`，不发现文件、不探测程序、不返回系统指纹。界面等待能力响应后再开放对应入口；未知能力关闭入口。Linux 保留原预览、应用与恢复流程。Windows 隐藏写入、恢复及目标值控件，仅提供 `observe_codex_animations` 只读检查。浏览器与演示模式不执行或模拟该检查。
+
+`get_codex_animations_capability` returns only the fixed enum `linux_managed`, `windows_read_only`, or `unsupported`: no file discovery, executable probing, or system fingerprint. The UI waits for capability resolution and fails closed for unknown capabilities. Linux retains its existing preview/application/recovery flow. Windows hides write, restore, and requested-value controls, exposing only the read-only `observe_codex_animations` check. Browser/demo mode does not perform or simulate this observation.
+
+Windows IPC 使用相同的固定 home 路径、`CODEX_HOME` 和注册表门禁，调用 `config::codex_animations_observation::observe`，不初始化目录或配置。DTO 仅含 `schemaVersion: 1`、`readOnly: true`、固定状态、当前布尔值或 null，以及恒为 false 的 `applySupported`、`restoreSupported`，没有 token。`ready` 仅表示观察到受支持结构中的显式布尔值，不表示写入就绪或 Codex 已加载；`missing` 不创建文件；`unsupported` 不显示原始错误；`receipt_present` 只提示受管收据存在，不读取内容、不提供恢复。取消或卸载仍保持在途 busy，直至读取实际结束，并丢弃迟到结果。
+
+Windows IPC uses the same fixed-home, `CODEX_HOME`, and registry gates, then calls `config::codex_animations_observation::observe` without initializing directories or configuration. Its DTO contains only `schemaVersion: 1`, `readOnly: true`, a fixed state, the current boolean or null, and permanently false `applySupported`/`restoreSupported`; it has no token. `ready` means only that an explicit boolean was observed in a supported structure, not write readiness or effective Codex loading. `missing` creates nothing; `unsupported` exposes no raw errors; `receipt_present` reports existence without reading the receipt or offering recovery. Cancellation/unmount retains busy ownership until the read settles and discards late results.
+
+Windows 文件与安装后界面验收仍须独立通过；组件合成测试不能替代它们，也不验证官方 Codex 运行效果。本批没有 Windows 写入器。
+
+Windows filesystem and installed-app UI acceptance must pass independently; synthetic component tests do not replace either or verify official Codex runtime behavior. This increment does not provide a Windows writer.
 
 ## 官方契约 / Official contract
 

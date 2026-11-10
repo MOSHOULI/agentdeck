@@ -13,6 +13,7 @@ use crate::registry::AgentDefinition;
 
 pub mod codex_animations;
 pub mod codex_animations_fs;
+pub mod codex_animations_observation;
 mod codex_preview;
 pub use codex_preview::{
     CodexConfigurationPreview, CodexConfigurationTarget, preview_codex_configuration,

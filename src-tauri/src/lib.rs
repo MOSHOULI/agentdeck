@@ -32,6 +32,8 @@ pub fn run() {
             commands::deploy::install_agent,
             commands::deploy::configure_agent,
             commands::deploy::preview_codex_configuration,
+            commands::codex_animations::get_codex_animations_capability,
+            commands::codex_animations::observe_codex_animations,
             commands::codex_animations::preview_codex_animations,
             commands::codex_animations::apply_codex_animations,
             commands::codex_animations::inspect_codex_animations_recovery,
