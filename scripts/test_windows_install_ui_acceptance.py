@@ -14,6 +14,21 @@ class Tests(unittest.TestCase):
         self.assertIn('[Console]::OutputEncoding = $savedConsoleEncoding', wrapper)
         self.assertIn('$OutputEncoding = $savedOutputEncoding', wrapper)
 
+    def test_details_native_supported_action_without_replay(self):
+        method = UI[UI.index('function Open-InstalledCodexDetails'):UI.index('function Check-ReviewedInstall')]
+        self.assertIn('TryGetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern', method)
+        self.assertIn('ExpandCollapseState]::Collapsed', method)
+        self.assertEqual(method.count('$expand.Expand()'), 1)
+        self.assertEqual(method.count("[Windows.Forms.SendKeys]::SendWait('{ENTER}')"), 1)
+        self.assertIn('} else {', method)
+        self.assertLess(method.index('$control.SetFocus()'), method.index('$control.Current.HasKeyboardFocus'))
+        self.assertLess(method.index('$control.Current.HasKeyboardFocus'), method.index('SendWait'))
+        self.assertNotIn('catch', method)
+        self.assertNotIn('GetCurrentPattern(', method.replace('TryGetCurrentPattern(', ''))
+        self.assertIn("Wait-QwenControl '收起 OpenAI Codex 详情'", method)
+        self.assertIn("Wait-QwenControl '关闭 OpenAI Codex 详情'", method)
+        self.assertNotIn("Click-Qwen '查看 OpenAI Codex 详情'", UI)
+
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
         self.assertLess(LIFECYCLE.index('    Check-ReviewedInstall'), LIFECYCLE.index('    Check-CodexReadonly'))

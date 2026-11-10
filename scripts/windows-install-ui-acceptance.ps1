@@ -71,11 +71,44 @@ function Open-ReviewedInstallPlan($fixture, [string]$manifest) {
     if ($afterQueries.prefixQueries -ne ($beforeQueries.prefixQueries + 1) -or $afterQueries.rootQueries -ne ($beforeQueries.rootQueries + 1)) { throw 'Preview query count mismatch' }
     Assert-InstallNoConfiguration
 }
+function Open-InstalledCodexDetails {
+    # aria-expanded buttons may expose ExpandCollapse rather than Invoke in
+    # WebView2. Choose one supported native action before activating; never
+    # retry another action after an uncertain expand/key delivery.
+    if ($null -ne (Find-QwenControl '收起 OpenAI Codex 详情' ([Windows.Automation.ControlType]::Button))) {
+        throw 'Installed Codex details unexpectedly already expanded'
+    }
+    $control = Wait-QwenControl '查看 OpenAI Codex 详情' ([Windows.Automation.ControlType]::Button)
+    $pattern = $null
+    if ($control.TryGetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) {
+        $expand = [Windows.Automation.ExpandCollapsePattern]$pattern
+        if ($expand.Current.ExpandCollapseState -ne [Windows.Automation.ExpandCollapseState]::Collapsed) {
+            throw 'Installed Codex details initial state is not collapsed'
+        }
+        Record 'reviewed-install-details-activation' @{ control = 'codex-details'; pattern = 'ExpandCollapse'; initialState = 'collapsed' }
+        $expand.Expand()
+    } else {
+        Add-Type -AssemblyName System.Windows.Forms
+        $control.SetFocus()
+        $deadline = [DateTime]::UtcNow.AddSeconds(5)
+        while (-not $control.Current.HasKeyboardFocus) {
+            if ([DateTime]::UtcNow -ge $deadline) { throw 'Installed Codex details focus not confirmed' }
+            Start-Sleep -Milliseconds 100
+        }
+        Record 'reviewed-install-details-activation' @{ control = 'codex-details'; pattern = 'focused-native-enter'; initialState = 'collapsed' }
+        [Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    }
+    $null = Wait-QwenControl '收起 OpenAI Codex 详情' ([Windows.Automation.ControlType]::Button)
+    $null = Wait-QwenControl '关闭 OpenAI Codex 详情' ([Windows.Automation.ControlType]::Button)
+    if ($null -ne (Find-QwenControl '查看 OpenAI Codex 详情' ([Windows.Automation.ControlType]::Button))) {
+        throw 'Installed Codex details did not remain expanded'
+    }
+}
 function Check-ReviewedInstall {
     $savedPath = $env:PATH; $savedExt = $env:PATHEXT
     $fixtureRoot = Join-Path $root 'Windows authored install fixture'
     $manifest = Invoke-InstallFixture @('--prepare', $fixtureRoot, '--node', $script:acceptanceNode, '--home', $homeDir)
-    $fixture = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
+    $fixture = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
     try {
         $env:PATH = "$($fixture.path);$savedPath"
         $env:PATHEXT = '.COM;.EXE;.BAT;.CMD'
@@ -114,8 +147,9 @@ function Check-ReviewedInstall {
             Start-Sleep -Milliseconds 100
         }
         $counts = Invoke-InstallFixture @('--assert', 'installed', '--manifest', $manifest) | ConvertFrom-Json
+        Record 'reviewed-install-confirmed' @{ fixtureCounts = $counts; authoredNpmAndAgentCodeExecuted = $true; officialAgentExecuted = $false }
         # Invoke the exact detail control, not a reflow-sensitive coordinate.
-        Click-Qwen '查看 OpenAI Codex 详情'
+        Open-InstalledCodexDetails
         Wait-InstallText '实测版本 1.2.3'
         Wait-InstallText 'npm 全局目录匹配，安装历史未知'
         foreach ($value in @('@openai/codex', $fixture.package, $fixture.globalRoot, $fixture.prefix, (Join-Path $fixture.managerBin 'npm.cmd'))) {
