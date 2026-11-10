@@ -170,3 +170,149 @@ def exercise(driver, home, fixture, records, write_private, phase=lambda _: None
     phase('codex_config_conflict_clear'); clear(before)
     records.append({'stage': 'conflict_clear', 'verified': True})
     assert_coverage(records)
+
+
+ANIMATION_STAGES = ('preview_cancel', 'stale_apply_rejected', 'apply',
+                    'inspect_cancel', 'drift_restore_rejected', 'restore')
+
+
+def assert_animation_coverage(records):
+    if records != [{'stage': stage, 'verified': True} for stage in ANIMATION_STAGES]:
+        raise CodexConfigFailure('incomplete_animations_coverage')
+
+
+def exercise_animations(driver, home, fixture, records, write_private, phase=lambda _: None):
+    """Native controls over authored files; no real Codex process or credentials."""
+    target = home / '.codex/config.toml'
+    receipt = target.parent / '.agentdeck-codex-animations.json'
+    original = ('# ' + CANARY + '\n[tui]\nanimations = true # keep authored comment\n').encode()
+    owned = original.replace(b'animations = true', b'animations = false')
+    drift = owned + b'# external edit\n'
+    program = fixture['package'] / 'bin/codex.js'
+    marker = fixture['root'] / 'codex-config-process-marker'
+    program_bytes, program_id = program.read_bytes(), identity(program)
+    query_bytes, query_id = fixture['queries'].read_bytes(), identity(fixture['queries'])
+    def author(data):
+        # Harness-authored external edits, never product writes or symlink traversal.
+        with os.fdopen(os.open(target, os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'wb') as stream:
+            m = os.fstat(stream.fileno())
+            if not stat.S_ISREG(m.st_mode) or m.st_uid != os.geteuid() or m.st_nlink != 1:
+                raise CodexConfigFailure('unsafe_animations_fixture')
+            stream.truncate(0); stream.write(data)
+
+    # Existing read-only plan fixture is intentionally replaced only after its gate.
+    author(original)
+    unaffected = {p: (p.read_bytes(), identity(p)) for p in (
+        home / '.codex/AGENTS.md',
+        home / '.agentdeck/profiles/default/personalization/codex/AGENTS.md',
+        home / '.agentdeck/profiles/default/personalization/codex.json')}
+
+    expected_paths = set(snapshot(home)) | {'.codex/.agentdeck-codex-animations.json', '.codex/.agentdeck-codex-animations.lock'}
+
+    def selector(name):
+        return "//*[@data-testid='codex-animations-" + name + "']"
+
+    def activate(name):
+        control = selector(name)
+        def ready():
+            count = len(driver.elements(control))
+            if count > 1: raise CodexConfigFailure('ambiguous_animations_control')
+            return count == 1 and driver.enabled(control)
+        driver.wait(ready)
+        element = driver.one(control)
+        driver.command('POST', '/element/' + element + '/value', {'text': '\ue007', 'value': ['\ue007']})
+
+    def completed(status):
+        driver.wait(lambda: len(driver.elements(selector('result') + "[@data-status='" + status + "']")) == 1)
+        clean()
+
+    def clean():
+        if set(snapshot(home)) - expected_paths:
+            raise CodexConfigFailure('animations_unexpected_artifact')
+        if (os.path.lexists(marker) or program.read_bytes() != program_bytes
+                or identity(program) != program_id or fixture['queries'].read_bytes() != query_bytes
+                or identity(fixture['queries']) != query_id):
+            raise CodexConfigFailure('animations_unexpected_process')
+        for path, before in unaffected.items():
+            if (path.read_bytes(), identity(path)) != before:
+                raise CodexConfigFailure('animations_unrelated_write')
+        for text in (driver.text('//body'), driver.command('GET', '/source')):
+            if not isinstance(text, str) or CANARY in text:
+                raise CodexConfigFailure('animations_private_content_exposed')
+
+    def same(before):
+        clean()
+        if snapshot(home) != before: raise CodexConfigFailure('animations_unexpected_write')
+
+    def cancel(before):
+        activate('cancel')
+        driver.wait(lambda: not driver.elements(selector('result')))
+        same(before)
+
+    def preview():
+        before = snapshot(home)
+        activate('preview'); completed('preview'); same(before)
+
+    def recorded(stage):
+        clean(); records.append({'stage': stage, 'verified': True})
+
+    phase('codex_animations_preview_cancel')
+    # Target defaults false in UI; assert the checkbox rather than silently toggling.
+    control = selector('enabled')
+    driver.wait(lambda: len(driver.elements(control)) == 1)
+    checked = driver.command('GET', '/element/' + driver.one(control) + '/selected')
+    if checked is not False: raise CodexConfigFailure('animations_target_not_false')
+    before = snapshot(home); preview(); cancel(before); recorded('preview_cancel')
+
+    phase('codex_animations_stale_apply')
+    preview(); author(original + b'# external edit\n')
+    before = snapshot(home)
+    activate('confirm-apply'); completed('error')
+    # First rejected apply may create only its documented empty private lock.
+    after = snapshot(home)
+    lock_key = '.codex/.agentdeck-codex-animations.lock'
+    if lock_key not in before and lock_key in after:
+        lock = home / lock_key
+        if lock.read_bytes() != b'' or stat.S_IMODE(lock.stat().st_mode) != 0o600:
+            raise CodexConfigFailure('animations_invalid_lock')
+        after.pop(lock_key)
+        after['.codex'] = before['.codex']
+    if after != before: raise CodexConfigFailure('animations_stale_write')
+    before = snapshot(home)
+    if receipt.exists(): raise CodexConfigFailure('animations_stale_receipt')
+    cancel(before); recorded('stale_apply_rejected')
+
+    phase('codex_animations_apply')
+    author(original); preview()
+    activate('confirm-apply'); completed('applied')
+    if target.read_bytes() != owned or not receipt.is_file():
+        raise CodexConfigFailure('animations_apply_mismatch')
+    state = json.loads(receipt.read_bytes())
+    if (state.get('phase') != 'applied' or state.get('field') != 'tui.animations'
+            or state.get('before') is not True or state.get('after') is not False
+            or state.get('before_digest') != digest(original)
+            or state.get('after_digest') != digest(owned)
+            or stat.S_IMODE(receipt.stat().st_mode) != 0o600):
+        raise CodexConfigFailure('animations_receipt_mismatch')
+    recorded('apply')
+
+    phase('codex_animations_inspect_cancel')
+    before = snapshot(home)
+    activate('inspect'); completed('recovery'); same(before)
+    cancel(before); recorded('inspect_cancel')
+
+    phase('codex_animations_restore_drift')
+    activate('inspect'); completed('recovery')
+    author(drift); before = snapshot(home)
+    activate('confirm-restore'); completed('error'); same(before)
+    if not receipt.is_file(): raise CodexConfigFailure('animations_recovery_evidence_lost')
+    cancel(before); recorded('drift_restore_rejected')
+
+    phase('codex_animations_restore')
+    author(owned)
+    before = snapshot(home); activate('inspect'); completed('recovery'); same(before)
+    activate('confirm-restore'); completed('restored')
+    if target.read_bytes() != original or receipt.exists():
+        raise CodexConfigFailure('animations_restore_mismatch')
+    recorded('restore')
+    assert_animation_coverage(records)

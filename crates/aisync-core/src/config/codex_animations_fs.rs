@@ -22,6 +22,12 @@ pub enum RecoveryState {
     RestoreOriginal,
     CleanupReceipt,
 }
+/// A read-only, single-observation restore confirmation. Not a filesystem capability.
+#[derive(Debug)]
+pub struct RestorePreview {
+    pub state: RecoveryState,
+    pub token: Option<String>,
+}
 type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -419,12 +425,42 @@ mod native {
         d.same(CONFIG, &written)?;
         Ok(true)
     }
-    pub(super) fn recovery_preview(path: &Path) -> Result<RecoveryState> {
+    fn restore_token(
+        d: &Dir,
+        old: &Image,
+        receipt: &Image,
+        r: &protocol::Receipt,
+    ) -> Result<String> {
+        use sha2::{Digest, Sha256};
+        let state = match protocol::recovery(&old.bytes, &d.binding, r)? {
+            protocol::RecoveryAction::RestoreOriginal => b"restore_original".as_slice(),
+            protocol::RecoveryAction::CleanupReceipt => b"cleanup_receipt".as_slice(),
+        };
+        let mut h = Sha256::new();
+        h.update(b"agentdeck/codex-animations-fs/restore/1\0");
+        for part in [
+            d.binding.as_slice(),
+            state,
+            old.bytes.as_slice(),
+            receipt.bytes.as_slice(),
+        ] {
+            h.update((part.len() as u64).to_le_bytes());
+            h.update(part);
+        }
+        for image in [old, receipt] {
+            h.update(fs_token(image, "restore-metadata").as_bytes());
+        }
+        Ok(format!("{:x}", h.finalize()))
+    }
+    pub(super) fn restore_preview(path: &Path) -> Result<RestorePreview> {
         let d = Dir::open(path)?;
         let old = d.read(CONFIG)?;
         if !d.exists(RECEIPT)? {
-            d.check_parent()?;
-            return Ok(RecoveryState::NoReceipt);
+            d.same(CONFIG, &old)?;
+            return Ok(RestorePreview {
+                state: RecoveryState::NoReceipt,
+                token: None,
+            });
         }
         let receipt = d.read(RECEIPT)?;
         let r = protocol::decode_receipt(&receipt.bytes)?;
@@ -432,16 +468,34 @@ mod native {
             protocol::RecoveryAction::RestoreOriginal => RecoveryState::RestoreOriginal,
             protocol::RecoveryAction::CleanupReceipt => RecoveryState::CleanupReceipt,
         };
+        let token = restore_token(&d, &old, &receipt, &r)?;
         d.same(CONFIG, &old)?;
         d.same(RECEIPT, &receipt)?;
-        Ok(state)
+        Ok(RestorePreview {
+            state,
+            token: Some(token),
+        })
+    }
+    pub(super) fn recovery_preview(path: &Path) -> Result<RecoveryState> {
+        Ok(restore_preview(path)?.state)
     }
     pub(super) fn restore(path: &Path, hook: Hook<'_>) -> Result<bool> {
+        restore_impl(path, None, hook)
+    }
+    pub(super) fn restore_checked(path: &Path, token: &str, hook: Hook<'_>) -> Result<bool> {
+        restore_impl(path, Some(token), hook)
+    }
+    fn restore_impl(path: &Path, expected_token: Option<&str>, hook: Hook<'_>) -> Result<bool> {
         let d = Dir::open(path)?;
         let _lock = d.lock()?;
         let old = d.read(CONFIG)?;
         let receipt = d.read(RECEIPT)?;
         let r = protocol::decode_receipt(&receipt.bytes)?;
+        if let Some(expected) = expected_token
+            && expected != restore_token(&d, &old, &receipt, &r)?
+        {
+            return Err(Error::Conflict);
+        }
         let Some(change) = protocol::prepare_restore(&old.bytes, &d.binding, &r)? else {
             d.same(CONFIG, &old)?;
             d.remove(&receipt, hook)?;
@@ -514,6 +568,31 @@ pub fn recovery_preview(path: &Path) -> Result<RecoveryState> {
     #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
     {
         let _ = path;
+        Err(Error::Unsupported)
+    }
+}
+
+/// Observe the exact config and receipt without creating a lock or changing files.
+pub fn restore_preview(path: &Path) -> Result<RestorePreview> {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        native::restore_preview(path)
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    {
+        let _ = path;
+        Err(Error::Unsupported)
+    }
+}
+/// Validate the restore-specific observation under the same lock used for restoration.
+pub fn restore_checked(path: &Path, token: &str) -> Result<bool> {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        native::restore_checked(path, token, &|_| Ok(()))
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    {
+        let _ = (path, token);
         Err(Error::Unsupported)
     }
 }

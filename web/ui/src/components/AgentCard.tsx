@@ -1,3 +1,4 @@
+import { CodexAnimations } from "./CodexAnimations";
 import { CodexConfigurationPlan } from './CodexConfigurationPlan';
 import { useWorkspaceActivityStore } from '../stores/workspaceActivity';
 import React, { useEffect, useId, useRef, useState } from 'react';
@@ -302,6 +303,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
       </div>
 
       {agent.id === 'codex' && <CodexConfigurationPlan busy={busy || pending !== null || plan !== null} context={JSON.stringify([reviewContext, selected, agent.id, dataStale])} />}
+      {agent.id === 'codex' && <CodexAnimations busy={busy || pending !== null || plan !== null} context={JSON.stringify([reviewContext, selected, agent.id, dataStale])} />}
 
       {pending === 'install' && !plan && <p role="status">安装操作处理中，请等待当前请求完成。<button type="button" className="button" onClick={cancelPreview}>取消预览展示</button></p>}
       {plan && <section role="dialog" data-testid="install-review-dialog" aria-label={`${agent.name} 安装计划`} className="agent-details">
