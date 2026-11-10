@@ -1,3 +1,4 @@
+import { validateAnimationsPreview, validateAnimationsRecovery, validateAnimationsMutation, validAnimationsToken } from "./codexAnimationsContract";
 import { validateCodexConfigurationPlan, demoCodexConfigurationPlan } from './codexConfigurationContract';
 import { validateDshRootPlan, validateDshRootVerification } from "./dshDistributionContract";
 import { scopeIds, validateScopeReport, type ScopePaths } from './qoderScopeContract';
@@ -636,4 +637,25 @@ export async function verifyDshPackage(archivePath: string) {
   if (typeof archivePath!=='string'||!archivePath.trim()||new TextEncoder().encode(archivePath).length>4096||/[\x00-\x1f\x7f]/.test(archivePath)) throw new Error('DSH_PACKAGE_INVALID_PATH');
   if (!(/^(?:\/(?!\/)|[a-zA-Z]:[\\/])/.test(archivePath)) || archivePath.split(/[\\/]/).slice(-1)[0]!=='dsh-0.2.2-rc.1.tgz' || archivePath.split(/[\\/]/).includes('..')) throw new Error('DSH_PACKAGE_INVALID_PATH');
   return validateDshRootVerification(await invoke<unknown>('verify_dsh_package',{archivePath}));
+}
+
+// Single reviewed display preference, never simulated or routed to bulk configuration.
+export async function previewCodexAnimations(enabled: boolean) {
+  useDemo(true);
+  if (typeof enabled !== 'boolean') throw new Error('设置值不受支持。');
+  return validateAnimationsPreview(await invoke<unknown>('preview_codex_animations', { enabled }), enabled);
+}
+export async function applyCodexAnimations(enabled: boolean, token: string) {
+  useDemo(true);
+  if (typeof enabled !== 'boolean' || !validAnimationsToken(token)) throw new Error('请重新预览。');
+  return validateAnimationsMutation(await invoke<unknown>('apply_codex_animations', { enabled, token }));
+}
+export async function inspectCodexAnimationsRecovery() {
+  useDemo(true);
+  return validateAnimationsRecovery(await invoke<unknown>('inspect_codex_animations_recovery'));
+}
+export async function restoreCodexAnimations(token: string) {
+  useDemo(true);
+  if (!validAnimationsToken(token)) throw new Error('请重新检查恢复状态。');
+  return validateAnimationsMutation(await invoke<unknown>('restore_codex_animations', { token }));
 }

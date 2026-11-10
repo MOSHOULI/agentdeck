@@ -122,4 +122,82 @@ class Tests(unittest.TestCase):
         self.assertEqual(subject.CANARY, harness.CANARY)
 
 
+
+class AnimationsDriver:
+    """Offline UI/filesystem model, not evidence of native IPC behavior."""
+    def __init__(self, home, f, fault=None):
+        self.home = home; self.fixture = f; self.fault = fault; self.status = None
+        self.target = home / '.codex/config.toml'
+        self.receipt = self.target.parent / '.agentdeck-codex-animations.json'
+        self.calls = []; self.preview_bytes = None
+    def elements(self, selector):
+        if 'result' in selector:
+            if 'data-status=' in selector:
+                return [1] if "data-status='" + str(self.status) + "'" in selector else []
+            return [1] if self.status else []
+        return [1]
+    def one(self, selector): return selector.split("data-testid='")[1].split("'")[0]
+    def enabled(self, selector): return True
+    def wait(self, predicate):
+        if not predicate(): raise harness.Failure('ui_wait_expired')
+    def text(self, selector): return subject.CANARY if self.fault == 'leak' else 'redacted'
+    def command(self, method, path, data=None):
+        if path.endswith('/selected'): return False
+        if method == 'GET': return 'redacted'
+        self.calls.append(path)
+        if self.fault == 'transport': raise harness.Failure('webdriver_command_failed')
+        name = path.split('/')[2].replace('codex-animations-', '')
+        if name == 'preview':
+            self.preview_bytes = self.target.read_bytes(); self.status = 'preview'
+            if self.fault == 'preview_write': self.target.write_bytes(b'modified')
+        elif name == 'cancel': self.status = None
+        elif name == 'confirm-apply':
+            if self.target.read_bytes() != self.preview_bytes:
+                self.status = 'error'
+            else:
+                self.original = self.preview_bytes
+                self.owned = self.original.replace(b'animations = true', b'animations = false')
+                self.target.write_bytes(self.owned)
+                self.receipt.write_text(json.dumps({'phase': 'applied', 'field': 'tui.animations',
+                    'before': True, 'after': False, 'before_digest': subject.digest(self.original),
+                    'after_digest': subject.digest(self.owned)})); self.receipt.chmod(0o600)
+                self.status = 'applied'
+                if self.fault == 'receipt': self.receipt.write_text('{}')
+        elif name == 'inspect': self.status = 'recovery'
+        elif name == 'confirm-restore':
+            if self.target.read_bytes() != self.owned:
+                self.status = 'error'
+                if self.fault == 'lost_evidence': self.receipt.unlink()
+            else:
+                self.target.write_bytes(self.original); self.receipt.unlink(); self.status = 'restored'
+        if self.fault == 'process':
+            (self.fixture['root'] / 'codex-config-process-marker').write_bytes(b'executed')
+
+
+class AnimationTests(unittest.TestCase):
+    def test_lifecycle_and_guards(self):
+        for fault in (None, 'preview_write', 'receipt', 'lost_evidence', 'leak', 'process', 'transport'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp); home = root / 'home'; home.mkdir(); f = fixture(root)
+                subject.exercise(Driver(home, f), home, f, [], harness.write_private)
+                driver = AnimationsDriver(home, f, fault); records = []
+                if fault is None:
+                    subject.exercise_animations(driver, home, f, records, harness.write_private)
+                    subject.assert_animation_coverage(records)
+                else:
+                    with self.assertRaises((subject.CodexConfigFailure, harness.Failure)):
+                        subject.exercise_animations(driver, home, f, records, harness.write_private)
+                    self.assertLess(len(records), len(subject.ANIMATION_STAGES))
+                if fault == 'transport': self.assertEqual(len(driver.calls), 1)
+
+    def test_distinct_complete_coverage_after_read_only_gate(self):
+        records = [{'stage': name, 'verified': True} for name in subject.ANIMATION_STAGES]
+        subject.assert_animation_coverage(records)
+        for bad in ([], records[:-1], records[::-1], records + records[:1]):
+            with self.assertRaises(subject.CodexConfigFailure): subject.assert_animation_coverage(bad)
+        source = Path(harness.__file__).read_text()
+        self.assertLess(source.index('codex_config.assert_coverage(codex_config_records)'),
+                        source.index('codex_config.exercise_animations('))
+
+
 if __name__ == '__main__': unittest.main()

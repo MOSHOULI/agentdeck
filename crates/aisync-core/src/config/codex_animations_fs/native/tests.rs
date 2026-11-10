@@ -374,3 +374,87 @@ fn restore_cleanup_final_state_cannot_hide_foreign_changes() {
         }
     }
 }
+
+#[test]
+fn checked_restore_token_is_read_only_and_operation_specific() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let (_dir, p) = setup();
+    let absent = restore_preview(&p).unwrap();
+    assert_eq!(absent.state, RecoveryState::NoReceipt);
+    assert!(absent.token.is_none());
+    assert!(!p.parent().unwrap().join(LOCK).exists());
+    let token = preview(&p, false).unwrap().token;
+    apply(&p, false, &token, &|_| Ok(())).unwrap();
+    let observed = restore_preview(&p).unwrap();
+    assert_eq!(observed.state, RecoveryState::RestoreOriginal);
+    assert!(restore_checked(&p, &token, &|_| Ok(())).is_err());
+    assert!(restore_checked(&p, observed.token.as_deref().unwrap(), &|_| Ok(())).unwrap());
+}
+
+#[test]
+fn checked_restore_rejects_new_receipt_or_config_identity_even_with_same_bytes() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    for name in [CONFIG, RECEIPT] {
+        let (_dir, p) = setup();
+        let t = preview(&p, false).unwrap().token;
+        apply(&p, false, &t, &|_| Ok(())).unwrap();
+        let token = restore_preview(&p).unwrap().token.unwrap();
+        let target = p.parent().unwrap().join(name);
+        let bytes = std::fs::read(&target).unwrap();
+        let other = p.parent().unwrap().join("replacement");
+        std::fs::write(&other, &bytes).unwrap();
+        std::fs::rename(other, &target).unwrap();
+        assert!(matches!(
+            restore_checked(&p, &token, &|_| Ok(())),
+            Err(Error::Conflict)
+        ));
+        assert_eq!(std::fs::read(target).unwrap(), bytes);
+        let fresh = restore_preview(&p).unwrap().token.unwrap();
+        restore_checked(&p, &fresh, &|_| Ok(())).unwrap();
+    }
+}
+#[test]
+fn old_restore_confirmation_cannot_restore_a_later_owned_operation() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let (_dir, p) = setup();
+    let t = preview(&p, false).unwrap().token;
+    apply(&p, false, &t, &|_| Ok(())).unwrap();
+    let old = restore_preview(&p).unwrap().token.unwrap();
+    restore_checked(&p, &old, &|_| Ok(())).unwrap();
+    let t = preview(&p, false).unwrap().token;
+    apply(&p, false, &t, &|_| Ok(())).unwrap();
+    let config = std::fs::read(&p).unwrap();
+    let receipt = std::fs::read(p.parent().unwrap().join(RECEIPT)).unwrap();
+    assert!(restore_checked(&p, &old, &|_| Ok(())).is_err());
+    assert_eq!(std::fs::read(&p).unwrap(), config);
+    assert_eq!(
+        std::fs::read(p.parent().unwrap().join(RECEIPT)).unwrap(),
+        receipt
+    );
+}
+#[test]
+fn checked_restore_supports_prepared_cleanup_and_detects_receipt_phase_change() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    let (_dir, p) = setup();
+    let t = preview(&p, false).unwrap().token;
+    apply(&p, false, &t, &|point| {
+        if point == Point::ReceiptDirectorySynced {
+            Err(Error::Io)
+        } else {
+            Ok(())
+        }
+    })
+    .unwrap_err();
+    let observed = restore_preview(&p).unwrap();
+    assert_eq!(observed.state, RecoveryState::CleanupReceipt);
+    assert!(!restore_checked(&p, observed.token.as_deref().unwrap(), &|_| Ok(())).unwrap());
+    let t = preview(&p, false).unwrap().token;
+    apply(&p, false, &t, &|_| Ok(())).unwrap();
+    let observed = restore_preview(&p).unwrap();
+    let receipt = p.parent().unwrap().join(RECEIPT);
+    let bytes = std::fs::read_to_string(&receipt)
+        .unwrap()
+        .replace("\"applied\"", "\"prepared\"");
+    std::fs::write(&receipt, bytes).unwrap();
+    assert!(restore_checked(&p, observed.token.as_deref().unwrap(), &|_| Ok(())).is_err());
+}

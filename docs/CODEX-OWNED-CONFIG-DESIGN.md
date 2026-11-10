@@ -2,13 +2,17 @@
 
 ## 当前范围 / Current scope
 
-纯内存 `tui.animations` 协议之上，现增加 `config::codex_animations_fs` 库 API：`preview(path, after)`、`apply(path, after, token)`、`recovery_preview(path)` 和 `restore(path)`。文件操作仅支持 Linux x86_64；Windows、macOS 及其他目标返回 Unsupported。调用方必须显式提供已有 `config.toml` 的绝对路径，不自动发现安装、不根据 `CODEX_HOME` 选取路径、不创建配置目录或缺失配置，不执行 Codex。
+纯内存 `tui.animations` 协议之上，现增加 `config::codex_animations_fs` 库 API：`preview(path, after)`、`apply(path, after, token)`、`recovery_preview(path)`、`restore_preview(path)`、`restore_checked(path, token)` 和底层 `restore(path)`。文件操作仅支持 Linux x86_64；Windows、macOS 及其他目标返回 Unsupported。调用方必须显式提供已有 `config.toml` 的绝对路径，不自动发现安装、不根据 `CODEX_HOME` 选取路径、不创建配置目录或缺失配置，不执行 Codex。
 
-The in-memory `tui.animations` protocol now has a `config::codex_animations_fs` library API: `preview(path, after)`, `apply(path, after, token)`, `recovery_preview(path)`, and `restore(path)`. File operations support Linux x86_64 only; Windows, macOS, and other targets return Unsupported. The caller supplies an absolute path to an existing `config.toml`. This layer does not discover installations, select a path from `CODEX_HOME`, create configuration directories or missing configuration, or execute Codex.
+The in-memory `tui.animations` protocol now has a `config::codex_animations_fs` library API: `preview(path, after)`, `apply(path, after, token)`, `recovery_preview(path)`, `restore_preview(path)`, `restore_checked(path, token)`, and the low-level `restore(path)`. File operations support Linux x86_64 only; Windows, macOS, and other targets return Unsupported. The caller supplies an absolute path to an existing `config.toml`. This layer does not discover installations, select a path from `CODEX_HOME`, create configuration directories or missing configuration, or execute Codex.
 
-没有新增可写 UI、IPC 或 CLI 入口。旧 Codex 桌面批量配置快捷入口仍拒绝；已有只读计划的 `revision` 仍不是写入 token。库 API 可操作真实文件，不等于产品界面已开放该功能。
+桌面 Codex 卡片新增独立终端动画预览、确认应用、恢复观察与确认恢复入口；仅 Linux x86_64 原生模式可执行。IPC 固定选择应用 home 下的 `~/.codex/config.toml`，核对固定注册表适配器；显式为空或不同的 `CODEX_HOME` 拒绝，不接受前端任意路径。浏览器演示模式不执行文件操作，也不模拟成功。没有新增 CLI。旧 Codex 桌面批量配置快捷入口仍拒绝；只读计划的 `revision` 不是写入 token。
 
-No writable UI, IPC, or CLI entry is added. The old Codex desktop bulk-configuration shortcut remains blocked; the existing read-only plan's `revision` is still not a write token. Library-level file operations do not mean this feature is available through the product interface.
+The desktop Codex card adds separate animation preview, confirmed application, recovery observation, and confirmed restoration. Execution requires Linux x86_64 native mode. IPC selects `~/.codex/config.toml` under the application home and checks the fixed registry adapter; an explicitly empty or different `CODEX_HOME` is rejected, and the frontend cannot supply arbitrary paths. Browser/demo mode neither operates on files nor simulates success. No CLI entry is added. The old desktop bulk-configuration shortcut remains blocked, and a read-only plan's `revision` is not a write token.
+
+IPC 为 `preview_codex_animations`、`apply_codex_animations`、`inspect_codex_animations_recovery` 和 `restore_codex_animations`。应用与恢复分别确认并使用不同 token。修改目标值或切换上下文会丢弃旧确认；清除展示或离开页面不代表中止已发出的写入。结果不确定时不自动重试，应重新检查恢复状态并保留 receipt。固定错误提示不回传配置正文或原始系统错误。
+
+IPC commands are `preview_codex_animations`, `apply_codex_animations`, `inspect_codex_animations_recovery`, and `restore_codex_animations`. Application and restoration require separate confirmations and different tokens. Changing the requested value or context discards an old confirmation. Clearing the display or leaving the page does not cancel an already-dispatched write. Uncertain outcomes must not trigger automatic retries: inspect recovery again and preserve the receipt. Fixed error messages do not expose configuration contents or raw system errors.
 
 ## 官方契约 / Official contract
 
@@ -30,6 +34,12 @@ Pinned source: the linked OpenAI Codex schema at commit `6dfaca4dad030f5ecaf4925
 - Use a separate operation domain for preview tokens, binding the managed selection, input bytes, requested value, and relevant protocol state. Reject read-only bulk-plan revisions.
 - Recovery accepts only the recorded exact before/after images. Refuse every byte-level drift, including unrelated edits, whitespace, or comments. Never overwrite manual edits or automatically reapply.
 
+## 恢复确认 / Restore confirmation
+
+`restore_preview` 只读观察；没有 receipt 时不提供 token。其独立恢复 token 绑定路径/父目录身份、配置与 receipt 的精确字节、文件身份/相关元数据及恢复状态。`restore_checked` 在取得同一协作锁后复验 token，再执行恢复。确认期间 receipt 被另一操作替换、即使内容相同但 inode 改变，也必须重新观察和确认。应用 token 与只读批量计划 revision 不能作为恢复 token。底层 `restore(path)` 仍保留，但不能用于需要绑定用户先前确认的界面流程。
+
+`restore_preview` is read-only and returns no token when there is no receipt. Its separate restore token binds the selected path/parent identity, exact config and receipt bytes, file identities/relevant metadata, and recovery state. `restore_checked` revalidates it after acquiring the same cooperative lock, before restoration. A replaced receipt or changed inode, even with identical contents, requires a fresh observation and confirmation. Apply tokens and bulk-plan revisions are not restore tokens. The low-level `restore(path)` remains available but is not suitable for UI flows that must bind a prior confirmation.
+
 ## 文件持久化边界 / Filesystem persistence boundary
 
 - 通过目录句柄执行文件操作，检查父目录与文件身份、普通文件/单链接、属主及权限；不跟随符号链接。拒绝可见的扩展属性，包括 POSIX ACL，而不是静默丢失。无法取得所需元数据时拒绝。
@@ -46,10 +56,10 @@ Pinned source: the linked OpenAI Codex schema at commit `6dfaca4dad030f5ecaf4925
 
 ## 验收边界与下一步 / Validation boundary and next steps
 
-当前本地文件回归覆盖精确字节往返、过期 inode/预览、锁，以及 apply 9 个、restore 8 个持久化故障边界；普通元数据和 3 项 user-xattr 回归已通过。2 项 POSIX ACL 测试受本地文件系统 EOPNOTSUPP 限制，不能计为通过，仍须 CI 强制验收。新增进程退出故障测试与最终完整 CI 结果应另行核验；本说明不代表整批验收已完成。
+文件回归覆盖精确字节往返、过期 inode/预览、锁、apply 9 个与 restore 8 个持久化断点的错误返回及子进程退出、外部文件/锁/目录/临时文件变动。元数据测试覆盖普通权限、user-xattr 与 POSIX ACL；本地文件系统不支持 ACL 时须明确区分为未验证，并由支持该能力的 CI 强制检查。恢复确认测试还覆盖操作域隔离、receipt/config 同内容换 inode、后续另一受管操作、阶段变动及 Prepared 清理。
 
-Current local file regressions cover exact-byte round trips, stale inode/preview rejection, locking, and 9 apply / 8 restore persistence-failure boundaries. Ordinary metadata and three user-xattr regressions have passed locally. Two POSIX ACL tests are blocked by local filesystem EOPNOTSUPP and must not be counted as passes; required CI validation remains. Newly added process-exit fault tests and final full CI results need separate verification. This document does not declare the entire increment accepted.
+File regressions cover exact-byte round trips, stale inode/preview rejection, locking, errors and subprocess exits at 9 apply / 8 restore persistence boundaries, and external changes to files, locks, directories, and temporary files. Metadata tests cover ordinary permissions, user xattrs, and POSIX ACLs. A local filesystem without ACL support leaves those cases unverified; capable CI must require them. Restore-confirmation tests additionally cover operation-domain separation, identical-content inode replacements, later owned operations, phase changes, and Prepared cleanup.
 
-后续先完成独立审查、Linux ACL/故障测试与精确提交 CI，再接独立预览/应用/恢复 IPC 和明确确认 UI，覆盖路径选择、取消、过期预览、重复操作与不确定结果。其他平台需单独实现安全文件边界，不可直接开放。真实 App/IPC 对合成文件的测试也不证明官方 Codex 加载或动画实际生效；实际运行仍需单独验收。旧批量入口继续拒绝。
+本批仍需独立复核、原生 IPC/真实 WebView 与精确提交 CI 验收。其他平台需单独实现安全文件边界，不可直接开放。真实 App/IPC 对合成文件的测试不证明官方 Codex 加载或动画实际生效；实际运行仍需单独验收。旧批量入口继续拒绝，不发布零散安装包。
 
-Next complete independent review, Linux ACL/fault tests, and exact-commit CI before adding separate preview/apply/restore IPC and explicit confirmation UI. Cover path selection, cancellation, stale previews, repeated operations, and uncertain outcomes. Other platforms need their own safe filesystem implementation before exposure. Even real App/IPC tests with synthetic files do not prove official Codex loading or animation effects; runtime acceptance remains separate. Keep the legacy bulk entry blocked.
+This increment still requires independent review, native IPC/real-WebView checks, and exact-commit CI acceptance. Other platforms need their own safe filesystem implementation before exposure. Real App/IPC tests with synthetic files do not prove official Codex loading or animation effects; runtime acceptance remains separate. The legacy bulk entry stays blocked, with no incremental installer release.

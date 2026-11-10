@@ -254,6 +254,19 @@ def assert_coverage(records):
         raise InstallFailure('incomplete_coverage')
 
 
+def open_details(driver):
+    # The completion notice precedes asynchronous list refresh. Wait for its
+    # settled installed card, then activate the exact control via native Enter;
+    # coordinate clicks can hit the adjacent operation during layout reflow.
+    driver.wait(lambda: len(driver.elements(CARD + "//*[@class='agent-version' and text()='v1.2.3']")) == 1
+                and len(driver.elements("//*[@aria-label='Agent 列表' and @aria-busy='false']")) == 1)
+    driver.wait(lambda: len(driver.elements(DETAILS + "[@aria-expanded='false']")) == 1
+                and driver.enabled(DETAILS))
+    element = driver.one(DETAILS)
+    driver.command('POST', '/element/' + element + '/value', {'text': '\ue007', 'value': ['\ue007']})
+    driver.wait(lambda: len(driver.elements(DETAILS + "[@aria-expanded='true']")) == 1)
+
+
 def exercise(driver, fixture, home, records, phase, trace=None, observe=None):
     driver.click("//*[@role='tab' and @aria-label='Agent 管理']")
     phase('install_search')
@@ -310,7 +323,7 @@ def exercise(driver, fixture, home, records, phase, trace=None, observe=None):
     driver.wait(lambda: driver.elements("//*[@role='status' and contains(@class, 'agent-notice')]") and '软件安装操作已完成，未应用配置' in driver.text("//*[@role='status' and contains(@class, 'agent-notice')]"))
     assert_installed(fixture); done('confirmed_install')
     phase('install_observed_source')
-    driver.click(DETAILS)
+    open_details(driver)
     source = SOURCE
     driver.wait(lambda: driver.elements(source))
     driver.wait(lambda: '实测版本 1.2.3' in driver.text(source))

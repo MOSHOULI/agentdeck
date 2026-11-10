@@ -22,8 +22,8 @@ Malformed or ambiguous markers, unsafe paths, unsupported files and excessive
 inputs fail closed. An explicitly empty or different `CODEX_HOME` is not silently ignored or redirected.
 The plan does not prove which configuration is effective in a running Codex.
 
-The old desktop Codex “apply profile” shortcut is unavailable while the matching
-safe writer and recovery protocol are unfinished. This restriction covers that
+The old desktop Codex “apply profile” shortcut remains unavailable: the narrow
+animation editor does not implement safe bulk profile application. This restriction covers that
 desktop shortcut, not a claim that every legacy CLI or separate synchronization
 entry point has been replaced. Other agents retain their existing interfaces.
 No new installer is published with this incremental change.
@@ -40,8 +40,8 @@ Codex 卡片新增只读配置计划，不是确认后即可写入的预览。�
 均不得当成自动覆盖许可。路径不安全、文件超限或标记损坏时拒绝处理，不能静默
 忽略显式为空或不同的 CODEX_HOME。计划不证明实际运行中的 Codex 已采用这些配置。
 
-在匹配的安全写入与恢复机制完成前，桌面 Codex 旧的“应用配置”快捷入口暂停，
-只提供计划查看。这不表示所有旧 CLI 或其他独立同步入口已被替换；其他 Agent
+桌面 Codex 旧的“应用配置”批量快捷入口仍暂停；单字段动画编辑不等于
+已完成安全的整份 profile 应用。这不表示所有旧 CLI 或其他独立同步入口已被替换；其他 Agent
 保持原有接口。本批不发布新的安装包。
 
 ## Verification boundary / 验证边界
@@ -54,3 +54,9 @@ configuration activation is established by these checks.
 测试使用自建文件，检查字节、元数据及目录成员不变，包括没有 profile 的情况。
 原生 IPC 和真实 WebView 验证的是 AgentDeck，不涉及 Codex 运行时、模型、登录
 或配置实际生效。
+
+## Separate animations editor / 独立动画编辑
+
+Linux x86_64 native desktop mode additionally offers [single-field animation management](CODEX-OWNED-CONFIG-DESIGN.md) for an existing explicit `tui.animations` boolean. It has its own preview/apply and observation/restore confirmations with operation-specific tokens; this read-only plan never authorizes those writes. Other platforms and browser demo mode cannot perform them. An empty or different `CODEX_HOME`, missing or unsupported config, unsafe metadata, or existing ownership receipt prevents a new application.
+
+Linux x86_64 原生桌面另有[单字段动画管理](CODEX-OWNED-CONFIG-DESIGN.md)，仅支持已有显式 `tui.animations` 布尔值。它分别提供预览/确认应用、观察/确认恢复，使用独立操作 token；本只读计划不授予这些写入权限。其他平台及浏览器演示模式不能执行。显式为空或不同的 `CODEX_HOME`、缺失/不支持的配置、不安全元数据或已有 receipt 均阻止新接管。
