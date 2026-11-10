@@ -44,15 +44,14 @@ pub fn remember(slot: &mut Option<Session>, preview: InstallPreview) -> DesktopP
     }
 }
 pub fn submitted(slot: &mut Option<Session>, id: &str, revision: &str, reference: Option<&str>) {
-    if let Some(session) = slot.as_mut() {
-        if id == "codex"
-            && session.phase == Phase::Reviewed
-            && reference == Some(session.reference.as_str())
-            && revision == session.revision
-        {
-            session.phase = Phase::Submitted;
-            return;
-        }
+    if let Some(session) = slot.as_mut()
+        && id == "codex"
+        && session.phase == Phase::Reviewed
+        && reference == Some(session.reference.as_str())
+        && revision == session.revision
+    {
+        session.phase = Phase::Submitted;
+        return;
     }
     *slot = None;
 }
