@@ -17,15 +17,18 @@ class OfflineDriver:
     """Assertion model only, not evidence of a browser/native execution."""
     def __init__(self, fixture, install, fault=None):
         self.fixture = fixture; self.install = install; self.fault = fault
-        self.dialog = False; self.confirmations = 0; self.clicks = []; self.commands = []
+        self.dialog = False; self.confirmations = 0; self.clicks = []; self.commands = []; self.events = []
     def click(self, selector):
         self.clicks.append(selector)
+        self.events.append(('click', selector))
         if selector == subject.PREVIEW: self.dialog = True
         if selector == subject.CANCEL: self.dialog = False
         if selector == subject.CONFIRM:
             self.dialog = False; self.confirmations += 1
             if self.fault == 'timeout': raise harness.Failure('ui_wait_expired')
             if self.confirmations == 2: self.install()
+    def wheel_scroll_workspace_top(self):
+        self.events.append(('wheel_top', None))
     def one(self, selector):
         if selector != "//*[@id='agent-search']": raise AssertionError('unexpected input')
         return 'search-element'
@@ -161,6 +164,10 @@ class FixtureTests(unittest.TestCase):
         subject.exercise(driver, self.f, self.root / 'empty-home', records, phases.append, trace)
         subject.assert_coverage(records)
         self.assertEqual(driver.clicks.count(subject.CONFIRM), 2)
+        self.assertEqual(driver.events.count(('wheel_top', None)), 3)
+        for index, event in enumerate(driver.events):
+            if event == ('click', subject.PREVIEW):
+                self.assertEqual(driver.events[index - 1], ('wheel_top', None))
         self.assertEqual(driver.clicks.count(subject.CANCEL), 1)
         self.assertNotIn("//*[@id='workspace-panel-agents']//h1", driver.clicks)
         self.assertEqual(driver.commands, [('POST', '/element/search-element/value', {'text': '\ue004', 'value': ['\ue004']})])
@@ -235,6 +242,21 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(report['screenshot'], 'unavailable_or_suppressed')
         self.assertFalse((evidence / 'install_initial_preview_settled.png').exists())
         with self.assertRaises(subject.InstallFailure): subject.capture_geometry(driver, evidence, '../escape')
+
+    def test_failed_scroll_preflight_never_clicks_preview_or_confirms(self):
+        driver = OfflineDriver(self.f, lambda: self.fail('must not install'))
+        def fail_scroll():
+            driver.events.append(('wheel_top', None))
+            raise harness.Failure('ui_wait_expired')
+        driver.wheel_scroll_workspace_top = fail_scroll
+        phases = []
+        with self.assertRaises(harness.Failure):
+            subject.exercise(driver, self.f, self.root, [], phases.append)
+        self.assertEqual(driver.events.count(('wheel_top', None)), 1)
+        self.assertEqual(driver.clicks.count(subject.PREVIEW), 0)
+        self.assertEqual(driver.clicks.count(subject.CONFIRM), 0)
+        self.assertEqual(phases[-1], 'install_initial_preview_scroll_top')
+        subject.assert_absent(self.f)
 
     def test_uncertain_confirm_never_replayed(self):
         driver = OfflineDriver(self.f, lambda: self.fail('must not install'), fault='timeout')
