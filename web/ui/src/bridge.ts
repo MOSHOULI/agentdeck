@@ -321,7 +321,7 @@ export function parseInstallPreview(value: unknown, id: string): AgentInstallPre
   const expected = Object.prototype.hasOwnProperty.call(installPackages, id) ? installPackages[id] : undefined;
   if (!expected || !value || typeof value !== 'object' || Array.isArray(value)) return fail();
   const raw = value as Record<string, unknown>;
-  const scriptPolicy = id === 'pi' ? 'disabled' : 'npm_configured';
+  const scriptPolicy = (id === 'pi' || id === 'codex') ? 'disabled' : 'npm_configured';
   if (raw.schemaVersion !== 1 || raw.agentId !== id || raw.package !== expected[0]
     || raw.executable !== expected[1] || raw.scriptPolicy !== scriptPolicy
     || raw.versionPolicy !== 'npm_configured' || !validInstallRevision(raw.revision)) return fail();

@@ -69,7 +69,7 @@ def prepare(root, path):
         'name': 'npm', 'version': '0.0.0', 'bin': {'npm': 'bin/npm-cli.js'}}))
     private_write(paths['queries'], '')
     expected = ['install', '--global', '--prefix', str(paths['prefix']), '--force=false',
-                '--no-audit', '--no-fund', '--no-progress', '@openai/codex']
+                '--no-audit', '--no-fund', '--no-progress', '--ignore-scripts', '@openai/codex']
     constants = {key: str(value) for key, value in paths.items()}
     codex = "#!/usr/bin/env node\n'use strict';\nif (JSON.stringify(process.argv.slice(2)) !== '[\"--version\"]') process.exit(64);\nconsole.log('codex-cli 1.2.3');\n"
     script = "#!/usr/bin/env node\n'use strict';\n" + 'const p = ' + json.dumps(constants) + ';\n'
@@ -179,7 +179,7 @@ def assert_plan(driver, fixture):
         if driver.text(DIALOG + "//div[dt[text()='" + label + "']]/dd") != value:
             raise InstallFailure('plan_mismatch')
     text = driver.text(DIALOG)
-    for value in ('版本由当前 npm 配置选择', '生命周期脚本：遵循当前 npm 配置', '仅安装软件，不应用 profile'):
+    for value in ('版本由当前 npm 配置选择', '生命周期脚本：禁用（ignore-scripts）', '仅安装软件，不应用 profile'):
         if value not in text: raise InstallFailure('policy_mismatch')
 
 

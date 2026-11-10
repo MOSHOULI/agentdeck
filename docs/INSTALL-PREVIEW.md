@@ -58,7 +58,7 @@ current configuration chooses the version/registry/dependency closure; those are
 of the displayed target. No dependency download or source-signature verification
 happens during preview. Review this limitation before confirming.
 
-For Pi, `--ignore-scripts` is mandatory. For other supported adapters, lifecycle
+For Codex and Pi, `--ignore-scripts` is mandatory. For other supported adapters, lifecycle
 behavior follows npm configuration and may execute installation scripts. This is
 not a general sandbox or an assertion that a package has no scripts. npm can
 contact its configured registry and write dependencies, launchers, caches and logs.
@@ -109,7 +109,7 @@ npm 安装，也不将 Qwen、Qoder、DSH 或手动条目升级为自动安装�
 记录或安全沙箱，也未固定完整 npm 配置、registry、实际包版本和依赖闭包。Windows
 未来启动器选用的 Node 可能不同于当前安装器 Node。
 
-Pi 强制禁用安装脚本；其他现有适配器遵循 npm 配置，可能下载依赖并执行安装脚本。
+Codex 和 Pi 强制禁用安装脚本；其他现有适配器遵循 npm 配置，可能下载依赖并执行安装脚本。
 安装成功还需通过现有入口、版本和来源目录核验；失败可能已有局部改动，不自动回滚、
 卸载或升级，也不登录、不写模型配置。CLI 原有显式 `--yes` 流程不变。
 
@@ -126,3 +126,26 @@ filesystem sandbox.
 
 启动时还会读取密钥列表。缺失的密钥库现在返回空结果，不创建目录、锁或主密钥；
 已有密钥库继续使用原文件锁。这不是防御恶意并发文件系统替换的沙箱。
+
+### Codex lifecycle override / Codex 生命周期脚本强制策略
+
+Codex's supported bundled and retained `npm install -g @openai/codex` recipe
+remains eligible; it is not executed as a shell string. The internal adapter adds
+`--ignore-scripts` unconditionally, and the preview reports `disabled` from the
+same policy helper. Pi keeps its existing policy; Gemini CLI and OpenCode V1
+remain npm-configured. A stale Codex preview from before this change is rejected.
+Package versions are still selected by npm configuration, not pinned to 0.167.0.
+
+The separate [official-package gate](CODEX-OFFICIAL-INSTALL.md) verified the
+pinned 0.167.0 Linux x64 npm filesystem layout without lifecycle scripts. That
+narrow result does not establish compatibility of every future version, other
+platforms, the real AgentDeck adapter's version postcheck, login or model runtime.
+The application/WebView tests still use authored synthetic manager/agent fixtures.
+
+Codex 的现有及保留配方 `npm install -g @openai/codex` 仍可匹配适配器；
+后端不通过 shell 执行配方，而是强制加入 `--ignore-scripts`，预览与执行共用策略。
+Pi 策略不变；Gemini CLI、OpenCode V1 仍遵循 npm 配置。更新前的 Codex 预览不能
+用于新策略安装。实际包版本仍由 npm 配置选择，没有固定成 0.167.0。
+独立官方包门禁仅验证了固定 0.167.0 Linux x64 包在不运行生命周期脚本时的 npm
+文件安装布局，不代表未来版本、其他平台、真实适配器版本后检、登录或模型运行均已验收。
+应用和 WebView 安装流程测试仍使用自建合成替身。

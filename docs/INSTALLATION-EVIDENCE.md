@@ -107,7 +107,7 @@ Before running the installer, the backend:
 The command uses separate arguments, the inspected manager and an explicit
 `--prefix`; it does not execute the registry command through a shell or create a
 different installation prefix. It disables force, audit, funding and progress
-options. Pi also uses `--ignore-scripts`; that flag is not applied to every agent.
+options. Codex and Pi also use `--ignore-scripts`; that flag is not applied to every agent.
 The install subprocess has a five-minute runtime limit and bounded captured output.
 Only one installation runs at a time within this process. This is not a lock
 against another program, a publisher-signature check, or a sandbox for npm and
