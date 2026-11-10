@@ -269,20 +269,50 @@ function Observe-FailedInstallSession($fixture, [string]$manifest, [string]$base
         if ($before.$key -ne $after.$key) { throw 'Read-only session inspection executed a fixture operation' }
     }
 }
+function Activate-InstallWorkspace([ValidateSet('Qwen 配置检查','Agent 管理')][string]$name) {
+    # WebView2 ARIA tabs are HTML buttons with React onClick. Use one native
+    # keyboard activation, not SelectionItem.Select followed by a blind retry.
+    Add-Type -AssemblyName System.Windows.Forms
+    $tab = Wait-QwenControl $name ([Windows.Automation.ControlType]::TabItem)
+    $tab.SetFocus()
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    while (-not $tab.Current.HasKeyboardFocus) {
+        if ([DateTime]::UtcNow -ge $deadline) { throw 'Installed workspace focus was not confirmed' }
+        Start-Sleep -Milliseconds 100
+    }
+    [Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    Wait-InstallWorkspaceSelected $name
+}
 function Wait-InstallWorkspaceSelected([ValidateSet('Qwen 配置检查','Agent 管理')][string]$name) {
+    $workspaceId = if ($name -eq 'Qwen 配置检查') { 'qwen' } else { 'agents' }
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    $revealAttempted = $false
     do {
         $tab = Find-QwenControl $name ([Windows.Automation.ControlType]::TabItem)
-        if ($null -ne $tab -and ([Windows.Automation.SelectionItemPattern]$tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)).Current.IsSelected) {
-            $control = if ($name -eq 'Qwen 配置检查') {
-                Find-QwenControl 'settings.json 绝对路径' ([Windows.Automation.ControlType]::Edit)
+        $tabPresent = $null -ne $tab
+        $selected = $tabPresent -and ([Windows.Automation.SelectionItemPattern]$tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)).Current.IsSelected
+        $control = if ($name -eq 'Qwen 配置检查') {
+            Find-QwenControl 'settings.json 绝对路径' ([Windows.Automation.ControlType]::Edit)
+        } else {
+            Find-QwenControl '刷新列表' ([Windows.Automation.ControlType]::Button)
+        }
+        $controlPresent = $null -ne $control
+        $visible = $controlPresent -and -not $control.Current.IsOffscreen
+        if ($selected -and $visible) { return }
+        if ($selected -and $controlPresent -and -not $visible -and -not $revealAttempted) {
+            # Main content retains scroll position. Reveal one confirmed target
+            # control without activating it, then still require visible UI.
+            $revealAttempted = $true
+            $scroll = $null
+            if ($control.TryGetCurrentPattern([Windows.Automation.ScrollItemPattern]::Pattern, [ref]$scroll)) {
+                ([Windows.Automation.ScrollItemPattern]$scroll).ScrollIntoView()
             } else {
-                Find-QwenControl '刷新列表' ([Windows.Automation.ControlType]::Button)
+                $control.SetFocus()
             }
-            if ($null -ne $control -and -not $control.Current.IsOffscreen) { return }
         }
         Start-Sleep -Milliseconds 100
     } while ([DateTime]::UtcNow -lt $deadline)
+    Record 'failed-reviewed-install-navigation-timeout' @{ workspace = $workspaceId; tabPresent = $tabPresent; selected = $selected; controlPresent = $controlPresent; visible = $visible; revealAttempted = $revealAttempted }
     throw 'Installed workspace selection or visible content did not settle'
 }
 function Assert-ResidualResultAbsent {
@@ -410,12 +440,8 @@ function Check-FailedReviewedInstall {
         Save-QwenEvidence 'failed-reviewed-install-refreshed'
         Record 'failed-reviewed-install-refreshed' @{ fixtureCounts = $counts; residualUnchanged = $true; configurationUnchanged = $true }
 
-        $tab = Wait-QwenControl 'Qwen 配置检查' ([Windows.Automation.ControlType]::TabItem)
-        ([Windows.Automation.SelectionItemPattern]$tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)).Select()
-        Wait-InstallWorkspaceSelected 'Qwen 配置检查'
-        $tab = Wait-QwenControl 'Agent 管理' ([Windows.Automation.ControlType]::TabItem)
-        ([Windows.Automation.SelectionItemPattern]$tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)).Select()
-        Wait-InstallWorkspaceSelected 'Agent 管理'
+        Activate-InstallWorkspace 'Qwen 配置检查'
+        Activate-InstallWorkspace 'Agent 管理'
         Observe-FailedInstallSession $fixture $manifest $baseline $residual
         Assert-ResidualResultAbsent
         Save-QwenEvidence 'failed-reviewed-install-session-navigation'

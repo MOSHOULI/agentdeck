@@ -93,8 +93,8 @@ class Tests(unittest.TestCase):
         flow = UI[UI.index('function Check-FailedReviewedInstall'):]
         self.assertEqual(flow.count('Observe-FailedInstallSession $fixture $manifest $baseline $residual'), 3)
         self.assertEqual(flow.count('Assert-InstallSessionAbsent'), 2)
-        self.assertIn("Wait-QwenControl 'Qwen 配置检查'", flow)
-        self.assertIn("Wait-QwenControl 'Agent 管理'", flow)
+        self.assertIn("Activate-InstallWorkspace 'Qwen 配置检查'", flow)
+        self.assertIn("Activate-InstallWorkspace 'Agent 管理'", flow)
         self.assertNotIn('Installation target changed since confirmation', UI)
         self.assertIn('安装请求已发送，但完成状态未确认。', UI)
 
@@ -112,7 +112,7 @@ class Tests(unittest.TestCase):
         flow = UI[UI.index('function Check-FailedReviewedInstall'):]
         self.assertEqual(flow.count('Check-FailedInstallResidualInspection $fixture $manifest $baseline $residual'), 2)
         self.assertIn('Check-FailedInstallResidualInspection $fixture $manifest $baseline $residual -KeepOpen', flow)
-        self.assertLess(flow.index('Check-FailedInstallResidualInspection $fixture $manifest $baseline $residual -KeepOpen'), flow.index("Wait-QwenControl 'Qwen 配置检查'"))
+        self.assertLess(flow.index('Check-FailedInstallResidualInspection $fixture $manifest $baseline $residual -KeepOpen'), flow.index("Activate-InstallWorkspace 'Qwen 配置检查'"))
         self.assertIn("Assert-ResidualResultAbsent\n        Save-QwenEvidence 'failed-reviewed-install-session-navigation'", flow)
         absent = UI[UI.index('function Assert-InstallSessionAbsent'):UI.index('function Observe-FailedInstallSession')]
         self.assertIn("Find-QwenControl '只读检查固定残留槽位'", absent)
@@ -135,10 +135,22 @@ class Tests(unittest.TestCase):
         helper = UI[UI.index('function Wait-InstallWorkspaceSelected'):UI.index('function Assert-ResidualResultAbsent')]
         self.assertIn('.Current.IsSelected', helper)
         self.assertIn('-not $control.Current.IsOffscreen', helper)
+        self.assertIn('selected = $selected; controlPresent = $controlPresent; visible = $visible', helper)
+        self.assertIn('if ($selected -and $visible) { return }', helper)
+        self.assertIn('$selected -and $controlPresent -and -not $visible -and -not $revealAttempted', helper)
+        self.assertIn('ScrollItemPattern]$scroll).ScrollIntoView()', helper)
+        self.assertIn('$control.SetFocus()', helper)
+        activation = UI[UI.index('function Activate-InstallWorkspace'):UI.index('function Wait-InstallWorkspaceSelected')]
+        self.assertEqual(activation.count("[Windows.Forms.SendKeys]::SendWait('{ENTER}')"), 1)
+        self.assertLess(activation.index('$tab.SetFocus()'), activation.index('$tab.Current.HasKeyboardFocus'))
+        self.assertLess(activation.index('$tab.Current.HasKeyboardFocus'), activation.index("[Windows.Forms.SendKeys]::SendWait"))
+        self.assertIn('Wait-InstallWorkspaceSelected $name', activation)
+        self.assertNotIn('.Select()', activation)
+        self.assertNotIn('catch', activation)
         self.assertIn("Find-QwenControl 'settings.json 绝对路径'", helper)
         flow = UI[UI.index('function Check-FailedReviewedInstall'):]
-        self.assertLess(flow.index("Wait-InstallWorkspaceSelected 'Qwen 配置检查'"), flow.index("$tab = Wait-QwenControl 'Agent 管理'"))
-        self.assertLess(flow.index("Wait-InstallWorkspaceSelected 'Agent 管理'"), flow.index("Save-QwenEvidence 'failed-reviewed-install-session-navigation'"))
+        self.assertLess(flow.index("Activate-InstallWorkspace 'Qwen 配置检查'"), flow.index("Activate-InstallWorkspace 'Agent 管理'"))
+        self.assertLess(flow.index("Activate-InstallWorkspace 'Agent 管理'"), flow.index("Save-QwenEvidence 'failed-reviewed-install-session-navigation'"))
 
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
