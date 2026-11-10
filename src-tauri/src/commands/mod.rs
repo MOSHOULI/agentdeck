@@ -25,3 +25,5 @@ pub mod qoder_scopes;
 pub mod dsh_distribution;
 
 pub mod codex_animations;
+
+mod install_session;

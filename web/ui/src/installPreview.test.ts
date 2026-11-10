@@ -66,3 +66,22 @@ describe('reviewed npm bridge contract', () => {
     expect(invoke).toHaveBeenCalledExactlyOnceWith('preview_agent_install', { id: 'opencode' });
   });
 });
+
+it('forwards only an opaque backend inspection reference and never a path', async () => {
+  const { inspectCodexInstallResidual } = await import('./bridge');
+  (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+  const reference = '12345678-1234-4123-8123-123456789abc';
+  vi.mocked(invoke).mockResolvedValue({ schemaVersion: 1, agentId: 'codex', runtimeNotRun: true, ownership: 'unknown', cleanupSupported: false, slots: ['package_directory', 'posix_launcher', 'cmd_launcher', 'powershell_launcher'].map(slot => ({ slot, state: 'missing' })) });
+  await inspectCodexInstallResidual(reference);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('inspect_codex_install_residual', { sessionRef: reference });
+  vi.mocked(invoke).mockClear();
+  await expect(inspectCodexInstallResidual('C:\\secret')).rejects.toThrow();
+  expect(invoke).not.toHaveBeenCalled();
+});
+it('preserves a Codex-only session reference without weakening the review contract', () => {
+  const reference = '12345678-1234-4123-8123-123456789abc';
+  const raw = { ...installPlan, agentId: 'codex', package: '@openai/codex', executable: 'codex', scriptPolicy: 'disabled', packageRoot: `${installPlan.globalRoot}/@openai/codex`, sessionRef: reference };
+  expect(parseInstallPreview(raw, 'codex').sessionRef).toBe(reference);
+  expect(parseInstallPreview({ ...raw, sessionRef: 'C:\\secret' }, 'codex').sessionRef).toBeUndefined();
+  expect(parseInstallPreview({ ...installPlan, sessionRef: reference }, 'opencode').sessionRef).toBeUndefined();
+});

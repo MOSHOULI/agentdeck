@@ -98,6 +98,39 @@ class Tests(unittest.TestCase):
         self.assertNotIn('Installation target changed since confirmation', UI)
         self.assertIn('安装请求已发送，但完成状态未确认。', UI)
 
+    def test_explicit_residual_inspection_native_flow_and_no_execution(self):
+        method = UI[UI.index('function Check-FailedInstallResidualInspection'):UI.index('function Check-FailedReviewedInstall')]
+        self.assertEqual(method.count("Click-Qwen '只读检查固定残留槽位'"), 1)
+        self.assertIn("Click-Qwen '关闭检查结果'", method)
+        for state in ('package_directory: directory', 'posix_launcher: missing', 'cmd_launcher: missing', 'powershell_launcher: missing'):
+            self.assertIn(state, method)
+        self.assertIn("@('installCalls','versionProbes','prefixQueries','rootQueries')", method)
+        self.assertIn("Assert-FailedInstallObservation $fixture $manifest $baseline $residual 'residual-inspection'", method)
+        self.assertIn('officialAgentExecuted = $false', method)
+        self.assertIn("ownership = 'unknown'", method)
+        self.assertNotIn('catch', method)
+        flow = UI[UI.index('function Check-FailedReviewedInstall'):]
+        self.assertEqual(flow.count('Check-FailedInstallResidualInspection $fixture $manifest $baseline $residual'), 2)
+        self.assertIn('Check-FailedInstallResidualInspection $fixture $manifest $baseline $residual -KeepOpen', flow)
+        self.assertLess(flow.index('Check-FailedInstallResidualInspection $fixture $manifest $baseline $residual -KeepOpen'), flow.index("Wait-QwenControl 'Qwen 配置检查'"))
+        self.assertIn("Assert-ResidualResultAbsent\n        Save-QwenEvidence 'failed-reviewed-install-session-navigation'", flow)
+        absent = UI[UI.index('function Assert-InstallSessionAbsent'):UI.index('function Observe-FailedInstallSession')]
+        self.assertIn("Find-QwenControl '只读检查固定残留槽位'", absent)
+
+    def test_residual_sharing_conflict_is_native_safe_error_then_recovery(self):
+        method = UI[UI.index('function Check-FailedResidualUnavailable'):UI.index('function Check-FailedInstallResidualInspection')]
+        self.assertIn('CreateFileW($fixture.package, 0x81, 0,', method)
+        self.assertIn('if ($handle.IsInvalid)', method)
+        self.assertIn('finally { $handle.Dispose() }', method)
+        self.assertIn("Wait-InstallText $fixedError 'residual-unavailable'", method)
+        self.assertIn("本会话只读检查不可用或路径发生变化。未清理或执行程序。请保留现有文件。", method)
+        self.assertIn("Contains('Codex 固定槽位只读检查结果')", method)
+        for forbidden in ('ReadFile', 'WriteFile', 'Remove-Item', 'WriteAllText', 'catch'):
+            self.assertNotIn(forbidden, method)
+        self.assertLess(method.index('$handle.Dispose()'), method.index('$after = Assert-FailedInstallObservation'))
+        flow = UI[UI.index('function Check-FailedReviewedInstall'):]
+        self.assertLess(flow.index('Check-FailedResidualUnavailable $fixture'), flow.index('Check-FailedInstallResidualInspection $fixture'))
+
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
         self.assertLess(LIFECYCLE.index('    Check-ReviewedInstall'), LIFECYCLE.index('    Check-CodexReadonly'))

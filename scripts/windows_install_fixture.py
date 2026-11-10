@@ -16,7 +16,7 @@ import sys
 
 CANARY = 'AGENTDECK_SYNTHETIC_INSTALL_PRIVATE_CANARY'
 MARKER = b'synthetic-install-once\n'
-PARTIAL = b'authored incomplete installation; retain for inspection\n'
+PARTIAL = ('authored incomplete installation; retain for inspection\n' + CANARY + '\n').encode()
 class Failure(Exception): pass
 
 def safe_file(path, limit):
@@ -59,6 +59,7 @@ def manager_program(p,mode):
     expected=['install','--global','--prefix',p['prefix'],'--force=false','--no-audit','--no-fund','--no-progress','--ignore-scripts','@openai/codex']
     header=("#!/usr/bin/env node\n'use strict';\nconst fs=require('node:fs');const path=require('node:path');\n"
             'const p='+json.dumps(p)+';\nconst expected='+json.dumps(expected)+';\nconst mode='+json.dumps(mode)+';\n'
+            'const partial='+json.dumps(PARTIAL.decode())+';\n'
             'const codex='+json.dumps(codex_program(p))+';\nconst launcher='+json.dumps(shim('node_modules/@openai/codex/bin/codex.js').decode())+';\n')
     return header+r'''
 function canonical(target){return path.toNamespacedPath(fs.realpathSync(target));}
@@ -87,7 +88,7 @@ try{
   fs.writeFileSync(p.marker,'synthetic-install-once\n',{flag:'wx'});
   fs.mkdirSync(scope,{recursive:true});fs.mkdirSync(p.package);
   if(mode==='fail'){
-   fs.writeFileSync(path.join(p.package,'partial-install.txt'),'authored incomplete installation; retain for inspection\n',{flag:'wx'});
+   fs.writeFileSync(path.join(p.package,'partial-install.txt'),partial,{flag:'wx'});
    throw Error('authored failure after partial installation');
   }
   fs.mkdirSync(path.join(p.package,'bin'));

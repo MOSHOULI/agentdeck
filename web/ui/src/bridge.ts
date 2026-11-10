@@ -1,3 +1,4 @@
+import { validSessionRef, parseResidual } from './codexResidualContract';
 import { validateAnimationsCapability, validateAnimationsObservation } from "./codexAnimationsContract";
 import { validateAnimationsPreview, validateAnimationsRecovery, validateAnimationsMutation, validAnimationsToken } from "./codexAnimationsContract";
 import { validateCodexConfigurationPlan, demoCodexConfigurationPlan } from './codexConfigurationContract';
@@ -284,6 +285,7 @@ export async function getAgents(): Promise<AgentInfo[]> {
 export interface InstallOutcome { warnings: string[]; }
 
 export interface AgentInstallPreview {
+  sessionRef?: string;
   schemaVersion: 1;
   agentId: string;
   package: string;
@@ -343,6 +345,7 @@ export function parseInstallPreview(value: unknown, id: string): AgentInstallPre
   if (!consistentInstallLayout(raw, expected[0])) return fail();
   return {
     schemaVersion: 1, agentId: id, package: expected[0], executable: expected[1], scriptPolicy,
+    ...(id === 'codex' && validSessionRef(raw.sessionRef) ? { sessionRef: raw.sessionRef } : {}),
     versionPolicy: 'npm_configured', revision: raw.revision,
     managerPath: raw.managerPath as string, nodePath: raw.nodePath as string,
     prefix: raw.prefix as string, globalRoot: raw.globalRoot as string,
@@ -361,10 +364,10 @@ export async function previewAgentInstall(id: string): Promise<AgentInstallPrevi
 }
 
 /** Only dispatch an explicitly reviewed revision. No unconfirmed fallback. */
-export async function installAgent(id: string, revision: string): Promise<InstallOutcome> {
+export async function installAgent(id: string, revision: string, sessionRef?: string): Promise<InstallOutcome> {
   useDemo(true);
   if (!Object.prototype.hasOwnProperty.call(installPackages, id) || !validInstallRevision(revision)) throw new Error('请先检查有效安装预览。');
-  return invoke<InstallOutcome>('install_agent', { id, revision });
+  return invoke<InstallOutcome>('install_agent', { id, revision, ...(validSessionRef(sessionRef) ? { sessionRef } : {}) });
 }
 
 /** 单独应用默认 profile 支持的配置（调用方必须先明确确认） */
@@ -667,4 +670,11 @@ export async function getCodexAnimationsCapability() {
 export async function observeCodexAnimations() {
   useDemo(true);
   return validateAnimationsObservation(await invoke<unknown>('observe_codex_animations'));
+}
+
+export async function inspectCodexInstallResidual(sessionRef: string) {
+  useDemo(true);
+  if (!validSessionRef(sessionRef)) throw new Error('本会话只读检查不可用。');
+  try { return parseResidual(await invoke<unknown>('inspect_codex_install_residual', { sessionRef })); }
+  catch { throw new Error('本会话只读检查不可用或路径发生变化。未清理或执行程序。'); }
 }

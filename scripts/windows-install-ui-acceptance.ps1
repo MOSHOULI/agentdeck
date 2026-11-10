@@ -8,7 +8,7 @@ function Get-InstallAccessibleText {
     return (@($nodes | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) -join "`n")
 }
 function Wait-InstallText([string]$expected,
-    [ValidateSet('session-boundary','occupied-preview-error','authored-install-error','stale-error','install-complete','installed-version','version','source','package','global','prefix','manager')][string]$check) {
+    [ValidateSet('session-boundary','residual-boundary','residual-unavailable','occupied-preview-error','authored-install-error','stale-error','install-complete','installed-version','version','source','package','global','prefix','manager')][string]$check) {
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
         if ((Get-InstallAccessibleText).Contains($expected)) { return }
@@ -210,7 +210,7 @@ function Get-FailedStateDifference([string]$before, [string]$after) {
     return ,$changes
 }
 function Assert-FailedInstallObservation($fixture, [string]$manifest, [string]$baseline, [string]$residual,
-    [ValidateSet('initial','settled','refresh','restart','occupied-preview','session-observation')][string]$stage) {
+    [ValidateSet('initial','settled','refresh','restart','occupied-preview','session-observation','residual-inspection')][string]$stage) {
     $counts = Invoke-InstallFixture @('--assert', 'failed', '--manifest', $manifest) | ConvertFrom-Json
     if ($counts.installCalls -ne 1 -or $counts.versionProbes -ne 0 -or $counts.partialInstallRetained -ne $true) {
         throw 'Failed installation was retried, executed an agent or lost partial state'
@@ -228,6 +228,8 @@ function Assert-FailedInstallObservation($fixture, [string]$manifest, [string]$b
     return $counts
 }
 function Assert-InstallSessionAbsent {
+    Assert-ResidualResultAbsent
+    if ($null -ne (Find-QwenControl '只读检查固定残留槽位' ([Windows.Automation.ControlType]::Button))) { throw 'Residual inspection capability unexpectedly persisted across restart' }
     if ((Get-InstallAccessibleText).Contains('本会话安装记录：')) { throw 'Session installation record unexpectedly persisted across restart' }
 }
 function Observe-FailedInstallSession($fixture, [string]$manifest, [string]$baseline, [string]$residual) {
@@ -267,6 +269,81 @@ function Observe-FailedInstallSession($fixture, [string]$manifest, [string]$base
         if ($before.$key -ne $after.$key) { throw 'Read-only session inspection executed a fixture operation' }
     }
 }
+function Assert-ResidualResultAbsent {
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+        $text = Get-InstallAccessibleText
+        if (-not $text.Contains('Codex 固定槽位只读检查结果') -and
+            $null -eq (Find-QwenControl '关闭检查结果' ([Windows.Automation.ControlType]::Button))) { return }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'Residual inspection result remained after dismissal or navigation'
+}
+function Check-FailedResidualUnavailable($fixture, [string]$manifest, [string]$baseline, [string]$residual) {
+    $before = Invoke-InstallFixture @('--assert', 'failed', '--manifest', $manifest) | ConvertFrom-Json
+    Assert-ResidualResultAbsent
+    # Hold the authored package directory with no sharing: product metadata reads
+    # must fail closed. This handle neither reads nor writes directory contents.
+    if (-not ('AgentDeckResidualAcceptanceLock' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class AgentDeckResidualAcceptanceLock {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern SafeFileHandle CreateFileW(string path, uint access, uint sharing,
+        IntPtr security, uint creation, uint flags, IntPtr template);
+}
+'@
+    }
+    $handle = [AgentDeckResidualAcceptanceLock]::CreateFileW($fixture.package, 0x81, 0, [IntPtr]::Zero, 3, 0x02000000, [IntPtr]::Zero)
+    try {
+        if ($handle.IsInvalid) { throw 'Could not establish authored residual sharing conflict' }
+        Click-Qwen '只读检查固定残留槽位'
+        $fixedError = '本会话只读检查不可用或路径发生变化。未清理或执行程序。请保留现有文件。'
+        Wait-InstallText $fixedError 'residual-unavailable'
+        if ((Get-InstallAccessibleText).Contains('Codex 固定槽位只读检查结果')) { throw 'Unavailable residual inspection displayed success' }
+        Save-QwenEvidence 'failed-reviewed-install-residual-unavailable'
+        Click-Qwen '关闭检查结果'
+        Assert-ResidualResultAbsent
+    } finally { $handle.Dispose() }
+    $after = Assert-FailedInstallObservation $fixture $manifest $baseline $residual 'residual-inspection'
+    foreach ($key in @('installCalls','versionProbes','prefixQueries','rootQueries')) {
+        if ($before.$key -ne $after.$key) { throw 'Unavailable residual inspection executed a fixture operation' }
+    }
+    Record 'failed-reviewed-install-residual-unavailable' @{ fixedSafeError = $true; residualUnchanged = $true; configurationUnchanged = $true; noFixtureExecution = $true; officialAgentExecuted = $false }
+}
+function Check-FailedInstallResidualInspection($fixture, [string]$manifest, [string]$baseline, [string]$residual, [switch]$KeepOpen) {
+    $before = Invoke-InstallFixture @('--assert', 'failed', '--manifest', $manifest) | ConvertFrom-Json
+    Assert-ResidualResultAbsent
+    # Explicit native activation only. No DOM evaluation or direct backend call.
+    Click-Qwen '只读检查固定残留槽位'
+    $null = Wait-QwenControl '关闭检查结果' ([Windows.Automation.ControlType]::Button)
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $text = Get-InstallAccessibleText
+        $complete = $true
+        foreach ($expected in @('package_directory: directory','posix_launcher: missing','cmd_launcher: missing','powershell_launcher: missing')) {
+            if (-not $text.Contains($expected)) { $complete = $false }
+        }
+        if ($complete) { break }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if (-not $complete) { throw 'Fixed residual slot states were not observed in installed UI' }
+    Wait-InstallText '未运行 npm 或 Agent；所有权未知；不支持清理。' 'residual-boundary'
+    $after = Assert-FailedInstallObservation $fixture $manifest $baseline $residual 'residual-inspection'
+    foreach ($key in @('installCalls','versionProbes','prefixQueries','rootQueries')) {
+        if ($before.$key -ne $after.$key) { throw 'Residual inspection executed a fixture operation' }
+    }
+    Save-QwenEvidence 'failed-reviewed-install-residual-inspection'
+    Record 'failed-reviewed-install-residual-inspection' @{ slots = @('directory','missing','missing','missing'); residualUnchanged = $true; configurationUnchanged = $true; noFixtureExecution = $true; officialAgentExecuted = $false; cleanupSupported = $false; ownership = 'unknown' }
+    if ($KeepOpen) { return }
+    Click-Qwen '关闭检查结果'
+    Assert-ResidualResultAbsent
+    # Closing must not auto-reopen a result or perform a second inspection.
+    Start-Sleep -Milliseconds 300
+    Assert-ResidualResultAbsent
+}
 function Check-FailedReviewedInstall {
     $savedPath = $env:PATH; $savedExt = $env:PATHEXT
     $fixtureRoot = Join-Path $root 'Windows authored failed install fixture'
@@ -302,6 +379,8 @@ function Check-FailedReviewedInstall {
         Start-Sleep -Milliseconds 1000
         $counts = Assert-FailedInstallObservation $fixture $manifest $baseline $residual 'settled'
         Observe-FailedInstallSession $fixture $manifest $baseline $residual
+        Check-FailedResidualUnavailable $fixture $manifest $baseline $residual
+        Check-FailedInstallResidualInspection $fixture $manifest $baseline $residual
         Save-QwenEvidence 'failed-reviewed-install-confirmed'
         Record 'failed-reviewed-install-confirmed' @{ fixtureCounts = $counts; residualUnchanged = $true; noSuccessNotice = $true }
 
@@ -310,6 +389,8 @@ function Check-FailedReviewedInstall {
         Start-Sleep -Milliseconds 1000
         $counts = Assert-FailedInstallObservation $fixture $manifest $baseline $residual 'refresh'
         Observe-FailedInstallSession $fixture $manifest $baseline $residual
+        Assert-ResidualResultAbsent
+        Check-FailedInstallResidualInspection $fixture $manifest $baseline $residual -KeepOpen
         Save-QwenEvidence 'failed-reviewed-install-refreshed'
         Record 'failed-reviewed-install-refreshed' @{ fixtureCounts = $counts; residualUnchanged = $true; configurationUnchanged = $true }
 
@@ -318,6 +399,7 @@ function Check-FailedReviewedInstall {
         $tab = Wait-QwenControl 'Agent 管理' ([Windows.Automation.ControlType]::TabItem)
         ([Windows.Automation.SelectionItemPattern]$tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)).Select()
         Observe-FailedInstallSession $fixture $manifest $baseline $residual
+        Assert-ResidualResultAbsent
         Save-QwenEvidence 'failed-reviewed-install-session-navigation'
         Record 'failed-reviewed-install-session-navigation' @{ reviewedTargetPreserved = $true; noFixtureExecution = $true; persistentRecovery = $false }
 
@@ -336,7 +418,7 @@ function Check-FailedReviewedInstall {
         Assert-InstallSessionAbsent
         Save-QwenEvidence 'failed-reviewed-install-occupied-preview'
         Record 'failed-reviewed-install-occupied-preview' @{ fixtureCounts = $counts; confirmationAbsent = $true; residualUnchanged = $true }
-        Record 'failed-reviewed-install-complete' @{ fixtureCounts = $counts; stages = @('preview_cancel','confirmed_failure','refresh_no_retry','session_navigation_retained','restart_no_retry','session_restart_absent','occupied_preview_rejected'); residualUnchanged = $true; configurationUnchanged = $true; authoredNpmExecuted = $true; authoredAgentExecuted = $false; officialAgentExecuted = $false; automaticRollbackObserved = $false; retryAttempted = $false }
+        Record 'failed-reviewed-install-complete' @{ fixtureCounts = $counts; stages = @('preview_cancel','confirmed_failure','refresh_no_retry','session_navigation_retained','explicit_residual_inspection','residual_unavailable_no_write','residual_dismiss_and_recheck','restart_no_retry','session_restart_absent','occupied_preview_rejected'); residualUnchanged = $true; configurationUnchanged = $true; authoredNpmExecuted = $true; authoredAgentExecuted = $false; officialAgentExecuted = $false; automaticRollbackObserved = $false; retryAttempted = $false }
     } finally {
         Stop-App
         $env:PATH = $savedPath; $env:PATHEXT = $savedExt

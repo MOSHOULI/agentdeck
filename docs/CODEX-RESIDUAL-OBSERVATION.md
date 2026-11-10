@@ -66,3 +66,17 @@ are checked rather than treating unrelated sibling activity as a global snapshot
 
 The handle read-access bit is required for Windows write-sharing exclusion; no file-content read API is called. Access-denied results stay unavailable, not missing.
 Windows 的写共享排斥需要句柄的读取访问位，但实现不调用文件内容读取 API。访问被拒绝仍表示不可检查，不表示缺失。
+
+## Desktop explicit inspection / 桌面显式只读检查
+
+Windows 桌面在本会话 Codex 安装请求失败（完成状态未确认）后，展开安装记录可点击「只读检查固定残留槽位」。仅后端仍保留对应已审核目标时可用；没有自动检查、恢复、清理、重试或卸载。四个槽位仅返回 missing / file / directory / blocked，未执行 npm 或 Agent、未读取文件内容。结果不证明安装成功、真实性、归属或清理权限。检查仍受上文固定本地盘、句柄权限和非原子观察等限制。
+
+后端仅在内存保存最近预览的 prefix、revision 与独立 UUID 引用；只有失败的安装请求匹配该已审核引用和 revision，才获得检查资格；引用不改变原有安装审核条件，缺失引用的请求仍须经过 core 安装检查。IPC 只接受引用，不接受前端路径。新的预览或安装使旧引用失效，成功与重启清除资格。后端互斥门禁防止此桌面入口的预览、安装和检查同时执行；其他进程仍可能改变磁盘。缓存的规范 DOS verbatim 路径仅在后端转换为对应盘符路径，再经 core 全部路径检查；UNC 和其他设备命名空间不转换。
+
+结果仅存在当前面板内存。关闭结果、折叠记录、导航离开、切换安装会话或开始新操作会丢弃结果与迟到响应。关闭不会取消已开始的文件系统元数据查询，也不承诺 I/O 截止时间。无日志或持久化路径、引用或检查结果。浏览器演示不合成这项真实检查。
+
+On Windows desktop, expand an unconfirmed Codex installation record and explicitly choose “只读检查固定残留槽位”. The backend must still hold that reviewed target. No automatic inspection, recovery, cleanup, retry or uninstall occurs. Only four fixed slot kinds are returned; npm and agents are not executed, and file contents are not read. These observations do not establish installation success, authenticity, ownership or permission to clean up.
+
+The backend keeps only the latest preview prefix, revision and a separate UUID reference in process memory. Inspection eligibility requires the failed installation request to match the reviewed reference and revision. The reference does not change installation authorization; requests without it still undergo the existing core installation checks. IPC accepts the reference, never a frontend path. A new preview/installation invalidates old references; success and restart remove eligibility. A nonblocking mutex excludes overlapping desktop preview, installation and inspection operations, not changes by other processes. Only canonical DOS disk verbatim paths are converted on the backend before all core path checks; UNC and other device namespaces are not converted.
+
+Results live only in the open panel. Closing, collapsing, navigating away, changing session or starting another operation discards results and late responses. Closing does not cancel already-started filesystem metadata queries or impose an I/O deadline. Paths, references and reports are not logged or persisted. Browser demo mode does not fabricate an inspection. Existing fixed-local-disk, permission and non-atomic-sampling limitations still apply. Synthetic UI/fixture tests are not a real Codex installation acceptance test.

@@ -157,30 +157,57 @@ fn list_agents_with_status() -> Result<Vec<AgentInfo>, String> {
 #[tauri::command]
 pub async fn preview_agent_install(
     id: String,
-) -> Result<aisync_core::deploy::InstallPreview, String> {
-    let agent = find_agent(&id).map_err(|e| e.to_string())?;
-    tauri::async_runtime::spawn_blocking(move || aisync_core::deploy::preview_install(&agent))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+) -> Result<super::install_session::DesktopPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut slot = super::install_session::SESSION
+            .try_lock()
+            .map_err(|_| super::install_session::UNAVAILABLE.to_string())?;
+        *slot = None;
+        let agent = find_agent(&id).map_err(|e| e.to_string())?;
+        let preview = aisync_core::deploy::preview_install(&agent).map_err(|e| e.to_string())?;
+        Ok(super::install_session::remember(&mut slot, preview))
+    })
+    .await
+    .map_err(|_| super::install_session::UNAVAILABLE.to_string())?
 }
 
-/// Install software only. This must not initialize profiles, vaults or backups.
+/// The reference binds inspection only, never expands installation authority.
 #[tauri::command]
 pub async fn install_agent(
     id: String,
     revision: String,
+    session_ref: Option<String>,
 ) -> Result<aisync_core::deploy::InstallOutcome, String> {
-    let agent = find_agent(&id).map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        aisync_core::deploy::install_agent_from_preview(&agent, &revision)?;
-        Ok::<_, aisync_core::Error>(aisync_core::deploy::InstallOutcome {
+        let mut slot = super::install_session::SESSION
+            .try_lock()
+            .map_err(|_| super::install_session::UNAVAILABLE.to_string())?;
+        super::install_session::submitted(&mut slot, &id, &revision, session_ref.as_deref());
+        let result = find_agent(&id)
+            .and_then(|agent| aisync_core::deploy::install_agent_from_preview(&agent, &revision));
+        super::install_session::finished(&mut slot, result.is_ok());
+        result.map_err(|e| e.to_string())?;
+        Ok(aisync_core::deploy::InstallOutcome {
             warnings: Vec::new(),
         })
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())
+    .map_err(|_| super::install_session::UNAVAILABLE.to_string())?
+}
+
+/// Explicit metadata inspection; accepts no frontend path. Lock excludes preview/install.
+#[tauri::command]
+pub async fn inspect_codex_install_residual(
+    session_ref: String,
+) -> Result<aisync_core::deploy::residual::ResidualObservation, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let slot = super::install_session::SESSION
+            .try_lock()
+            .map_err(|_| super::install_session::UNAVAILABLE.to_string())?;
+        super::install_session::inspect(&slot, &session_ref)
+    })
+    .await
+    .map_err(|_| super::install_session::UNAVAILABLE.to_string())?
 }
 
 /// Read-only planning: no profile initialization, installation probe, or backup.

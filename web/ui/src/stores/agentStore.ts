@@ -10,6 +10,7 @@ import * as bridge from '../bridge';
 export type InstallTargetSnapshot = Pick<bridge.AgentInstallPreview,
   'agentId' | 'package' | 'executable' | 'prefix' | 'globalRoot' | 'packageRoot' | 'launcherDirectory' | 'managerPath' | 'nodePath'>;
 export interface InstallSession {
+  sessionRef?: string;
   state: 'submitted' | 'unconfirmed' | 'completed';
   target: InstallTargetSnapshot | null;
 }
@@ -98,11 +99,12 @@ export const useAgentStore = create<AgentState>((set, get) => {
       const plan = reviews.get(id);
       const target = plan?.agentId === id && plan.revision === revision ? targetSnapshot(plan) : null;
       reviews.delete(id);
-      set(state => ({ installSessions: { ...state.installSessions, [id]: { state: 'submitted', target } } }));
+      set(state => ({ installSessions: { ...state.installSessions, [id]: { state: 'submitted', target, ...(target && plan?.sessionRef ? { sessionRef: plan.sessionRef } : {}) } } }));
     }
     set({ loading: true, dataStale: true, error: null, notice: null, refreshError: null });
     try {
-      const outcome = await (operation === 'install' ? bridge.installAgent(id, revision!) : bridge.configureAgent(id));
+      const inspectionRef = get().installSessions[id]?.sessionRef;
+      const outcome = await (operation === 'install' ? (inspectionRef ? bridge.installAgent(id, revision!, inspectionRef) : bridge.installAgent(id, revision!)) : bridge.configureAgent(id));
       if (operation === 'install') set(state => ({ installSessions: {
         ...state.installSessions, [id]: { ...state.installSessions[id], state: 'completed' },
       } }));
