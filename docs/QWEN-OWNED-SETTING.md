@@ -4,7 +4,7 @@
 
 Experimental **CLI and desktop** operation for one non-credential boolean:
 `general.vimMode`. Requires explicit existing local `settings.json` and
-`package.json` declaring `@qwen-code/qwen-code` **0.27.0**, settings `$version: 4`.
+`package.json` declaring `@qwen-code/qwen-code` **0.27.0 or 0.27.2**, settings `$version: 4`.
 This declaration is not proof of a genuine installation or the selected scope.
 No discovery, execution, login, environment interpolation or migration occurs.
 The desktop summary inspector stays read-only. A separate Vim preference editor
@@ -89,7 +89,7 @@ authentication, effective settings and GUI acceptance remain outstanding.
 ## 中文
 
 这是 CLI 与桌面开放的实验性单字段管理：`general.vimMode`，不是模型、认证或
-完整配置管理。必须明确选择已有普通文件，清单声明精确版本 0.27.0、配置
+完整配置管理。必须明确选择已有普通文件，清单声明精确版本 0.27.0 或 0.27.2、配置
 `$version: 4`；声明不代表安装真实或作用域已确认。桌面摘要检查仍为只读；独立 Vim 设置区需要先预览、明确确认后应用，
 撤销也需单独确认。更改路径/值会取消旧预览，写入期间锁定输入，不自动重试。
 
@@ -173,3 +173,68 @@ and the pinned readConfigFile helper. It does not execute the full Qwen runtime
 or establish effective layered settings.
 验证使用自建配置、产品核心/CLI/原生 IPC 及固定读取函数，不等于执行完整
 Qwen 运行时或验证多层设置的最终生效值。
+
+
+## Reviewed release compatibility / 已审核发布版兼容
+
+Only **0.27.0 and 0.27.2** are accepted, not a semver range. The existing
+single-field strict-JSON operation, ownership receipt, digest-bound preview,
+update and restore contract is unchanged. No arbitrary keys, credentials, model
+configuration, migration or broader settings rewrite is added.
+
+`tests/fixtures/qwen-reviewed-releases/evidence.json` pins the official npm
+archives by complete SHA-512 and exact byte length, and the selected manifest,
+schema and loader chunks by SHA-256 and length. CI downloads only the fixed
+URLs and checks these bytes without extraction or execution. The published
+chunks retain boolean `general.vimMode`, default false, requiresRestart false,
+`$version: 4`, and the JSON.parse / strip-json-comments / BOM loading expression.
+These are **static contract checks, not execution of the full loader**.
+
+Registry gitHeads are `03b0c2435be1890a21b117860eaf389076787275` (0.27.0) and
+`f42fe0f3251172c1174d00382ece522eafb3c6c2` (0.27.2). The original fixture attribution
+at `6c3d5355` is an earlier inspected source reference, **not** the published
+0.27.0 gitHead. The unmodified reader file is byte-identical at all three commits;
+its SHA-256 is `64c62594e00b4f5c5acfddfdf8c92ff9f6e057c32c36f3e3a8f30742fbbb279c`.
+CI verifies both release-commit reader sources against that fixture. The offline
+owned-setting test runs both explicit manifest versions through apply, repeated
+updates, fresh-process reads, original-value restoration and drift refusal using
+this reader. It does not execute the complete loader, resolve effective layers,
+authenticate or run an agent. Integrity matching is not signature/attestation
+verification or a proof of a reproducible source-to-package build.
+
+Changing the selected manifest, **even between the two reviewed releases**, still
+invalidates preview tokens and existing receipt bindings. Restore before upgrading
+the selected runtime; do not edit receipts or replace their recorded digests.
+If already upgraded, the tool refuses rather than adopts the old receipt. This
+increment adds no automatic recovery or cross-version ownership migration.
+
+仅接受 **0.27.0 与 0.27.2**，不自动接受相邻、预发布或 build 版本。原有单字段
+strict JSON 写入、预览令牌、原值记录、更新与恢复边界不变，不新增任意键、模型、
+凭据或整个配置的替换入口。CI 校验官方发布包完整 SHA-512、精确长度及清单/schema/
+loader 成员 hash，并校验两个发布 gitHead 的官方 reader 原文。上述证据是静态兼容
+依据，不等于完整 loader、有效配置、Agent 或登录验收，也未验证签名或源码可复现构建。
+
+历史 reader fixture 的 `6c3d5355` 不应被称为 0.27.0 发布提交；实际发布提交及
+三个提交间 reader 逐字一致性见上。双版本离线链路使用同一未经修改的官方 reader。
+即使从 0.27.0 升级到已审核的 0.27.2，manifest 内容变化仍使旧预览与 receipt
+失效。应在升级前撤销受管值；升级后不得修改 receipt 来绕过冲突，本批不自动接管或迁移。
+
+Reproduce static evidence checks (no Qwen execution):
+
+```sh
+python -B scripts/test_qwen_release_evidence.py
+python -B scripts/verify_qwen_release_evidence.py --download --report /tmp/qwen-evidence.json
+# Existing local archives: qwen-code-0.27.0-review.tgz and qwen-code-0.27.2-review.tgz
+python -B scripts/verify_qwen_release_evidence.py --archive-directory /path/to/archives
+node scripts/test-qwen-owned-setting.mjs target/debug/aisync
+```
+
+The archive-directory mode does not contact upstream reader sources and reports
+`officialReaderSourceVerified: false`; CI's download mode verifies those sources.
+`test_qwen_release_evidence.py` is an offline harness test, not a fresh archive
+verification. The Node command runs the AgentDeck CLI and the small official
+reader against synthetic files, not the Qwen agent.
+
+离线 archive-directory 模式不会联网复核 reader 源码，会明确报告对应标记为 false；
+CI download 模式才复核发布提交的官方原文。离线 harness 单测不冒充当次官方包验收。
+Node 测试运行 AgentDeck CLI 与小型官方 reader 处理合成文件，不运行 Qwen Agent。

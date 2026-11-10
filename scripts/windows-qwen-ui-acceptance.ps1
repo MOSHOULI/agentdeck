@@ -107,6 +107,75 @@ function Check-QwenRecoveryObservation([string]$fixture, [string]$label, [string
     Save-QwenEvidence $stage
     Record $stage @{ readOnly = $true; noAuthorization = $true }
 }
+function Get-QwenFixtureSnapshot([string]$fixture) {
+    $items = @(Get-ChildItem -LiteralPath $fixture -Force | Sort-Object Name)
+    return ConvertTo-Json -Depth 4 -Compress -InputObject @($items | ForEach-Object {
+        $_.Refresh()
+        if ($_.PSIsContainer -or ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Unexpected Qwen fixture entry' }
+        @{ name = $_.Name; hash = (Get-FileHash -LiteralPath $_.FullName).Hash; length = $_.Length;
+            modified = $_.LastWriteTimeUtc.Ticks; attributes = [int]$_.Attributes; acl = (Get-Acl -LiteralPath $_.FullName).Sddl }
+    })
+}
+function Check-QwenManifestBoundary([string]$fixture, [string]$manifest) {
+    $legacy = [IO.File]::ReadAllBytes($manifest)
+    [IO.File]::WriteAllText($manifest, '{"name":"@qwen-code/qwen-code","version":"0.27.2"}')
+    $before = Get-QwenFixtureSnapshot $fixture
+    foreach ($action in @('recovery','update','restore')) {
+        if ($action -eq 'recovery') {
+            Click-Qwen '只读检查 Vim 恢复状态'
+            Wait-QwenText '恢复诊断未完成。请检查所选文件与所有权记录；未获得有效观察结果。'
+        } elseif ($action -eq 'update') {
+            Click-Qwen '预览更新受管 Vim 值'
+            Wait-QwenText '无法生成兼容预览。请检查所选文件、版本与受管记录。'
+        } else {
+            Click-Qwen '撤销受管 Vim 设置'
+            Click-Qwen '确认撤销 Vim 设置'
+            Wait-QwenText '未能确认操作完成。请检查文件与所有权记录；不要假定配置未改变或重复提交。重新预览或处理冲突后再试。'
+        }
+        Assert-QwenNoConfirmation
+        if ((Get-QwenFixtureSnapshot $fixture) -cne $before) { throw 'Manifest mismatch changed Qwen fixture or receipt' }
+    }
+    Save-QwenEvidence 'qwen-cross-version-receipt-rejected'
+    Record 'qwen-cross-version-receipt-rejected' @{ fromVersion = '0.27.0'; toVersion = '0.27.2'; operations = @('recovery','update','restore'); unchanged = $true; qwenExecuted = $false }
+    # Revert only our authored manifest bytes to resume legacy compatibility checks.
+    [IO.File]::WriteAllBytes($manifest, $legacy)
+}
+function Check-QwenCurrentLifecycle {
+    $fixture = Join-Path $homeDir 'Qwen current synthetic'
+    New-Item -ItemType Directory -Path $fixture | Out-Null
+    $settings = Join-Path $fixture 'settings.json'; $manifest = Join-Path $fixture 'package.json'
+    $receipt = Join-Path $fixture '.agentdeck-qwen-vim.json'
+    [IO.File]::WriteAllText($settings, '{"$version":4,"general":{"vimMode":false,"other":"preserve-me"},"security":{"token":"SYNTHETIC-NOT-A-CREDENTIAL"}}')
+    [IO.File]::WriteAllText($manifest, '{"name":"@qwen-code/qwen-code","version":"0.27.2"}')
+    $manifestHash = (Get-FileHash -LiteralPath $manifest).Hash
+    Check-Gui 'qwen-current-start' -KeepOpen
+    Open-QwenFixture $settings $manifest
+    Enable-QwenVim
+    Click-Qwen '预览 Vim 变更'; Click-Qwen '确认应用 Vim 变更'
+    Wait-QwenText '所选文件的 Vim 模式字段已应用。尚未验证 Qwen 实际运行效果。'
+    Assert-QwenDocument $settings $true
+    $first = [IO.File]::ReadAllText($receipt) | ConvertFrom-Json
+    if ($first.before -ne $false -or $first.after -ne $true -or $first.manifest_digest -cne $manifestHash.ToLowerInvariant()) { throw 'Current Qwen receipt did not bind original and manifest' }
+    # Update both directions so final restore proves the first original is retained.
+    foreach ($enabled in @($false, $true)) {
+        $control = Wait-QwenControl '启用 Vim 模式' ([Windows.Automation.ControlType]::CheckBox)
+        ([Windows.Automation.TogglePattern]$control.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)).Toggle()
+        Click-Qwen '预览更新受管 Vim 值'; Click-Qwen '确认更新受管 Vim 值'
+        Wait-QwenText '受管 Vim 值已更新；首次原值仍保留供撤销。尚未验证 Qwen 实际运行效果。'
+        Assert-QwenDocument $settings $enabled
+        $updated = [IO.File]::ReadAllText($receipt) | ConvertFrom-Json
+        if ($updated.format -ne 2 -or $updated.before -ne $false -or $updated.after -ne $enabled -or $updated.before_digest -cne $first.before_digest -or $updated.manifest_digest -cne $first.manifest_digest) { throw 'Current Qwen update lost original receipt binding' }
+        if ([IO.File]::ReadAllText($receipt).Contains('SYNTHETIC-NOT-A-CREDENTIAL')) { throw 'Current Qwen receipt leaked configuration' }
+    }
+    Click-Qwen '撤销受管 Vim 设置'; Click-Qwen '确认撤销 Vim 设置'
+    Wait-QwenText '受管字段已撤销。尚未验证 Qwen 实际运行效果。'
+    Assert-QwenDocument $settings $false; Assert-QwenHash $manifest $manifestHash
+    if (Test-Path -LiteralPath $receipt) { throw 'Current Qwen restore retained receipt' }
+    Assert-QwenNoConfirmation
+    Save-QwenEvidence 'qwen-current-lifecycle'
+    Record 'qwen-current-lifecycle' @{ version = '0.27.2'; stages = @('apply','update_false','update_true','restore'); unrelatedFieldsPreserved = $true; firstOriginalPreserved = $true; qwenExecuted = $false }
+    Stop-App
+}
 function Check-QwenLifecycle {
     $fixture = Join-Path $homeDir 'Qwen 合成 配置'
     New-Item -ItemType Directory -Path $fixture | Out-Null
@@ -179,6 +248,7 @@ function Check-QwenLifecycle {
     Save-QwenEvidence 'qwen-ui-apply'
     Record 'qwen-ui-apply' @{ fieldEnabled = $true; unrelatedFieldsPreserved = $true; receiptCreated = $true }
 
+    Check-QwenManifestBoundary $fixture $manifest
     Check-QwenRecoveryObservation $fixture '观察到可撤销的受管字段；尚未执行撤销。' 'qwen-recovery-restore-field'
 
     # Close/relaunch the actual installed app: recovery must not depend on UI memory.

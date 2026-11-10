@@ -1,7 +1,7 @@
 //! Explicit, read-only Qwen settings summary. No discovery, execution or writes.
 //!
 //! Reviewed contract: QwenLM/qwen-code at
-//! `6c3d5355de2be05b8d1ab61f4699f52c02c42068`, package version 0.27.0,
+//! explicit package versions 0.27.0 and 0.27.2 (see QWEN-OWNED-SETTING.md),
 //! settings schema `$version: 4`. A selected manifest is only a declaration,
 //! never proof that the settings belong to that executable or its effective scope.
 //!
@@ -9,6 +9,10 @@
 //! These narrow but do not eliminate same-privilege ancestor replacement races;
 //! filesystem reads can block on mounts or update atime. This is not a sandbox.
 pub mod owned;
+/// Exact reviewed releases only; semver proximity is not compatibility evidence.
+pub(crate) fn reviewed_version(version: Option<&str>) -> bool {
+    matches!(version, Some("0.27.0" | "0.27.2"))
+}
 use crate::inspection::{parse, reader};
 mod settings_json;
 mod types;
@@ -57,7 +61,7 @@ fn inspect_with(
         limits: LIMITS,
         limitations: vec![
             "Only explicit settings.json and package.json files are read. No code, environment, credential files, other settings layers or registry are loaded; nothing is executed or written.",
-            "Only the declared @qwen-code/qwen-code 0.27.0 and schema $version 4 are reviewed. A declaration does not verify installation, authenticity or association with these settings.",
+            "Only the declared @qwen-code/qwen-code 0.27.0 / 0.27.2 and schema $version 4 are reviewed. A declaration does not verify installation, authenticity or association with these settings.",
             "Only known section presence is summarized. No configuration values, dynamic keys or raw errors are returned. Presence is not validity, ownership, authentication or effective configuration.",
             "Read-only settings accept one leading UTF-8 BOM and line/block comments. Trailing commas and duplicate keys remain unsupported. Manifests and owned Vim edits still require strict JSON. No migration or repair is attempted.",
             "No backup, restoration or editing capability is enabled. Other configuration layers, CLI arguments and environment overrides are not resolved.",
@@ -90,7 +94,7 @@ fn inspect_with(
         .and_then(|value| {
             let object = value.as_object().ok_or(InspectionIssue::UnsupportedShape)?;
             if object.get("name").and_then(|v| v.as_str()) != Some("@qwen-code/qwen-code")
-                || object.get("version").and_then(|v| v.as_str()) != Some("0.27.0")
+                || !reviewed_version(object.get("version").and_then(|v| v.as_str()))
             {
                 return Err(InspectionIssue::UnrecognizedManifest);
             }

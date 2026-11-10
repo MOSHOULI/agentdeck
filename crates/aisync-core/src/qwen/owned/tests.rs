@@ -1121,3 +1121,107 @@ fn malformed_update_intents_fail_closed() {
         ));
     }
 }
+
+#[test]
+fn reviewed_releases_complete_lifecycle_without_cross_version_receipt_adoption() {
+    for version in ["0.27.0", "0.27.2"] {
+        for original in [
+            r#"{"$version":4,"unrelated":{"keep":"value"}}"#,
+            r#"{"$version":4,"general":{"vimMode":false,"language":"en"}}"#,
+        ] {
+            let f = Fixture::new(original);
+            let manifest = format!(r#"{{"name":"@qwen-code/qwen-code","version":"{version}"}}"#);
+            fs::write(&f.manifest, &manifest).unwrap();
+            let before = f.value();
+            f.apply(true).unwrap();
+            for enabled in [false, true] {
+                let plan = update_preview(&f.settings, &f.manifest, enabled).unwrap();
+                update(&f.settings, &f.manifest, enabled, &plan.token).unwrap();
+            }
+            let old_update = update_preview(&f.settings, &f.manifest, false).unwrap();
+            let settings_bytes = fs::read(&f.settings).unwrap();
+            let receipt_path = f.dir.join(RECEIPT);
+            let receipt_bytes = fs::read(&receipt_path).unwrap();
+            let other = if version == "0.27.0" {
+                "0.27.2"
+            } else {
+                "0.27.0"
+            };
+            fs::write(&f.manifest, manifest.replace(version, other)).unwrap();
+            assert!(recovery_preview(&f.settings, &f.manifest).is_err());
+            assert!(update_preview(&f.settings, &f.manifest, false).is_err());
+            assert!(update(&f.settings, &f.manifest, false, &old_update.token).is_err());
+            assert!(restore(&f.settings, &f.manifest).is_err());
+            assert_eq!(fs::read(&f.settings).unwrap(), settings_bytes);
+            assert_eq!(fs::read(&receipt_path).unwrap(), receipt_bytes);
+            fs::write(&f.manifest, &manifest).unwrap();
+            restore(&f.settings, &f.manifest).unwrap();
+            assert_eq!(f.value(), before);
+            assert!(!receipt_path.exists());
+        }
+    }
+}
+
+#[test]
+fn unknown_releases_and_preview_manifest_changes_are_never_implicitly_compatible() {
+    for version in ["0.27.1", "0.27.3", "0.27.2-beta", "0.27.2+build", " 0.27.2"] {
+        let f = Fixture::new(r#"{"$version":4}"#);
+        fs::write(
+            &f.manifest,
+            format!(r#"{{"name":"@qwen-code/qwen-code","version":"{version}"}}"#),
+        )
+        .unwrap();
+        assert!(f.apply(true).is_err());
+        assert!(!f.dir.join(RECEIPT).exists());
+        assert!(!f.dir.join(LOCK).exists());
+    }
+    let f = Fixture::new(r#"{"$version":4}"#);
+    let plan = preview(&f.settings, &f.manifest, true).unwrap();
+    fs::write(
+        &f.manifest,
+        r#"{"name":"@qwen-code/qwen-code","version":"0.27.2"}"#,
+    )
+    .unwrap();
+    assert!(apply(&f.settings, &f.manifest, true, &plan.token).is_err());
+    assert!(!f.dir.join(RECEIPT).exists());
+}
+
+#[test]
+fn manifest_upgrade_refuses_every_receipt_phase_without_writes() {
+    for phase in [
+        Phase::Prepared,
+        Phase::Applied,
+        Phase::Updating,
+        Phase::Restoring,
+    ] {
+        let f = Fixture::new(r#"{"$version":4,"general":{"vimMode":false}}"#);
+        f.apply(true).unwrap();
+        let path = f.dir.join(RECEIPT);
+        let mut receipt = parse_receipt(&fs::read(&path).unwrap()).unwrap();
+        receipt.format = 2;
+        if phase == Phase::Updating {
+            receipt.updating = Some(UpdateIntent {
+                previous: false,
+                previous_digest: receipt.before_digest.clone(),
+            });
+        }
+        if phase == Phase::Restoring {
+            receipt.restore_digest = Some(receipt.before_digest.clone());
+        }
+        receipt.phase = phase;
+        fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+        let bytes = fs::read(&f.settings).unwrap();
+        let owned = fs::read(&path).unwrap();
+        fs::write(
+            &f.manifest,
+            r#"{"name":"@qwen-code/qwen-code","version":"0.27.2"}"#,
+        )
+        .unwrap();
+        assert!(recovery_preview(&f.settings, &f.manifest).is_err());
+        assert!(update_preview(&f.settings, &f.manifest, false).is_err());
+        assert!(update(&f.settings, &f.manifest, false, &"0".repeat(64)).is_err());
+        assert!(restore(&f.settings, &f.manifest).is_err());
+        assert_eq!(fs::read(&f.settings).unwrap(), bytes);
+        assert_eq!(fs::read(&path).unwrap(), owned);
+    }
+}

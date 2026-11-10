@@ -21,7 +21,8 @@ const run = (action, extra = [], success = true) => {
   assert.notEqual(result.status, 0);return result;
 };
 try {
-  writeFileSync(manifest, JSON.stringify({name:'@qwen-code/qwen-code',version:'0.27.0'}));
+ for (const version of ['0.27.0', '0.27.2']) {
+  writeFileSync(manifest, JSON.stringify({name:'@qwen-code/qwen-code',version}));
   const original = {$version:4,general:{language:'en'},security:{example:'SYNTHETIC-ONLY'}};
   // Preserve JavaScript numeric semantics across the entire rewritten document.
   // Default serde_json float parsing (without float_roundtrip) changed these.
@@ -74,5 +75,8 @@ try {
   restored.general.vimMode=false;writeFileSync(settings,JSON.stringify(restored));
   run('vim-restore',['--yes'],false);
   assert.equal(JSON.parse(readConfigFile(settings)).general.vimMode,false);
-  console.log('Pinned Qwen readConfigFile / strict JSON, apply, repeated managed updates, new-process read, original field restore and drift checks passed. No real Agent/authentication/effective layers tested.');
+  // Clean this intentionally conflicting synthetic receipt only between fixtures.
+  rmSync(join(directory,'.agentdeck-qwen-vim.json'));
+ }
+  console.log('Pinned Qwen 0.27.0 / 0.27.2 readConfigFile / strict JSON, apply, repeated managed updates, new-process read, original field restore and drift checks passed. No real Agent/authentication/effective layers tested.');
 } finally {rmSync(directory,{recursive:true,force:true});}

@@ -75,7 +75,7 @@ export function QwenVimSetting({ settings, manifest, inspecting, onActivity }: P
   };
   return <section className="panel" aria-label="Qwen Vim 模式管理">
     <h2>Vim 模式：单字段管理</h2>
-    <p>仅支持 Qwen 0.27.0 / schema 4 的 general.vimMode。请先停止 Qwen 和其他配置编辑器。此操作不是跨进程事务。</p>
+    <p>仅支持 Qwen 0.27.0、0.27.2 / schema 4 的 general.vimMode。请先停止 Qwen 和其他配置编辑器。此操作不是跨进程事务。</p>
     <p className="muted">只修改所选文件中的布尔值；JSON 排版可能改变，其他字段按语义保留。其他配置层可能覆盖此值。旁置所有权记录仅保存原布尔值或缺省状态，不备份完整配置；外部修改受管字段时会拒绝撤销。</p>
     {mode !== 'native' && <p>此功能仅在桌面后端开放；演示模式不会预览或写入文件。</p>}
     <label><input type="checkbox" checked={enabled} disabled={blocked} onChange={event => { invalidate(); setEnabled(event.target.checked); }} />启用 Vim 模式</label>

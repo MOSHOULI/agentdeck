@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "releases": {
+    "0.27.0": {
+      "registry": "https://registry.npmjs.org/@qwen-code%2fqwen-code/0.27.0",
+      "gitHead": "03b0c2435be1890a21b117860eaf389076787275",
+      "tarball": "https://registry.npmjs.org/@qwen-code/qwen-code/-/qwen-code-0.27.0.tgz",
+      "archiveBytes": 43203395,
+      "sha512": "efZt0LUm/raGUjR/SNN6pp8cpuNHnmE0hQvcvXzWHtVX9oVtDDgukq2IZNwYDErFYqHRj1xq2NQ5Jjt2SHUr/Q==",
+      "members": {
+        "loader": {
+          "path": "package/chunks/chunk-E6R76DS6.js",
+          "bytes": 64727,
+          "sha256": "7ab0fb2a1f795fd8e3e0bcbaee266e05d6c54e983c4ba4b88ef88e0fade93081"
+        },
+        "schema": {
+          "path": "package/chunks/chunk-PJZT7LRF.js",
+          "bytes": 168866,
+          "sha256": "fd6d97e314ca2f9b4ebfff422f49ed53f2ae42f165c795182e81148d503648ae"
+        },
+        "manifest": {
+          "path": "package/package.json",
+          "bytes": 2151,
+          "sha256": "5ea040b5b64919db25165e5a24385cb47c32f4b4a4f9616aba43f6dc546f8d6a"
+        }
+      },
+      "readerSource": "https://github.com/QwenLM/qwen-code/blob/03b0c2435be1890a21b117860eaf389076787275/packages/cli/src/config/read-config-file.ts",
+      "readerSha256": "64c62594e00b4f5c5acfddfdf8c92ff9f6e057c32c36f3e3a8f30742fbbb279c"
+    },
+    "0.27.2": {
+      "registry": "https://registry.npmjs.org/@qwen-code%2fqwen-code/0.27.2",
+      "gitHead": "f42fe0f3251172c1174d00382ece522eafb3c6c2",
+      "tarball": "https://registry.npmjs.org/@qwen-code/qwen-code/-/qwen-code-0.27.2.tgz",
+      "archiveBytes": 43755463,
+      "sha512": "0X3lJvQI262mGK3P5iEQiGxu2Zg44aaV3du6Pe/JcWuhwlNeM9/cZF8bIpBhOgaymeSe8az15m//h5MHXHEkew==",
+      "members": {
+        "loader": {
+          "path": "package/chunks/chunk-AEX3XSTE.js",
+          "bytes": 65626,
+          "sha256": "ebc020f511a468162dec8fd036a3be7124c3a54377526445105ec8fd7250a37d"
+        },
+        "schema": {
+          "path": "package/chunks/chunk-QD4KNY2J.js",
+          "bytes": 170117,
+          "sha256": "9fdaa59899683d476ea4551fed2037e3319638fec45f28d2022177aff78cc5ea"
+        },
+        "manifest": {
+          "path": "package/package.json",
+          "bytes": 2151,
+          "sha256": "f7d94b9a470441e8447a21fa427f44e3d86f296aec782f999b7d26b54b4d359a"
+        }
+      },
+      "readerSource": "https://github.com/QwenLM/qwen-code/blob/f42fe0f3251172c1174d00382ece522eafb3c6c2/packages/cli/src/config/read-config-file.ts",
+      "readerSha256": "64c62594e00b4f5c5acfddfdf8c92ff9f6e057c32c36f3e3a8f30742fbbb279c"
+    }
+  }
+}

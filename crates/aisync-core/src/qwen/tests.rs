@@ -455,3 +455,29 @@ fn commented_settings_summary_is_redacted_but_manifest_remains_strict() {
         assert!(report.settings.sections.is_none());
     }
 }
+
+#[test]
+fn current_reviewed_release_summary_and_unknown_release_gate() {
+    for version in [
+        "0.27.0",
+        "0.27.2",
+        "0.27.1",
+        "0.27.3",
+        "0.27.2-beta",
+        "0.27.2+build",
+    ] {
+        let manifest = format!(r#"{{"name":"@qwen-code/qwen-code","version":"{version}"}}"#);
+        let (r, m, s) = fixture(manifest.as_bytes(), SETTINGS);
+        let report = inspect_with(&r, &s, Some(&m));
+        if reviewed_version(Some(version)) {
+            assert_eq!(report.settings.status, ObservationStatus::Read);
+            assert_eq!(*r.reads.borrow(), vec![m, s]);
+        } else {
+            assert_eq!(
+                report.version_recognition,
+                VersionRecognition::UnrecognizedManifestVersion
+            );
+            assert_eq!(*r.reads.borrow(), vec![m]);
+        }
+    }
+}

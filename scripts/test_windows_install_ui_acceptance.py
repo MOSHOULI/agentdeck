@@ -152,6 +152,25 @@ class Tests(unittest.TestCase):
         self.assertLess(flow.index("Activate-InstallWorkspace 'Qwen 配置检查'"), flow.index("Activate-InstallWorkspace 'Agent 管理'"))
         self.assertLess(flow.index("Activate-InstallWorkspace 'Agent 管理'"), flow.index("Save-QwenEvidence 'failed-reviewed-install-session-navigation'"))
 
+    def test_qwen_current_gui_and_legacy_manifest_boundary_are_wired(self):
+        qwen = (ROOT / 'scripts/windows-qwen-ui-acceptance.ps1').read_text(encoding='utf-8')
+        current = qwen[qwen.index('function Check-QwenCurrentLifecycle'):qwen.index('function Check-QwenLifecycle')]
+        legacy = qwen[qwen.index('function Check-QwenLifecycle'):]
+        boundary = qwen[qwen.index('function Check-QwenManifestBoundary'):qwen.index('function Check-QwenCurrentLifecycle')]
+        self.assertIn('"version":"0.27.0"', legacy)
+        self.assertIn('"version":"0.27.2"', current)
+        self.assertIn('Check-QwenManifestBoundary $fixture $manifest', legacy)
+        for action in ('recovery', 'update', 'restore'):
+            self.assertIn("'" + action + "'", boundary)
+        self.assertIn('(Get-QwenFixtureSnapshot $fixture) -cne $before', boundary)
+        self.assertIn('[IO.File]::WriteAllBytes($manifest, $legacy)', boundary)
+        for action in ('确认应用 Vim 变更', '确认更新受管 Vim 值', '确认撤销 Vim 设置'):
+            self.assertIn("Click-Qwen '" + action + "'", current)
+        self.assertIn('$updated.before_digest -cne $first.before_digest', current)
+        self.assertIn('qwenExecuted = $false', current)
+        self.assertIn('Check-QwenCurrentLifecycle', LIFECYCLE)
+        self.assertLess(LIFECYCLE.index('    Check-QwenLifecycle'), LIFECYCLE.index('    Check-QwenCurrentLifecycle'))
+
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
         self.assertLess(LIFECYCLE.index('    Check-ReviewedInstall'), LIFECYCLE.index('    Check-CodexReadonly'))

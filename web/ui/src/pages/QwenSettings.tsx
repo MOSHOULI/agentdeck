@@ -58,7 +58,7 @@ export function QwenSettings() {
   };
   return <div className="dsh-workspace">
     <header className="workspace-heading"><div><p className="eyebrow">QWEN SETTINGS INSPECTION</p><h1>Qwen 配置检查</h1><p className="muted">显式选择两个文件，仅查看配置区段是否存在。</p></div><span className="status-badge">受限管理</span></header>
-    <div className="notice">仅审阅 Qwen 0.27.0 / schema 4。声明版本不是安装真实性证明；不执行 Qwen、不读取独立认证文件、只读检查不初始化备份或改写配置；下方单字段管理需另行确认。</div>
+    <div className="notice">仅审阅 Qwen 0.27.0、0.27.2 / schema 4。声明版本不是安装真实性证明；不执行 Qwen、不读取独立认证文件、只读检查不初始化备份或改写配置；下方单字段管理需另行确认。</div>
     {mode === 'demo' && <p role="status">合成示例模式，不读取本机文件。</p>}
     {mode === 'unavailable' && <p role="status">未连接桌面后端，请在 AgentDeck 桌面应用中检查。</p>}
     <form className="panel dsh-form" aria-label="Qwen 检查路径" aria-busy={busy || editingBusy || workspaceBusy} onSubmit={event => { void inspect(event); }}>
