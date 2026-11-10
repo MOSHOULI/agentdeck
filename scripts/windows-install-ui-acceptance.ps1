@@ -30,9 +30,20 @@ function Assert-InstallNoConfiguration {
     Assert-Sentinel
 }
 function Invoke-InstallFixture([string[]]$arguments) {
-    $output = & $script:acceptancePython (Join-Path $PSScriptRoot 'windows_install_fixture.py') @arguments
-    if ($LASTEXITCODE -ne 0) { throw 'Synthetic installation fixture guard failed' }
-    return $output
+    $savedConsoleEncoding = [Console]::OutputEncoding
+    $savedOutputEncoding = $OutputEncoding
+    try {
+        # Python emits UTF-8 even when the Windows locale is cp1252; PowerShell
+        # must decode its native stdout with that same explicit encoding.
+        [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+        $OutputEncoding = [Text.UTF8Encoding]::new($false)
+        $output = & $script:acceptancePython -X utf8 (Join-Path $PSScriptRoot 'windows_install_fixture.py') @arguments
+        if ($LASTEXITCODE -ne 0) { throw 'Synthetic installation fixture guard failed' }
+        return $output
+    } finally {
+        [Console]::OutputEncoding = $savedConsoleEncoding
+        $OutputEncoding = $savedOutputEncoding
+    }
 }
 function Get-InstallPlanNames {
     $condition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ProcessIdProperty, $script:running.Id)

@@ -12,6 +12,7 @@ from pathlib import Path
 import shutil
 import stat
 import struct
+import sys
 
 CANARY = 'AGENTDECK_SYNTHETIC_INSTALL_PRIVATE_CANARY'
 MARKER = b'synthetic-install-once\n'
@@ -165,7 +166,33 @@ def assert_phase(m,phase):
     elif phase!='no-config':raise Failure('unknown_assertion')
     no_configuration(m);return result
 
+FAILURE_CODES = frozenset({
+    'unsafe_fixture_file', 'requires_windows', 'invalid_fixture_arguments',
+    'trusted_node_not_pe', 'trusted_node_not_x64', 'invalid_manifest',
+    'invalid_manifest_paths', 'unsafe_fixture_path', 'configuration_created',
+    'sentinel_changed', 'invalid_event_log', 'canary_changed', 'node_changed',
+    'unconfirmed_install_write', 'unexpected_version_probe', 'install_marker_mismatch',
+    'failure_state_mismatch', 'installed_inventory_mismatch', 'installed_bytes_changed',
+    'shim_changed', 'version_not_probed', 'unknown_assertion', 'missing_prepare_arguments',
+    'missing_manifest', 'manager_already_changed',
+})
+
+def failure_diagnostic(error):
+    if isinstance(error, Failure):
+        return {'failureCode': str(error) if str(error) in FAILURE_CODES else 'fixture_failure', 'exceptionType': 'Failure'}
+    # Never include exception messages, filesystem paths, or dynamically named types.
+    types = {FileNotFoundError: 'FileNotFoundError', FileExistsError: 'FileExistsError',
+             PermissionError: 'PermissionError', OSError: 'OSError', ValueError: 'ValueError',
+             TypeError: 'TypeError', KeyError: 'KeyError', UnicodeEncodeError: 'UnicodeEncodeError',
+             UnicodeDecodeError: 'UnicodeDecodeError', json.JSONDecodeError: 'JSONDecodeError'}
+    return {'failureCode': 'unexpected_fixture_error', 'exceptionType': types.get(type(error), 'Exception')}
+
+
 def main():
+    # Pipe encoding is a protocol, not the Windows console code page. PowerShell
+    # callers must decode UTF-8 too. This also overrides PYTHONIOENCODING=cp1252.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'): stream.reconfigure(encoding='utf-8', errors='strict')
     parser=argparse.ArgumentParser(description=__doc__);group=parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--prepare',type=Path);group.add_argument('--assert',dest='phase',choices=('absent','installed','failed','no-config'));group.add_argument('--stale',action='store_true')
     parser.add_argument('--node',type=Path);parser.add_argument('--home',type=Path);parser.add_argument('--mode',choices=('success','fail'),default='success');parser.add_argument('--manifest',type=Path)
@@ -182,6 +209,6 @@ def main():
             with path.open('ab') as out:out.write(b'\n// authored stale-preview mutation\n')
             print(json.dumps({'managerChangedForStalePreview':True}));return 0
         print(json.dumps(assert_phase(m,a.phase)));return 0
-    except Exception:
-        print('Synthetic Windows install fixture check failed.');return 1
+    except Exception as error:
+        print(json.dumps(failure_diagnostic(error)), file=sys.stderr);return 1
 if __name__=='__main__':raise SystemExit(main())

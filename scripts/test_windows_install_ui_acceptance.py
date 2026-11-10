@@ -5,6 +5,15 @@ ROOT = Path(__file__).resolve().parents[1]
 UI = (ROOT / 'scripts/windows-install-ui-acceptance.ps1').read_text(encoding='utf-8')
 LIFECYCLE = (ROOT / 'scripts/windows-installer-acceptance.ps1').read_text(encoding='utf-8')
 class Tests(unittest.TestCase):
+    def test_explicit_utf8_native_transport_and_restoration(self):
+        wrapper = UI[UI.index('function Invoke-InstallFixture'):UI.index('function Get-InstallPlanNames')]
+        self.assertIn('$script:acceptancePython -X utf8', wrapper)
+        self.assertIn('[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)', wrapper)
+        self.assertIn('$OutputEncoding = [Text.UTF8Encoding]::new($false)', wrapper)
+        self.assertIn('finally {', wrapper)
+        self.assertIn('[Console]::OutputEncoding = $savedConsoleEncoding', wrapper)
+        self.assertIn('$OutputEncoding = $savedOutputEncoding', wrapper)
+
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
         self.assertLess(LIFECYCLE.index('    Check-ReviewedInstall'), LIFECYCLE.index('    Check-CodexReadonly'))

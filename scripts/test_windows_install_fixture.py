@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 import windows_install_fixture as h
@@ -85,6 +86,28 @@ class FixtureTests(unittest.TestCase):
         h.assert_phase(m,'absent')
         result=subprocess.run([m['node'],m['manager'],'prefix','--global'],capture_output=True,text=True,timeout=10)
         self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(result.stdout.strip(),m['prefix'])
+    def test_failure_diagnostic_never_exposes_messages_or_dynamic_types(self):
+        for error in (FileNotFoundError('SECRET_PATH'),h.Failure('SECRET_PATH'),ValueError('SECRET_PATH')):
+            report=h.failure_diagnostic(error);self.assertNotIn('SECRET_PATH',json.dumps(report))
+        self.assertEqual(h.failure_diagnostic(h.Failure('canary_changed'))['failureCode'],'canary_changed')
+        SecretType=type('SECRET_PATH',(Exception,),{})
+        self.assertEqual(h.failure_diagnostic(SecretType())['exceptionType'],'Exception')
+    @unittest.skipUnless(os.name=='nt','Windows Unicode CLI pipe roundtrip')
+    def test_windows_nonascii_space_cli_prepare_load_and_query(self):
+        root=Path(self.tmp.name)/'AgentDeck 验收 空格 fixture';home=Path(self.tmp.name)/'用户 配置 home';home.mkdir()
+        env=dict(os.environ,PYTHONIOENCODING='cp1252',PYTHONUTF8='0')
+        helper=Path(h.__file__).resolve()
+        result=subprocess.run([sys.executable,str(helper),'--prepare',str(root),'--node',str(Path(self.node).resolve()),'--home',str(home)],env=env,capture_output=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr.decode('utf-8'))
+        manifest=Path(result.stdout.decode('utf-8').strip());self.assertEqual(manifest,root/'fixture.json')
+        m=h.load(manifest)
+        check=subprocess.run([sys.executable,str(helper),'--assert','absent','--manifest',str(manifest)],env=env,capture_output=True,timeout=30)
+        self.assertEqual(check.returncode,0,check.stderr.decode('utf-8'));self.assertEqual(json.loads(check.stdout)['versionProbes'],0)
+        # Authored manager query via trusted Node, not npm or an official agent.
+        import codex_official_install_windows as official
+        clean={'SystemRoot':official.windows_directory(),'HOME':str(home),'USERPROFILE':str(home),'TEMP':str(home),'TMP':str(home)}
+        query=subprocess.run([m['node'],m['manager'],'prefix','--global'],env=clean,capture_output=True,timeout=10)
+        self.assertEqual(query.returncode,0);self.assertEqual(query.stdout.decode('utf-8').strip(),m['prefix'])
     @unittest.skipIf(os.name=='nt','Unix authored symlink negative fixture')
     def test_symlink_query_log_refused(self):
         log=Path(self.p['queries']);log.unlink();target=self.root/'outside';target.write_bytes(b'canary');log.symlink_to(target)
