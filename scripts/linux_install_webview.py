@@ -149,6 +149,17 @@ def assert_installed(fixture):
         raise InstallFailure('package_changed')
 
 
+def configuration_facts(home):
+    """Bounded names from the freshly created synthetic HOME, never contents."""
+    product = home / '.agentdeck'
+    return {
+        'product_entries': sorted(p.name for p in product.iterdir())[:32] if product.is_dir() else [],
+        'matching_paths': sorted(str(p.relative_to(home)) for p in home.rglob('*')
+                                 if p.name.lower() in {'.aisync', '.codex', 'profiles', 'profile', 'vault', 'vault.json', 'backups', 'backup'}
+                                 or p.name.lower().startswith(('vault.', 'profile.')))[:32],
+    }
+
+
 def assert_no_configuration(home):
     # Native WebKit caches are permitted, product/configuration mutations are not.
     forbidden = {'.aisync', '.codex', 'profiles', 'profile', 'vault', 'vault.json', 'backups', 'backup'}
@@ -307,5 +318,6 @@ def exercise(driver, fixture, home, records, phase, trace=None, observe=None):
     if any(value not in text for value in ('npm 全局目录匹配，安装历史未知', '实测版本 1.2.3', '@openai/codex', str(fixture['package']), str(fixture['manager_bin'] / 'npm'))):
         raise InstallFailure('source_mismatch')
     done('observed_source')
+    phase('install_no_configuration')
     assert_no_configuration(home); done('no_configuration')
     assert_coverage(records)

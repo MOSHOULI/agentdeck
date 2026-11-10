@@ -270,6 +270,17 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(driver.clicks.count(subject.CONFIRM), 0)
         subject.assert_absent(self.f)
 
+    def test_configuration_diagnostics_only_relative_names_and_bounded(self):
+        home = self.root / 'diagnostic-home'; home.mkdir()
+        product = home / '.agentdeck'; product.mkdir()
+        for index in range(40):
+            (product / ('profile.' + str(index))).write_text('SECRET-CONTENT')
+        facts = subject.configuration_facts(home)
+        self.assertEqual(len(facts['product_entries']), 32)
+        self.assertEqual(len(facts['matching_paths']), 32)
+        self.assertNotIn('SECRET-CONTENT', json.dumps(facts))
+        self.assertTrue(all(not Path(p).is_absolute() for p in facts['matching_paths']))
+
     def test_uncertain_confirm_never_replayed(self):
         driver = OfflineDriver(self.f, lambda: self.fail('must not install'), fault='timeout')
         with self.assertRaises(harness.Failure):

@@ -767,6 +767,10 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         diagnostic['input_stage'] = client.input_stage
         diagnostic['last_response'] = client.last_response
         diagnostic['wheel_scroll'] = client.wheel_diagnostic
+        try:
+            diagnostic['synthetic_home_configuration_facts'] = install_gui.configuration_facts(home)
+        except Exception:
+            diagnostic['synthetic_home_configuration_facts'] = {'state': 'unavailable'}
         capture_failure_dom(client, evidence)
         raise
     finally:
