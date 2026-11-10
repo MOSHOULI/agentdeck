@@ -31,6 +31,7 @@ class OfflineDriver:
         self.events.append(('wheel_top', None))
     def one(self, selector):
         if selector == subject.PREVIEW: return 'preview-element'
+        if selector == subject.DETAILS: return 'details-element'
         if selector != "//*[@id='agent-search']": raise AssertionError('unexpected input')
         return 'search-element'
     def command(self, *args):
@@ -172,9 +173,9 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(driver.clicks.count(subject.PREVIEW), 0)
         self.assertEqual(driver.clicks.count(subject.CANCEL), 1)
         self.assertNotIn("//*[@id='workspace-panel-agents']//h1", driver.clicks)
-        self.assertEqual(driver.commands, [('POST', '/element/search-element/value', {'text': '\ue004', 'value': ['\ue004']})] + [('POST', '/element/preview-element/value', {'text': '\ue007', 'value': ['\ue007']})] * 3)
+        self.assertEqual(driver.commands, [('POST', '/element/search-element/value', {'text': '\ue004', 'value': ['\ue004']})] + [('POST', '/element/preview-element/value', {'text': '\ue007', 'value': ['\ue007']})] * 3 + [('POST', '/element/details-element/value', {'text': '\ue007', 'value': ['\ue007']})])
         self.assertLess(phases.index('install_search_tab'), phases.index('install_initial_preview_click'))
-        self.assertIn(subject.DETAILS, driver.clicks)
+        self.assertNotIn(subject.DETAILS, driver.clicks)
         self.assertNotIn('Codex', subject.DETAILS)
         self.assertEqual([entry['stage'] for entry in trace], ['install_initial_preview', 'install_stale_preview', 'install_fresh_preview'])
         self.assertIn('install_initial_preview_wait_dialog', phases)
@@ -307,5 +308,31 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(driver.click.call_count, 1)
         subject.assert_absent(self.f)
 
+
+
+
+
+class DetailsActivationTests(unittest.TestCase):
+    def test_native_enter_once_no_coordinate_click_or_retry(self):
+        driver = Mock()
+        driver.elements.return_value = [1]
+        driver.enabled.return_value = True
+        driver.one.return_value = 'details'
+        driver.wait.side_effect = lambda predicate: self.assertTrue(predicate())
+        subject.open_details(driver)
+        driver.click.assert_not_called()
+        driver.command.assert_called_once_with('POST', '/element/details/value',
+            {'text': '\ue007', 'value': ['\ue007']})
+
+    def test_transport_failure_never_replayed(self):
+        driver = Mock()
+        driver.elements.return_value = [1]
+        driver.enabled.return_value = True
+        driver.one.return_value = 'details'
+        driver.wait.side_effect = lambda predicate: self.assertTrue(predicate())
+        driver.command.side_effect = harness.Failure('webdriver_command_failed')
+        with self.assertRaises(harness.Failure): subject.open_details(driver)
+        self.assertEqual(driver.command.call_count, 1)
+        driver.click.assert_not_called()
 
 if __name__ == '__main__': unittest.main()
