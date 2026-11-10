@@ -149,3 +149,45 @@ Pi 策略不变；Gemini CLI、OpenCode V1 仍遵循 npm 配置。更新前的 C
 独立官方包门禁仅验证了固定 0.167.0 Linux x64 包在不运行生命周期脚本时的 npm
 文件安装布局，不代表未来版本、其他平台、真实适配器版本后检、登录或模型运行均已验收。
 应用和 WebView 安装流程测试仍使用自建合成替身。
+
+## Windows installed-app synthetic acceptance / Windows 已安装应用合成验收
+
+The Windows installed-lifecycle lane additionally exercises the reviewed install
+adapter through the real installed WebView and native UIAutomation. A copied,
+trusted official Node executable runs **authored test npm and Codex JavaScript**.
+The fixture is not the official npm implementation or Codex package. Its npm
+substitute only accepts bounded prefix/root queries and the exact reviewed
+installation arguments, including `--ignore-scripts`; its Codex substitute only
+answers the expected version probe. Fixture generation and validation remain
+outside the application; preview, cancellation and confirmation go through the
+actual UI/IPC/adapter, never a direct backend call or fabricated Installed state.
+
+Required stages are preview/cancel with no install, mutation of the reviewed
+manager before confirmation with stale-plan rejection, a fresh preview and one
+confirmed install, observed version/source association, and unchanged agent
+configuration. Native accessibility activation is single-shot; uncertain writes
+are not retried. The authored process counters and complete stage list are
+recorded in the installed-lifecycle evidence, alongside the existing Qwen,
+Codex read-only and Qoder gates. This is not arbitrary installer-failure recovery
+coverage; the negative path in this batch is stale-plan rejection before install.
+
+This proves the tested synthetic Windows adapter path, **not** official-agent
+execution, registry compatibility, model calls, lifecycle scripts, real Codex
+configuration loading or runtime network isolation. The separate official-package
+layout gate retains its own evidence and never executes Codex. Neither result
+substitutes for the other, and this test does not publish an installer.
+
+Windows 已安装应用门禁通过真实 WebView 和原生 UIAutomation 操作安装计划。
+官方 Node 执行的是**测试编写的 npm 与 Codex JavaScript 替身**，不是官方 Agent。
+合成 npm 只接受路径查询和包含 `--ignore-scripts` 的精确安装参数，合成 Codex
+只允许预定版本探测。只有 fixture 的创建与核验由测试程序完成；预览、取消和
+确认必须经过真实界面、IPC 与适配器，不直接调用后端或伪造“已安装”。
+
+必须验证取消零安装、预览后管理器变化导致过期拒绝、重新预览后单次确认安装、
+版本及来源关联展示，以及配置未变化。每次原生激活只发送一次，不自动重试不确定写入。
+证据记录合成进程计数和完整阶段，原有 Qwen、Codex 只读及 Qoder 门禁全部保留。
+本批负向路径是安装前的过期拒绝，不声称覆盖任意安装器失败或部分安装恢复。
+
+这证明合成输入下的 Windows 适配器闭环，不代表官方 Agent 已运行、registry 或
+生命周期脚本兼容、真实 Codex 已读取配置、模型调用成功或运行网络隔离。官方包
+文件布局验收仍单独保留且不执行 Codex，两类证据不能相互替代；不自动发布安装包。

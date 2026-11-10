@@ -48,21 +48,30 @@ function Assert-QwenNoConfirmation {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw 'Stale confirmation remains'
 }
+function Assert-AcceptanceCanaryValues($name, $value) {
+    foreach ($canary in @('SYNTHETIC-NOT-A-CREDENTIAL', 'AGENTDECK_SYNTHETIC_INSTALL_PRIVATE_CANARY')) {
+        if (([string]$name).Contains($canary)) { throw 'Synthetic canary leaked in accessibility tree' }
+        if (([string]$value).Contains($canary)) { throw 'Synthetic canary leaked in accessible value' }
+    }
+}
+function Assert-AcceptanceCanariesAbsent($nodes) {
+    # UIA Name and Value can be null. Only null strings become empty; provider
+    # exceptions must still abort evidence collection, never bypass this guard.
+    foreach ($node in $nodes) {
+        Assert-AcceptanceCanaryValues ([string]$node.Current.Name) $null
+        $pattern = $null
+        if ($node.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+            Assert-AcceptanceCanaryValues $null ([string]([Windows.Automation.ValuePattern]$pattern).Current.Value)
+        }
+    }
+}
 function Save-QwenEvidence([string]$stage) {
     $processCondition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ProcessIdProperty, $script:running.Id)
     $window = [Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Children, $processCondition)
     if ($null -eq $window) { throw 'App window missing during evidence check' }
     $nodes = $window.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
     $names = @($nodes | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
-    # Check before writing evidence: never emit leaked configuration values.
-    if (($names -join "`n").Contains('SYNTHETIC-NOT-A-CREDENTIAL')) { throw 'Configuration canary leaked in accessibility tree' }
-    foreach ($node in $nodes) {
-        $pattern = $null
-        if ($node.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern) -and
-            ([Windows.Automation.ValuePattern]$pattern).Current.Value.Contains('SYNTHETIC-NOT-A-CREDENTIAL')) {
-            throw 'Configuration canary leaked in accessible value'
-        }
-    }
+    Assert-AcceptanceCanariesAbsent $nodes
     $names | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $EvidenceDirectory "$stage-accessibility.json") -Encoding utf8
 }
 function Open-QwenFixture([string]$settings, [string]$manifest) {

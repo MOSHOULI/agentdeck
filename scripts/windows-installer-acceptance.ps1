@@ -25,6 +25,8 @@ New-Item -ItemType Directory -Path $homeDir -Force | Out-Null
 $events = [Collections.Generic.List[object]]::new()
 $running = $null
 $passed = $false
+$script:acceptanceNode = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
+$script:acceptancePython = (Get-Command python.exe -CommandType Application | Select-Object -First 1).Source
 $originalEnv = @{}
 $names = @('HOME','USERPROFILE','APPDATA','LOCALAPPDATA','AGENTDECK_TEST_HOME','PATH','WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS')
 foreach ($name in $names) { $originalEnv[$name] = [Environment]::GetEnvironmentVariable($name) }
@@ -82,6 +84,7 @@ function Check-Gui([string]$stage, [switch]$KeepOpen) {
         $window = [Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Children, $condition)
         if ($null -ne $window) {
             $nodes = $window.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+            Assert-AcceptanceCanariesAbsent $nodes
             $lastNames = @($nodes | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
             # Native mode proves this is the Tauri WebView, not the browser demo.
             # The card only renders after get_agents resolves through the real IPC.
@@ -95,8 +98,11 @@ function Check-Gui([string]$stage, [switch]$KeepOpen) {
         }
         Start-Sleep -Milliseconds 500
     }
+    # Last observed nodes were checked before accepting or persisting their names.
     $lastNames | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $EvidenceDirectory "$stage-accessibility.json") -Encoding utf8
     if (-not $found) { throw "Native WebView content/IPC did not become accessible ($stage)" }
+    $currentNodes = $window.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+    Assert-AcceptanceCanariesAbsent $currentNodes
     # Evidence only: screen capture is not itself the acceptance assertion.
     try {
     Add-Type -AssemblyName System.Drawing, System.Windows.Forms
@@ -126,6 +132,7 @@ try {
     . (Join-Path $PSScriptRoot 'windows-qwen-ui-acceptance.ps1')
     . (Join-Path $PSScriptRoot 'windows-qoder-ui-acceptance.ps1')
     . (Join-Path $PSScriptRoot 'windows-codex-ui-acceptance.ps1')
+    . (Join-Path $PSScriptRoot 'windows-install-ui-acceptance.ps1')
     $sentinel = Join-Path $homeDir '.agentdeck\acceptance-user-data.txt'
     $sentinelValue = 'Synthetic data, must survive installation, upgrade and uninstall.'
     New-Item -ItemType Directory -Force -Path (Split-Path $sentinel) | Out-Null
@@ -138,6 +145,7 @@ try {
     Check-QwenLifecycle
     Check-Gui 'restart' -KeepOpen
     Check-QoderReadonly
+    Check-ReviewedInstall
     Check-CodexReadonly
     Run-Installer $Installer
     Assert-Version
@@ -164,7 +172,7 @@ try {
 } finally {
     if ($null -ne $running -and -not $running.HasExited) { Stop-Process -Id $running.Id -Force -ErrorAction SilentlyContinue }
     # Preserve runner-local evidence on failure; never delete a real user's data.
-    @{ passed = $passed; buildCommit = $ExpectedCommit; events = $events; limitations = @('Synthetic settings plus a pinned official Linux archive (read only)', 'Qoder UI hashes a Linux archive on Windows; no Qoder execution or Windows runtime validation', 'No real Agent installation or authentication', 'Synthetic Codex Windows read-only UI observation only; no Windows writer or actual Codex runtime verification', 'Synthetic Qwen single-field UI lifecycle only; not real Qwen execution or complete GUI coverage', 'Published baseline is verified against its published checksum, not an independent signature') } |
+    @{ passed = $passed; buildCommit = $ExpectedCommit; events = $events; limitations = @('Synthetic settings plus a pinned official Linux archive (read only)', 'Qoder UI hashes a Linux archive on Windows; no Qoder execution or Windows runtime validation', 'Authored npm and authored Codex version fixture execute through the actual install adapter; no official Agent execution or authentication', 'Synthetic Codex Windows read-only UI observation only; no Windows writer or actual Codex runtime verification', 'Synthetic Qwen single-field UI lifecycle only; not real Qwen execution or complete GUI coverage', 'Published baseline is verified against its published checksum, not an independent signature') } |
         ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'result.json') -Encoding utf8
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $originalEnv[$name]) }
 }

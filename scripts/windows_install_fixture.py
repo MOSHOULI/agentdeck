@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Authored npm/Codex fixture for real installed Windows App UI/IPC acceptance.
+
+Not official npm, Codex, registry, network or lifecycle acceptance. The only real
+executable is an explicitly supplied trusted Node PE, copied into the fixture.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import stat
+import struct
+import sys
+
+CANARY = 'AGENTDECK_SYNTHETIC_INSTALL_PRIVATE_CANARY'
+MARKER = b'synthetic-install-once\n'
+class Failure(Exception): pass
+
+def safe_file(path, limit):
+    m=path.lstat()
+    if not stat.S_ISREG(m.st_mode) or m.st_nlink!=1 or m.st_size>limit or getattr(m,'st_file_attributes',0)&0x400: raise Failure('unsafe_fixture_file')
+    return path.read_bytes()
+
+def namespaced(path):
+    value=str(path.resolve(strict=True))
+    return '\\\\?\\'+value if os.name=='nt' and not value.startswith('\\\\?\\') else value
+
+def write_new(path,data):
+    with path.open('xb') as out:out.write(data)
+
+def shim(target):
+    # Exact cmd-shim form recognized by the production Windows adapter.
+    target=target.replace('/','\\')
+    return ('@ECHO off\nGOTO start\n:find_dp0\nSET dp0=%~dp0\nEXIT /b\n:start\nSETLOCAL\nCALL :find_dp0\n\n'
+            'IF EXIST "%dp0%\\node.exe" (\n  SET "_prog=%dp0%\\node.exe"\n) ELSE (\n  SET "_prog=node"\n'
+            '  SET PATHEXT=%PATHEXT:;.JS;=;%\n)\n\n'
+            'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\'+target+'" %*\n').replace('\n','\r\n').encode()
+
+def layout(root,home):
+    root=Path(root)
+    paths={'root':root,'managerBin':root/'manager','manager':root/'manager/node_modules/npm/bin/npm-cli.js',
+           'node':root/'manager/node.exe','prefix':root/'prefix','globalRoot':root/'prefix/node_modules',
+           'package':root/'prefix/node_modules/@openai/codex','marker':root/'install-marker',
+           'queries':root/'query-events','versions':root/'version-events','canary':root/'canary.txt','home':Path(home)}
+    return {k:str(v) for k,v in paths.items()}
+
+def codex_program(p):
+    return ("#!/usr/bin/env node\n'use strict';\nconst fs=require('node:fs');const path=require('node:path');\n"
+            'const log='+json.dumps(p['versions'])+';\n'
+            "try { if(JSON.stringify(process.argv.slice(2))!=='[\"--version\"]')throw Error();"
+            "if(path.toNamespacedPath(fs.realpathSync(log))!==log)throw Error();const s=fs.lstatSync(log);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.size>=4096)throw Error();"
+            "fs.appendFileSync(log,'v');console.log('codex-cli 1.2.3');"
+            "}catch(_){process.stderr.write('synthetic version rejected\\n');process.exitCode=64;}\n")
+
+def manager_program(p,mode):
+    expected=['install','--global','--prefix',p['prefix'],'--force=false','--no-audit','--no-fund','--no-progress','--ignore-scripts','@openai/codex']
+    header=("#!/usr/bin/env node\n'use strict';\nconst fs=require('node:fs');const path=require('node:path');\n"
+            'const p='+json.dumps(p)+';\nconst expected='+json.dumps(expected)+';\nconst mode='+json.dumps(mode)+';\n'
+            'const codex='+json.dumps(codex_program(p))+';\nconst launcher='+json.dumps(shim('node_modules/@openai/codex/bin/codex.js').decode())+';\n')
+    return header+r'''
+function canonical(target){return path.toNamespacedPath(fs.realpathSync(target));}
+function directory(target){
+ const relative=path.relative(p.root,target);
+ if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative))throw Error('escape');
+ let current=p.root;
+ for(const part of [''].concat(relative.split(path.sep).filter(Boolean))){
+  current=path.join(current,part);const s=fs.lstatSync(current);
+  if(!s.isDirectory()||s.isSymbolicLink()||canonical(current)!==path.toNamespacedPath(current))throw Error('directory');
+ }
+}
+function record(kind){const s=fs.lstatSync(p.queries);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.size>=4096)throw Error('log');fs.appendFileSync(p.queries,kind);}
+function absent(target){try{fs.lstatSync(target);}catch(e){if(e.code==='ENOENT')return;throw e;}throw Error('exists');}
+try{
+ for(const d of [p.prefix,p.globalRoot,path.dirname(p.manager)])directory(d);
+ if(canonical(process.argv[1])!==p.manager)throw Error('entry');
+ const args=JSON.stringify(process.argv.slice(2));
+ if(args==='["prefix","--global"]'){record('p');console.log(p.prefix);}
+ else if(args==='["root","--global"]'){record('r');console.log(p.globalRoot);}
+ else if(args===JSON.stringify(expected)){
+  absent(p.marker);absent(p.package);
+  for(const suffix of ['','.cmd','.ps1','.exe','.com','.bat'])absent(path.join(p.prefix,'codex'+suffix));
+  const scope=path.dirname(p.package);if(fs.existsSync(scope))directory(scope);
+  fs.writeFileSync(p.marker,'synthetic-install-once\n',{flag:'wx'});
+  if(mode==='fail')throw Error('authored failure after exclusive marker');
+  fs.mkdirSync(scope,{recursive:true});fs.mkdirSync(p.package);fs.mkdirSync(path.join(p.package,'bin'));
+  fs.writeFileSync(path.join(p.package,'package.json'),JSON.stringify({name:'@openai/codex',version:'1.2.3',bin:{codex:'bin/codex.js'}}),{flag:'wx'});
+  fs.writeFileSync(path.join(p.package,'bin/codex.js'),codex,{flag:'wx'});
+  fs.writeFileSync(path.join(p.prefix,'codex.cmd'),launcher,{flag:'wx'});
+ }else throw Error('arguments');
+}catch(_){process.stderr.write('synthetic fixture rejected operation\n');process.exitCode=64;}
+'''
+
+def prepare(root,node,home,mode):
+    if os.name!='nt':raise Failure('requires_windows')
+    if mode not in ('success','fail') or not root.is_absolute() or not node.is_absolute() or not home.is_absolute():raise Failure('invalid_fixture_arguments')
+    node=node.resolve(strict=True)
+    data=safe_file(node,256*1024*1024)
+    if len(data)<64 or data[:2]!=b'MZ':raise Failure('trusted_node_not_pe')
+    offset=struct.unpack_from('<I',data,0x3c)[0]
+    if offset>len(data)-6 or data[offset:offset+4]!=b'PE\0\0' or struct.unpack_from('<H',data,offset+4)[0]!=0x8664:raise Failure('trusted_node_not_x64')
+    root.mkdir(exist_ok=False)
+    p=layout(namespaced(root),namespaced(home))
+    for directory in (Path(p['manager']).parent,Path(p['globalRoot'])):directory.mkdir(parents=True)
+    write_new(Path(p['node']),data)
+    write_new(Path(p['manager']).parent.parent/'package.json',json.dumps({'name':'npm','version':'0.0.0','bin':{'npm':'bin/npm-cli.js'}}).encode())
+    for key in ('queries','versions'):write_new(Path(p[key]),b'')
+    write_new(Path(p['canary']),CANARY.encode())
+    write_new(Path(p['manager']),manager_program(p,mode).encode())
+    write_new(Path(p['managerBin'])/'npm.cmd',shim('node_modules/npm/bin/npm-cli.js'))
+    manifest={'schemaVersion':1,**p,'mode':mode,'path':p['managerBin']+';'+p['prefix'],
+              'display':{'managerPath':p['manager'],'nodePath':p['node'],'prefix':p['prefix'],'globalRoot':p['globalRoot'],'packageRoot':p['package'],'launcherDirectory':p['prefix']},
+              'nodeSha256':hashlib.sha256(data).hexdigest(),'managerSha256':hashlib.sha256(Path(p['manager']).read_bytes()).hexdigest()}
+    destination=root/'fixture.json';write_new(destination,json.dumps(manifest,indent=2).encode());return destination
+
+def load(manifest):
+    m=json.loads(safe_file(manifest,65536))
+    if m.get('schemaVersion')!=1 or m.get('mode') not in ('success','fail'):raise Failure('invalid_manifest')
+    expected=layout(namespaced(manifest.parent),m['home'])
+    if any(m.get(k)!=v for k,v in expected.items()) or m.get('path')!=expected['managerBin']+';'+expected['prefix']:raise Failure('invalid_manifest_paths')
+    for value in expected.values():
+        path=Path(value)
+        for parent in (path,*path.parents):
+            if parent.exists():
+                meta=parent.lstat()
+                if stat.S_ISLNK(meta.st_mode) or getattr(meta,'st_file_attributes',0)&0x400:raise Failure('unsafe_fixture_path')
+    return m
+
+def no_configuration(m):
+    home=Path(m['home'])
+    for name in ('.codex','.aisync'):
+        if os.path.lexists(home/name):raise Failure('configuration_created')
+    product=home/'.agentdeck'
+    if product.exists():
+        for entry in product.iterdir():
+            if entry.name=='acceptance-user-data.txt':
+                # Existing installer-lifecycle sentinel, not a new agent profile.
+                if safe_file(entry,256).decode('utf-8-sig').rstrip('\r\n')!='Synthetic data, must survive installation, upgrade and uninstall.':raise Failure('sentinel_changed')
+            elif entry.name not in ('registry','registry-update.lock'):raise Failure('configuration_created')
+
+def facts(m):
+    q=safe_file(Path(m['queries']),4096);v=safe_file(Path(m['versions']),4096)
+    if any(c not in b'pr' for c in q) or any(c!=ord('v') for c in v):raise Failure('invalid_event_log')
+    if safe_file(Path(m['canary']),256)!=CANARY.encode():raise Failure('canary_changed')
+    if hashlib.sha256(safe_file(Path(m['node']),256*1024*1024)).hexdigest()!=m['nodeSha256']:raise Failure('node_changed')
+    return {'prefixQueries':q.count(b'p'),'rootQueries':q.count(b'r'),'versionProbes':len(v),'syntheticFixture':True,'officialAgentExecuted':False,'noConfigurationCreated':True}
+
+def assert_phase(m,phase):
+    result=facts(m);prefix=Path(m['prefix']);package=Path(m['package']);marker=Path(m['marker'])
+    if phase=='absent':
+        if any(os.path.lexists(p) for p in (marker,package,*[prefix/('codex'+s) for s in ('','.cmd','.ps1','.exe','.com','.bat')])):raise Failure('unconfirmed_install_write')
+        if result['versionProbes']:raise Failure('unexpected_version_probe')
+    elif phase in ('installed','failed'):
+        if safe_file(marker,128)!=MARKER:raise Failure('install_marker_mismatch')
+        if phase=='failed':
+            if m['mode']!='fail' or package.exists() or (prefix/'codex.cmd').exists():raise Failure('failure_state_mismatch')
+        else:
+            expected={'package.json':json.dumps({'name':'@openai/codex','version':'1.2.3','bin':{'codex':'bin/codex.js'}},separators=(',',':')).encode(),
+                      'bin/codex.js':codex_program(m).encode()}
+            if {p.relative_to(package).as_posix() for p in package.rglob('*') if p.is_file()}!=set(expected):raise Failure('installed_inventory_mismatch')
+            for name,data in expected.items():
+                if safe_file(package/name,65536)!=data:raise Failure('installed_bytes_changed')
+            if safe_file(prefix/'codex.cmd',4096)!=shim('node_modules/@openai/codex/bin/codex.js'):raise Failure('shim_changed')
+            if result['versionProbes']<1:raise Failure('version_not_probed')
+    elif phase!='no-config':raise Failure('unknown_assertion')
+    no_configuration(m);return result
+
+FAILURE_CODES = frozenset({
+    'unsafe_fixture_file', 'requires_windows', 'invalid_fixture_arguments',
+    'trusted_node_not_pe', 'trusted_node_not_x64', 'invalid_manifest',
+    'invalid_manifest_paths', 'unsafe_fixture_path', 'configuration_created',
+    'sentinel_changed', 'invalid_event_log', 'canary_changed', 'node_changed',
+    'unconfirmed_install_write', 'unexpected_version_probe', 'install_marker_mismatch',
+    'failure_state_mismatch', 'installed_inventory_mismatch', 'installed_bytes_changed',
+    'shim_changed', 'version_not_probed', 'unknown_assertion', 'missing_prepare_arguments',
+    'missing_manifest', 'manager_already_changed',
+})
+
+def failure_diagnostic(error):
+    if isinstance(error, Failure):
+        return {'failureCode': str(error) if str(error) in FAILURE_CODES else 'fixture_failure', 'exceptionType': 'Failure'}
+    # Never include exception messages, filesystem paths, or dynamically named types.
+    types = {FileNotFoundError: 'FileNotFoundError', FileExistsError: 'FileExistsError',
+             PermissionError: 'PermissionError', OSError: 'OSError', ValueError: 'ValueError',
+             TypeError: 'TypeError', KeyError: 'KeyError', UnicodeEncodeError: 'UnicodeEncodeError',
+             UnicodeDecodeError: 'UnicodeDecodeError', json.JSONDecodeError: 'JSONDecodeError'}
+    return {'failureCode': 'unexpected_fixture_error', 'exceptionType': types.get(type(error), 'Exception')}
+
+
+def main():
+    # Pipe encoding is a protocol, not the Windows console code page. PowerShell
+    # callers must decode UTF-8 too. This also overrides PYTHONIOENCODING=cp1252.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'): stream.reconfigure(encoding='utf-8', errors='strict')
+    parser=argparse.ArgumentParser(description=__doc__);group=parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--prepare',type=Path);group.add_argument('--assert',dest='phase',choices=('absent','installed','failed','no-config'));group.add_argument('--stale',action='store_true')
+    parser.add_argument('--node',type=Path);parser.add_argument('--home',type=Path);parser.add_argument('--mode',choices=('success','fail'),default='success');parser.add_argument('--manifest',type=Path)
+    a=parser.parse_args()
+    try:
+        if a.prepare:
+            if a.node is None or a.home is None:raise Failure('missing_prepare_arguments')
+            print(prepare(a.prepare,a.node,a.home,a.mode));return 0
+        if a.manifest is None:raise Failure('missing_manifest')
+        m=load(a.manifest)
+        if a.stale:
+            path=Path(m['manager']);data=safe_file(path,65536)
+            if hashlib.sha256(data).hexdigest()!=m['managerSha256']:raise Failure('manager_already_changed')
+            with path.open('ab') as out:out.write(b'\n// authored stale-preview mutation\n')
+            print(json.dumps({'managerChangedForStalePreview':True}));return 0
+        print(json.dumps(assert_phase(m,a.phase)));return 0
+    except Exception as error:
+        print(json.dumps(failure_diagnostic(error)), file=sys.stderr);return 1
+if __name__=='__main__':raise SystemExit(main())
