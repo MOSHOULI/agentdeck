@@ -84,6 +84,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Trusted Node inherited preload protection (real Node, authored fixture)
+        run: AGENTDECK_TEST_NODE="$(command -v node)" python scripts/run-isolated.py cargo test --locked -p aisync-core trusted_node_preload_environment_smoke --lib -- --ignored --nocapture
       - name: Reviewed install synthetic fixture contract (offline)
         run: python -B scripts/test_linux_install_webview.py
       - name: Official Codex installation harness (offline safety regressions)
@@ -187,6 +189,12 @@ jobs:
       - run: npm run build --prefix web/ui
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: python scripts/run-isolated.py cargo test --locked --workspace
+      - name: Trusted Node inherited preload protection (real Node, authored fixture)
+        shell: pwsh
+        run: |
+          $env:AGENTDECK_TEST_NODE = (Get-Command node).Source
+          python scripts/run-isolated.py cargo test --locked -p aisync-core trusted_node_preload_environment_smoke --lib -- --ignored --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run: python scripts/run-isolated.py cargo run --locked -p aisync-cli -- health
       - name: Qwen owned field compatibility (synthetic, pinned offline source)
         run: python scripts/run-isolated.py node scripts/test-qwen-owned-setting.mjs

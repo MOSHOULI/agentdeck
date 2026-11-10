@@ -120,3 +120,20 @@ root、prefix 和管理器与计划一致。仅 npm 成功退出不足以宣告�
 来源适配器边界未来可以扩展到原生 Agent 或 DSH 插件，不会假定每个 Agent 都是 npm
 包。原生插件能力协商、配置对账和包生命周期管理仍是独立的设计工作，不能从当前注册表
 推断出这些能力字段。
+
+### 有界的 Node 环境保护
+
+版本探测、npm 元数据查询、安装和安装后核验共用的子进程运行器，会在每次启动时移除
+继承的 `NODE_OPTIONS`、`NODE_PATH` 和 `npm_config_node_options`，包括全部 ASCII
+大小写变体，阻止这些变量注入 Node 预加载和额外模块搜索路径，以及 npm 从环境读取的
+生命周期 Node 选项。不修改父进程环境；原有 npm 静默日志覆盖保留，HOME/PATH、
+registry、prefix、认证、代理和证书等无关配置保持不变。这**不是环境隔离**，不会处理
+npmrc 中的 `node-options`，也不会隔离本地 npm/agent 代码及其他配置。依赖这些继承变量
+的 Agent 可能无法通过探测；不会恢复这些变量自动重试。
+
+显式 `trusted_node_preload_environment_smoke` 验收要求在 CI 配置 Node 后提供可信的
+绝对路径 `AGENTDECK_TEST_NODE`。先验证自建本地标记预加载确实能运行，再用独立测试
+子进程调用生产运行器，覆盖普通和元数据两种模式，检查预加载被阻止、无关环境仍保留、
+父进程环境未改变。不执行官方 Agent。
+
+此边界仅覆盖安装检查共用 runner，不覆盖其他部署 shell helper 或整个应用的每条命令；原生加载器设置也不在此清理范围内。

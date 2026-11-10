@@ -899,11 +899,32 @@ impl Runner for ProcessRunner {
     }
 }
 
+// Remove only inherited Node injection controls. This is not an environment
+// allowlist: npmrc, registry/auth, proxy, certificate and prefix settings remain.
+fn remove_node_preload_environment(
+    process: &mut Command,
+    keys: impl IntoIterator<Item = OsString>,
+) {
+    for key in ["NODE_OPTIONS", "NODE_PATH", "npm_config_node_options"] {
+        process.env_remove(key);
+    }
+    for key in keys {
+        if key.to_str().is_some_and(|key| {
+            ["NODE_OPTIONS", "NODE_PATH", "npm_config_node_options"]
+                .iter()
+                .any(|blocked| key.eq_ignore_ascii_case(blocked))
+        }) {
+            process.env_remove(key);
+        }
+    }
+}
+
 /// Direct program/argv only. No paths or manager output are inserted into shell
 /// source. Stderr is discarded so npm config warnings cannot leak credentials.
 fn run_bounded(command: &ProbeCommand, timeout: Duration, limit: usize) -> io::Result<Vec<u8>> {
     let deadline = Instant::now() + timeout;
     let mut process = Command::new(&command.program);
+    remove_node_preload_environment(&mut process, std::env::vars_os().map(|(key, _)| key));
     if command.npm_metadata {
         // Quiet metadata queries without replacing userconfig/prefix/root. npm
         // still runs local code, so this is not a side-effect or security sandbox.
@@ -1917,6 +1938,156 @@ mod tests {
         assert_eq!(details.probe.status, InstallationStatus::NotDetected);
         assert!(details.instances.is_empty());
         assert!(runner.calls.is_empty());
+    }
+
+    #[test]
+    fn node_preload_keys_are_removed_case_insensitively_without_clearing_environment() {
+        let blocked = [
+            "NODE_OPTIONS",
+            "node_options",
+            "NoDe_OpTiOnS",
+            "NODE_PATH",
+            "node_path",
+            "NoDe_PaTh",
+            "npm_config_node_options",
+            "NPM_CONFIG_NODE_OPTIONS",
+            "NpM_CoNfIg_NoDe_OpTiOnS",
+        ];
+        let retained = [
+            "PATH",
+            "HOME",
+            "HTTPS_PROXY",
+            "NODE_EXTRA_CA_CERTS",
+            "npm_config_registry",
+            "npm_config_prefix",
+            "npm_config_userconfig",
+            "npm_config_auth",
+            "NODE_OPTIONS_EXTRA",
+        ];
+        // Test each spelling separately: Windows Command deduplicates names
+        // case-insensitively, whereas Unix preserves distinct inherited keys.
+        for blocked_key in blocked {
+            let mut command = Command::new("unused");
+            for key in retained {
+                command.env(key, "preserved");
+            }
+            remove_node_preload_environment(
+                &mut command,
+                [blocked_key]
+                    .into_iter()
+                    .chain(retained)
+                    .map(OsString::from),
+            );
+            let changes: std::collections::HashMap<_, _> = command.get_envs().collect();
+            assert!(changes.iter().any(|(key, value)| {
+                key.to_str()
+                    .is_some_and(|key| key.eq_ignore_ascii_case(blocked_key))
+                    && value.is_none()
+            }));
+            for key in retained {
+                assert_eq!(
+                    changes.get(std::ffi::OsStr::new(key)),
+                    Some(&Some(std::ffi::OsStr::new("preserved")))
+                );
+            }
+        }
+    }
+
+    // Explicit CI smoke after setup-node. No silent skip or global env mutation:
+    // only a fresh test subprocess receives the authored preload environment.
+    #[test]
+    #[ignore = "requires explicit trusted AGENTDECK_TEST_NODE; run after setup-node"]
+    fn trusted_node_preload_environment_smoke() {
+        const CHILD: &str = "AGENTDECK_NODE_ENV_CHILD";
+        let node = PathBuf::from(
+            std::env::var_os("AGENTDECK_TEST_NODE")
+                .expect("set AGENTDECK_TEST_NODE to the trusted absolute Node executable"),
+        );
+        assert!(node.is_absolute() && node.is_file());
+        if std::env::var_os(CHILD).is_some() {
+            let marker = PathBuf::from(std::env::var_os("AGENTDECK_NODE_MARKER").unwrap());
+            let inherited: std::collections::BTreeMap<_, _> = std::env::vars_os().collect();
+            for metadata in [false, true] {
+                let command = ProbeCommand {
+                    program: node.clone(),
+                    npm_metadata: metadata,
+                    args: vec!["-e".into(), r#"
+const assert = require('node:assert/strict');
+for (const key of Object.keys(process.env)) {
+  assert(!['node_options','node_path','npm_config_node_options'].includes(key.toLowerCase()));
+}
+for (const key of ['HOME','HTTPS_PROXY','NODE_EXTRA_CA_CERTS','npm_config_registry','npm_config_prefix','npm_config_auth']) {
+  assert.equal(process.env[key], 'synthetic-preserved');
+}
+assert.equal(process.env.PATH, process.env.AGENTDECK_EXPECT_PATH);
+process.stdout.write('clean');
+"#.into()],
+                };
+                assert_eq!(
+                    run_bounded(&command, Duration::from_secs(10), 1024).unwrap(),
+                    b"clean"
+                );
+                assert!(
+                    !marker.exists(),
+                    "Inherited preload ran through production runner"
+                );
+            }
+            assert_eq!(inherited, std::env::vars_os().collect());
+            return;
+        }
+        let before: std::collections::BTreeMap<_, _> = std::env::vars_os().collect();
+        let fixture = Fixture::new(Platform::Windows);
+        let temp = &fixture.directory;
+        let preload = temp.as_path().join("preload.cjs");
+        let marker = temp.as_path().join("marker");
+        std::fs::write(
+            &preload,
+            "require('node:fs').writeFileSync(process.env.AGENTDECK_NODE_MARKER, 'preloaded');",
+        )
+        .unwrap();
+        let options = format!(
+            "--require {}",
+            serde_json::to_string(preload.to_str().unwrap()).unwrap()
+        );
+        // Positive control establishes that this exact harmless preload really runs.
+        let status = Command::new(&node)
+            .args(["-e", "0"])
+            .env("NODE_OPTIONS", &options)
+            .env("AGENTDECK_NODE_MARKER", &marker)
+            .status()
+            .unwrap();
+        assert!(status.success() && marker.is_file());
+        std::fs::remove_file(&marker).unwrap();
+        let mut child = Command::new(std::env::current_exe().unwrap());
+        child
+            .args([
+                "--ignored",
+                "--exact",
+                "deploy::inspection::tests::trusted_node_preload_environment_smoke",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("AGENTDECK_NODE_MARKER", &marker)
+            .env("NODE_OPTIONS", &options)
+            .env("NoDe_OpTiOnS", &options)
+            .env("NODE_PATH", temp.as_path())
+            .env("NoDe_PaTh", temp.as_path())
+            .env("npm_config_node_options", &options)
+            .env("NpM_CoNfIg_NoDe_OpTiOnS", &options)
+            .env("AGENTDECK_EXPECT_PATH", std::env::var_os("PATH").unwrap());
+        for key in [
+            "HOME",
+            "HTTPS_PROXY",
+            "NODE_EXTRA_CA_CERTS",
+            "npm_config_registry",
+            "npm_config_prefix",
+            "npm_config_auth",
+        ] {
+            child.env(key, "synthetic-preserved");
+        }
+        assert!(child.status().unwrap().success());
+        assert!(!marker.exists());
+        assert_eq!(before, std::env::vars_os().collect());
     }
 
     #[cfg(unix)]
