@@ -52,7 +52,7 @@ class OfflineDriver:
         if '/dd' in selector:
             return fields[selector.split("dt[text()='")[1].split("']")[0]]
         if selector == subject.DIALOG:
-            return '版本由当前 npm 配置选择 生命周期脚本：遵循当前 npm 配置 仅安装软件，不应用 profile'
+            return '版本由当前 npm 配置选择 生命周期脚本：禁用（ignore-scripts） 仅安装软件，不应用 profile'
         if "@role='alert'" in selector:
             return '安装失败 ' + ('wrong failure' if self.fault == 'wrong_stale' else 'Installation target changed since confirmation')
         if "@role='status'" in selector: return '软件安装操作已完成，未应用配置'
@@ -78,7 +78,7 @@ class FixtureTests(unittest.TestCase):
 
     def install_args(self):
         return ['install', '--global', '--prefix', str(self.f['prefix']), '--force=false',
-                '--no-audit', '--no-fund', '--no-progress', '@openai/codex']
+                '--no-audit', '--no-fund', '--no-progress', '--ignore-scripts', '@openai/codex']
 
     def test_queries_are_readonly_install_is_exact_and_single_use(self):
         for query, key in [('prefix', 'prefix'), ('root', 'global')]:
@@ -98,7 +98,8 @@ class FixtureTests(unittest.TestCase):
 
     def test_rejects_malformed_arguments_without_side_effects(self):
         cases = [[], ['--version'], ['prefix'], ['root', '-g'], ['install', '-g', '@openai/codex'],
-                 self.install_args() + ['--ignore-scripts'], self.install_args()[:-1] + ['other'],
+                 self.install_args() + ['--ignore-scripts'],
+                 [arg for arg in self.install_args() if arg != '--ignore-scripts'], self.install_args()[:-1] + ['other'],
                  ['install', '--global', '--prefix', '/tmp/escape', *self.install_args()[4:]]]
         for args in cases:
             with self.subTest(args=args):

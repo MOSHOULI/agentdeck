@@ -7,6 +7,13 @@ use sha2::{Digest, Sha256};
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(300);
 const MANAGER_FILE_LIMIT: usize = 256 * 1024 * 1024;
 
+// Authoritative execution policy, independent of the registry recipe used for
+// adapter eligibility. Keep bundled/retained Codex recipes supported while
+// enforcing the safety override in both preview and execution.
+fn disables_lifecycle_scripts(package: &str) -> bool {
+    matches!(package, "@openai/codex" | "@earendil-works/pi-coding-agent")
+}
+
 fn adapter(agent: &AgentDefinition) -> Option<KnownAgent> {
     // Upstream deprecated npm installation. Preserved runtime registries must
     // not re-enable this channel; read-only legacy inspection remains separate.
@@ -161,7 +168,7 @@ fn project_plan(
             }
             .as_os_str(),
         )?,
-        script_policy: if plan.package == "@earendil-works/pi-coding-agent" {
+        script_policy: if disables_lifecycle_scripts(plan.package) {
             "disabled"
         } else {
             "npm_configured"
@@ -445,7 +452,7 @@ fn install_command(plan: &InstallPlan) -> ProbeCommand {
         "--no-fund".into(),
         "--no-progress".into(),
     ]);
-    if plan.package == "@earendil-works/pi-coding-agent" {
+    if disables_lifecycle_scripts(plan.package) {
         command.args.push("--ignore-scripts".into());
     }
     command.args.push(plan.package.into());
@@ -562,7 +569,7 @@ mod tests {
                 plan.prefix.join("bin")
             };
             assert_eq!(json["launcherDirectory"], bin.to_str().unwrap());
-            assert_eq!(json["scriptPolicy"], "npm_configured");
+            assert_eq!(json["scriptPolicy"], "disabled");
             assert_eq!(json["versionPolicy"], "npm_configured");
             assert_eq!(preview.revision.len(), 64);
             assert!(
@@ -1366,7 +1373,7 @@ mod tests {
     }
 
     #[test]
-    fn safe_install_capability_requires_exact_adapter_recipe_and_pi_disables_scripts() {
+    fn safe_install_capability_requires_exact_adapter_recipe_and_fixed_script_policy() {
         let registry =
             crate::registry::parse_registry(include_str!("../../../../../agents/registry-v3.json"))
                 .unwrap();
@@ -1379,12 +1386,32 @@ mod tests {
         }
         let fixture = Fixture::new(Platform::Windows);
         let mut plan = build_plan(CODEX, &fixture.search, &mut fixture.runner()).unwrap();
-        plan.package = "@earendil-works/pi-coding-agent";
-        assert!(
-            install_command(&plan)
-                .args
-                .iter()
-                .any(|arg| arg == "--ignore-scripts")
-        );
+        for (package, disabled) in [
+            ("@openai/codex", true),
+            ("@earendil-works/pi-coding-agent", true),
+            ("@google/gemini-cli", false),
+            ("opencode-ai", false),
+        ] {
+            plan.package = package;
+            let preview = project_plan("synthetic", CODEX, Platform::Windows, &plan).unwrap();
+            let command = install_command(&plan);
+            assert_eq!(
+                command
+                    .args
+                    .iter()
+                    .filter(|arg| *arg == "--ignore-scripts")
+                    .count(),
+                usize::from(disabled)
+            );
+            assert_eq!(
+                preview.script_policy,
+                if disabled {
+                    "disabled"
+                } else {
+                    "npm_configured"
+                }
+            );
+            assert_eq!(preview.version_policy, "npm_configured");
+        }
     }
 }

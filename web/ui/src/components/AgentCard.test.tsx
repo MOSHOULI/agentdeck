@@ -312,11 +312,11 @@ describe('AgentCard', () => {
     expect(window.confirm).not.toHaveBeenCalled();
   });
 
-  it('shows disabled lifecycle scripts for the reviewed Pi plan', async () => {
-    const piPlan = { ...installPlan, agentId: 'pi', package: '@earendil-works/pi-coding-agent', executable: 'pi', scriptPolicy: 'disabled' as const };
-    mountAgent({ agent: { ...agent, id: 'pi', name: 'Pi' }, onPrepareInstall: vi.fn().mockResolvedValue(piPlan) });
-    fireEvent.click(screen.getByRole('button', { name: '安装 Pi' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Pi 安装计划' });
+  it.each([['pi', 'Pi', '@earendil-works/pi-coding-agent'], ['codex', 'Codex', '@openai/codex']])('shows disabled lifecycle scripts for the reviewed %s plan', async (id, name, pkg) => {
+    const disabledPlan = { ...installPlan, agentId: id, package: pkg, executable: id, scriptPolicy: 'disabled' as const };
+    mountAgent({ agent: { ...agent, id, name }, onPrepareInstall: vi.fn().mockResolvedValue(disabledPlan) });
+    fireEvent.click(screen.getByRole('button', { name: `安装 ${name}` }));
+    const dialog = await screen.findByRole('dialog', { name: `${name} 安装计划` });
     expect(dialog).toHaveTextContent('生命周期脚本：禁用（ignore-scripts）');
     expect(dialog).not.toHaveTextContent('生命周期脚本：遵循当前 npm 配置');
   });

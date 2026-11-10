@@ -80,7 +80,7 @@ OpenCode、Gemini CLI 和 Pi 分别绑定到确切的包名和验证命令；注
 
 命令使用分离参数、已检查的管理器和显式 `--prefix`，不会经 shell 执行注册表命令，也
 不会另建一个不同的安装 prefix。命令关闭 force、audit、fund 和 progress 选项。
-Pi 另加 `--ignore-scripts`，但并非所有 Agent 都关闭生命周期脚本。安装子进程有五分钟
+Codex 和 Pi 另加 `--ignore-scripts`，但并非所有 Agent 都关闭生命周期脚本。安装子进程有五分钟
 运行时间限制，捕获的输出也有大小限制。同一进程内只允许一个安装任务；这不是针对其他
 程序的锁、发布者签名验证或 npm/包生命周期脚本沙箱。npm 可以下载依赖并写入自己的文件。
 
