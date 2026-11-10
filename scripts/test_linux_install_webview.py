@@ -55,7 +55,7 @@ class OfflineDriver:
         if selector == subject.DIALOG:
             return '版本由当前 npm 配置选择 生命周期脚本：禁用（ignore-scripts） 仅安装软件，不应用 profile'
         if "@role='alert'" in selector:
-            return '安装失败 ' + ('wrong failure' if self.fault == 'wrong_stale' else 'Installation target changed since confirmation')
+            return 'wrong failure' if self.fault == 'wrong_stale' else '安装请求已发送，但完成状态未确认。'
         if "@role='status'" in selector: return '软件安装操作已完成，未应用配置'
         return 'npm 全局目录匹配，安装历史未知 实测版本 1.2.3 @openai/codex ' + str(f['package']) + ' ' + str(f['manager_bin'] / 'npm')
 

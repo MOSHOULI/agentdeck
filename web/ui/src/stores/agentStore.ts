@@ -7,7 +7,20 @@ import { create } from 'zustand';
 import type { AgentInfo, MemoryEntry } from '../bridge';
 import * as bridge from '../bridge';
 
+export type InstallTargetSnapshot = Pick<bridge.AgentInstallPreview,
+  'agentId' | 'package' | 'executable' | 'prefix' | 'globalRoot' | 'packageRoot' | 'launcherDirectory' | 'managerPath' | 'nodePath'>;
+export interface InstallSession {
+  state: 'submitted' | 'unconfirmed' | 'completed';
+  target: InstallTargetSnapshot | null;
+}
+function targetSnapshot(plan: bridge.AgentInstallPreview): InstallTargetSnapshot {
+  const { agentId, package: pkg, executable, prefix, globalRoot, packageRoot, launcherDirectory, managerPath, nodePath } = plan;
+  return { agentId, package: pkg, executable, prefix, globalRoot, packageRoot, launcherDirectory, managerPath, nodePath };
+}
+
 interface AgentState {
+  installSessions: Record<string, InstallSession>;
+
   // 数据
   agents: AgentInfo[];
   selectedAgentId: string | null;
@@ -37,14 +50,16 @@ interface AgentState {
 }
 
 export const useAgentStore = create<AgentState>((set, get) => {
+  // Pending review tokens are transient and never copied into session history.
+  const reviews = new Map<string, bridge.AgentInstallPreview>();
   // Refresh is deliberately outside the operation's catch: a completed install
   // must not be reported as failed merely because its follow-up read failed.
   const refreshAgents = async () => {
     try {
       const agents = await bridge.getAgents();
       set({ agents, dataStale: false, refreshError: null });
-    } catch (e) {
-      set({ dataStale: true, refreshError: `加载 Agent 列表失败: ${e}。当前状态待刷新，已暂停安装与配置操作。` });
+    } catch {
+      set({ dataStale: true, refreshError: '加载 Agent 列表失败。当前状态待刷新，已暂停安装与配置操作。' });
     }
   };
 
@@ -79,16 +94,28 @@ export const useAgentStore = create<AgentState>((set, get) => {
       set({ error: '请先检查有效安装预览。' });
       return;
     }
+    if (operation === 'install') {
+      const plan = reviews.get(id);
+      const target = plan?.agentId === id && plan.revision === revision ? targetSnapshot(plan) : null;
+      reviews.delete(id);
+      set(state => ({ installSessions: { ...state.installSessions, [id]: { state: 'submitted', target } } }));
+    }
     set({ loading: true, dataStale: true, error: null, notice: null, refreshError: null });
     try {
       const outcome = await (operation === 'install' ? bridge.installAgent(id, revision!) : bridge.configureAgent(id));
+      if (operation === 'install') set(state => ({ installSessions: {
+        ...state.installSessions, [id]: { ...state.installSessions[id], state: 'completed' },
+      } }));
       const notice = operation === 'install'
         ? '软件安装操作已完成，未应用配置。'
         : '默认 profile 配置操作已完成（写前备份）。';
       set({ notice: outcome.warnings.length ? `${notice}注意：${outcome.warnings.join('；')}` : notice });
     } catch (e) {
+      if (operation === 'install') set(state => ({ installSessions: {
+        ...state.installSessions, [id]: { ...state.installSessions[id], state: 'unconfirmed' },
+      } }));
       set({ error: operation === 'install'
-        ? `安装失败（软件可能已安装，请查看检测状态）: ${e}`
+        ? '安装请求已发送，但完成状态未确认。也可能在内部预检阶段被拒绝，不能据此判断是否执行或写入；请查看本会话安装记录。不会自动重试、回滚或卸载。'
         : `配置失败（可能已写入部分配置，请检查备份与当前配置）: ${e}` });
     }
     await refreshAgents();
@@ -96,6 +123,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
   };
 
   return {
+    installSessions: {},
     agents: [],
     selectedAgentId: null,
     loading: false,
@@ -109,6 +137,7 @@ export const useAgentStore = create<AgentState>((set, get) => {
     loadAgents: async () => {
       if (get().loading) return;
       set({ loading: true, dataStale: true });
+      reviews.clear();
       await refreshAgents();
       set({ loading: false });
     },
@@ -118,10 +147,13 @@ export const useAgentStore = create<AgentState>((set, get) => {
       const agent = get().agents.find(entry => entry.id === id);
       if (!agent || agent.canInstall !== true || agent.installed !== false
         || agent.installationStatus !== 'not_detected' || bridge.installationEvidenceProblem(agent)) return null;
+      reviews.delete(id);
       set({ loading: true, previewing: true, error: null });
       try {
         const plan = await bridge.previewAgentInstall(id);
-        return get().agents.find(entry => entry.id === id) === agent && !get().dataStale ? plan : null;
+        if (get().agents.find(entry => entry.id === id) !== agent || get().dataStale) return null;
+        reviews.set(id, { ...plan });
+        return plan;
       } catch {
         set({ error: '无法取得有效安装预览，请刷新后重新检查。' });
         return null;

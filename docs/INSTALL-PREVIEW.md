@@ -206,3 +206,34 @@ Windows 已安装应用门禁通过真实 WebView 和原生 UIAutomation 操作�
 这证明合成输入下的 Windows 适配器闭环，不代表官方 Agent 已运行、registry 或
 生命周期脚本兼容、真实 Codex 已读取配置、模型调用成功或运行网络隔离。官方包
 文件布局验收仍单独保留且不执行 Codex，两类证据不能相互替代；不自动发布安装包。
+
+## Unconfirmed-request review / 未确认请求的人工核对
+
+After a confirmed install request fails, the desktop UI retains the reviewed
+installation targets for that Agent **in this application session only**. This is
+historical preview information, not a fresh filesystem scan, durable receipt,
+proof of ownership, or authorization for another operation. A string failure
+cannot distinguish an internal preflight rejection from a failed installer or
+incomplete postcheck; the UI therefore says only that completion is unconfirmed,
+not that software was necessarily executed or written. Raw failure output is not
+shown in this panel or the install error notice.
+
+Use the recorded package, manager, Node and target directories to compare with
+current local state and the official installation instructions. Preserve unknown
+files and credentials. Do not infer that a directory can be deleted merely
+because it appeared in the reviewed plan. AgentDeck does not repair, roll back,
+uninstall or repeat the request from this panel. Any later attempt still requires
+a fresh valid preview and separate confirmation, and occupied targets remain
+rejected. Refreshing detection does not turn this historical record into an
+ownership claim. Restarting the application loses this session-only record.
+
+已确认的安装请求未确认完成时，桌面界面在**本次应用会话内**保留对应 Agent
+的已审核安装目标。这是历史预览信息，不是当前文件扫描、持久凭据、所有权证明，
+也不是再次操作的授权。后端字符串错误不能可靠区分内部预检拒绝、安装器失败和
+后验不完整，所以界面只说明结果未确认，不推断一定执行或写入了软件。
+面板与安装错误提示不展示原始失败输出。
+
+请将记录的包、管理器、Node 和目标目录与当前本地状态及官方安装说明核对。
+保留不明文件和凭据，不因目录出现在预览中就认定可以删除。此面板不会修复、
+回滚、卸载或重复请求。后续尝试仍须重新取得有效预览并单独确认；目标占用仍会
+拒绝。刷新检测不会让历史记录变成所有权证明；重启应用后会话记录不保留。

@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAgentStore } from './agentStore';
+import { installPlan } from '../test-fixtures/installPlan';
 import * as bridge from '../bridge';
 import { agentCatalog, installedAgent, notDetectedAgent, ambiguousAgent, npmMatchedAgent, activeInstance } from '../test-fixtures/agents';
 
 vi.mock('../bridge', async (importOriginal) => ({
   ...await importOriginal<typeof import('../bridge')>(),
-  getAgents: vi.fn(), installAgent: vi.fn(), configureAgent: vi.fn(), uninstallAgent: vi.fn(),
+  getAgents: vi.fn(), previewAgentInstall: vi.fn(), installAgent: vi.fn(), configureAgent: vi.fn(), uninstallAgent: vi.fn(),
   verifyAgentAuth: vi.fn(), collectMemory: vi.fn(), searchMemory: vi.fn(),
   injectMemory: vi.fn(), toggleAutoInject: vi.fn(),
 }));
@@ -17,10 +18,79 @@ function seedFresh(agents = agentCatalog) {
 describe('agentStore', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    useAgentStore.setState({ agents: [], loading: false, error: null, notice: null, refreshError: null, dataStale: true });
+    useAgentStore.setState({ installSessions: {}, agents: [], loading: false, error: null, notice: null, refreshError: null, dataStale: true });
     vi.mocked(bridge.getAgents).mockResolvedValue(agentCatalog);
+    vi.mocked(bridge.previewAgentInstall).mockResolvedValue({ ...installPlan });
     vi.mocked(bridge.installAgent).mockResolvedValue({ warnings: [] });
     vi.mocked(bridge.configureAgent).mockResolvedValue({ warnings: [] });
+  });
+
+  it('records only confirmed targets and retains a redacted snapshot across refresh and new previews', async () => {
+    seedFresh();
+    const plan = await useAgentStore.getState().prepareInstall('opencode');
+    expect(useAgentStore.getState().installSessions).toEqual({});
+    vi.mocked(bridge.installAgent).mockRejectedValueOnce('SECRET_TOKEN_PATH');
+    await useAgentStore.getState().installAgent('opencode', plan!.revision);
+    const history = useAgentStore.getState().installSessions.opencode;
+    expect(history).toMatchObject({ state: 'unconfirmed', target: { prefix: installPlan.prefix } });
+    expect(history.target).not.toHaveProperty('revision');
+    expect(JSON.stringify(useAgentStore.getState())).not.toContain('SECRET_TOKEN_PATH');
+    useAgentStore.getState().clearError();
+    vi.mocked(bridge.getAgents).mockRejectedValueOnce('SECRET_REFRESH');
+    await useAgentStore.getState().loadAgents();
+    expect(JSON.stringify(useAgentStore.getState())).not.toContain('SECRET_REFRESH');
+    expect(useAgentStore.getState().installSessions.opencode).toBe(history);
+    seedFresh();
+    vi.mocked(bridge.previewAgentInstall).mockResolvedValueOnce({ ...installPlan, prefix: '/new-review' });
+    await useAgentStore.getState().prepareInstall('opencode');
+    expect(useAgentStore.getState().installSessions.opencode).toBe(history);
+    expect(bridge.installAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not associate reviewed targets with a different syntactically valid revision', async () => {
+    seedFresh();
+    await useAgentStore.getState().prepareInstall('opencode');
+    await useAgentStore.getState().installAgent('opencode', 'b'.repeat(64));
+    expect(bridge.installAgent).toHaveBeenCalledWith('opencode', 'b'.repeat(64));
+    expect(useAgentStore.getState().installSessions.opencode).toEqual({ state: 'completed', target: null });
+  });
+
+  it('does not reuse a consumed review snapshot for another request with the same revision', async () => {
+    seedFresh();
+    await useAgentStore.getState().prepareInstall('opencode');
+    await useAgentStore.getState().installAgent('opencode', installPlan.revision);
+    expect(useAgentStore.getState().installSessions.opencode.target?.prefix).toBe(installPlan.prefix);
+    // This tests history association, not backend revision lifetime or authority.
+    seedFresh();
+    await useAgentStore.getState().installAgent('opencode', installPlan.revision);
+    expect(bridge.installAgent).toHaveBeenCalledTimes(2);
+    expect(useAgentStore.getState().installSessions.opencode).toEqual({ state: 'completed', target: null });
+  });
+
+  it('records no submitted attempt for rejected previews or local preflight guards', async () => {
+    seedFresh();
+    vi.mocked(bridge.previewAgentInstall).mockRejectedValueOnce('SECRET');
+    await useAgentStore.getState().prepareInstall('opencode');
+    await useAgentStore.getState().installAgent('opencode', 'invalid');
+    expect(useAgentStore.getState().installSessions).toEqual({});
+    expect(bridge.installAgent).not.toHaveBeenCalled();
+    expect(JSON.stringify(useAgentStore.getState())).not.toContain('SECRET');
+  });
+
+  it('keeps the submitted snapshot through late results and distinguishes success from refresh failure', async () => {
+    seedFresh();
+    await useAgentStore.getState().prepareInstall('opencode');
+    let finish!: (value: bridge.InstallOutcome) => void;
+    vi.mocked(bridge.installAgent).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const pending = useAgentStore.getState().installAgent('opencode', installPlan.revision);
+    expect(useAgentStore.getState().installSessions.opencode.state).toBe('submitted');
+    useAgentStore.getState().selectAgent('another');
+    await useAgentStore.getState().installAgent('opencode', installPlan.revision);
+    vi.mocked(bridge.getAgents).mockRejectedValueOnce('SECRET_REFRESH');
+    finish({ warnings: [] }); await pending;
+    expect(useAgentStore.getState().installSessions.opencode).toMatchObject({ state: 'completed', target: { prefix: installPlan.prefix } });
+    expect(useAgentStore.getState().dataStale).toBe(true);
+    expect(bridge.installAgent).toHaveBeenCalledTimes(1);
   });
 
   it('starts stale and only a successful read makes the list fresh', async () => {
@@ -33,7 +103,7 @@ describe('agentStore', () => {
     vi.mocked(bridge.getAgents).mockRejectedValue(new Error('boom'));
     await useAgentStore.getState().loadAgents();
     expect(useAgentStore.getState().refreshError).toContain('加载 Agent 列表失败');
-    expect(useAgentStore.getState()).toMatchObject({ error: null, agents: [], loading: false, dataStale: true });
+    expect(useAgentStore.getState()).toMatchObject({ error: null, installSessions: {}, agents: [], loading: false, dataStale: true });
   });
 
   it('installs software without applying configuration or inventing a version', async () => {
@@ -217,8 +287,8 @@ describe('agentStore', () => {
     vi.mocked(bridge.getAgents).mockResolvedValueOnce([installedAgent]);
     await useAgentStore.getState().installAgent('opencode', 'a'.repeat(64));
     expect(useAgentStore.getState().agents[0].installed).toBe(true);
-    expect(useAgentStore.getState().error).toContain('软件可能已安装');
-    expect(useAgentStore.getState().error).toContain('installer exited');
+    expect(useAgentStore.getState().error).toContain('完成状态未确认');
+    expect(useAgentStore.getState().error).not.toContain('installer exited');
     expect(useAgentStore.getState()).toMatchObject({ loading: false, dataStale: false });
   });
 
@@ -228,7 +298,7 @@ describe('agentStore', () => {
     await useAgentStore.getState().installAgent('opencode', 'a'.repeat(64));
     expect(useAgentStore.getState().notice).toContain('软件安装操作已完成');
     expect(useAgentStore.getState().error).toBeNull();
-    expect(useAgentStore.getState().refreshError).toContain('offline');
+    expect(useAgentStore.getState().refreshError).toContain('加载 Agent 列表失败');
     expect(useAgentStore.getState()).toMatchObject({ dataStale: true, loading: false, agents: agentCatalog });
     expect(bridge.installAgent).toHaveBeenCalledTimes(1);
     expect(bridge.getAgents).toHaveBeenCalledTimes(1);
@@ -245,9 +315,9 @@ describe('agentStore', () => {
     await useAgentStore.getState().installAgent('opencode', 'a'.repeat(64));
     await useAgentStore.getState().loadAgents();
     await useAgentStore.getState().installAgent('opencode', 'a'.repeat(64));
-    expect(useAgentStore.getState().error).toContain('real install error');
+    expect(useAgentStore.getState().error).toContain('完成状态未确认');
     expect(useAgentStore.getState().error).not.toContain('read error');
-    expect(useAgentStore.getState().refreshError).toContain('read error');
+    expect(useAgentStore.getState().refreshError).toContain('加载 Agent 列表失败');
     expect(useAgentStore.getState().dataStale).toBe(true);
     expect(bridge.installAgent).toHaveBeenCalledTimes(1);
     expect(bridge.getAgents).toHaveBeenCalledTimes(2);
@@ -273,7 +343,7 @@ describe('agentStore', () => {
     await useAgentStore.getState().configureAgent('opencode');
     expect(useAgentStore.getState().notice).toContain('默认 profile 配置操作已完成');
     expect(useAgentStore.getState()).toMatchObject({ error: null, dataStale: true });
-    expect(useAgentStore.getState().refreshError).toContain('offline');
+    expect(useAgentStore.getState().refreshError).toContain('加载 Agent 列表失败');
     expect(bridge.configureAgent).toHaveBeenCalledTimes(1);
   });
 });
