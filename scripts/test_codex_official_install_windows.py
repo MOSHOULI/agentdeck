@@ -51,14 +51,49 @@ def synthetic_metadata_diagnostics():
 class Offline(unittest.TestCase):
     def test_path_handle_mode_normalization_is_narrow(self):
         from types import SimpleNamespace
-        values=dict(st_dev=1,st_ino=2,st_size=10,st_nlink=1,st_mtime_ns=30,st_ctime_ns=40,st_mode=0o100666)
+        values=dict(st_dev=1,st_ino=2,st_size=10,st_nlink=1,st_mtime_ns=30,st_ctime_ns=40,st_birthtime_ns=40,st_mode=0o100666)
         before=SimpleNamespace(**values)
         executable=SimpleNamespace(**dict(values,st_mode=0o100777))
         self.assertTrue(h.metadata_families_match(before,executable,True))
         self.assertFalse(h.metadata_families_match(before,executable,False))
-        for key in values:
+        for key in values.keys() - {'st_ctime_ns'}:
             changed=SimpleNamespace(**dict(values,**{key:values[key]+(0o200 if key=='st_mode' else 1)}))
             self.assertFalse(h.metadata_families_match(before,changed,True),key)
+    def test_windows_birthtime_handles_observed_ctime_semantic_difference(self):
+        from types import SimpleNamespace
+        common=dict(st_dev=1,st_ino=2,st_mode=0o100666,st_size=11,st_nlink=1,
+                    st_birthtime_ns=1794317359870845700,st_mtime_ns=1794317359886755700)
+        before=SimpleNamespace(**common,st_ctime_ns=common['st_birthtime_ns'])
+        opened=SimpleNamespace(**common,st_ctime_ns=common['st_mtime_ns'])
+        self.assertTrue(h.metadata_families_match(before,opened,True))
+        self.assertFalse(h.metadata_families_match(before,opened,False))
+        changed=SimpleNamespace(**dict(common,st_birthtime_ns=common['st_birthtime_ns']+1),st_ctime_ns=opened.st_ctime_ns)
+        self.assertFalse(h.metadata_families_match(before,changed,True))
+    def test_native_snapshot_change_during_read_fails(self):
+        with tempfile.TemporaryDirectory() as t:
+            path=Path(t)/'fixture';path.write_bytes(b'constant bytes')
+            # First pinned handle and its named reopen agree; the same handle's
+            # post-read ChangeTime differs. Reject despite identical content.
+            with patch.object(h,'handle_fingerprint',side_effect=[(1,100),(1,100),(1,101)]):
+                with self.assertRaisesRegex(h.Failure,'^file_changed$'):h.file_digest(path,100)
+    def test_each_metadata_family_still_rejects_ctime_changes(self):
+        from types import SimpleNamespace
+        for family in ('handle','path'):
+            with tempfile.TemporaryDirectory() as t:
+                path=Path(t)/'fixture';path.write_bytes(b'constant bytes')
+                original=h.os.fstat if family=='handle' else Path.lstat
+                calls=0
+                def changing(value):
+                    nonlocal calls
+                    result=original(value);calls+=1
+                    if calls==2:
+                        fields={key:getattr(result,key) for key in dir(result) if key.startswith('st_')}
+                        fields['st_ctime_ns']+=1
+                        return SimpleNamespace(**fields)
+                    return result
+                target=patch.object(h.os,'fstat',side_effect=changing) if family=='handle' else patch.object(Path,'lstat',autospec=True,side_effect=changing)
+                with patch.object(h,'handle_fingerprint',return_value=(1,100)),target:
+                    with self.assertRaisesRegex(h.Failure,'^file_changed$'):h.file_digest(path,100)
     def test_pins(self):
         self.assertEqual(h.NATIVE.version,'0.167.0-win32-x64');self.assertEqual(h.NATIVE.files,47);self.assertEqual(h.NATIVE.expanded,501483647)
         self.assertEqual(len(base64.b64decode(h.NATIVE.integrity)),64)
@@ -163,6 +198,23 @@ class WindowsRunner(unittest.TestCase):
             for name in ('plain','codex.cmd','codex.exe'):
                 path=Path(t)/name;path.write_bytes(b'NOT_EXECUTED')
                 self.assertEqual(h.file_digest(path,100),hashlib.sha256(b'NOT_EXECUTED').digest())
+    def test_native_change_time_detects_attribute_update(self):
+        import ctypes
+        from ctypes import wintypes as w
+        with tempfile.TemporaryDirectory() as t:
+            path=Path(t)/'fixture';path.write_bytes(b'constant bytes')
+            fd=h.open_read_no_follow(path)
+            k=ctypes.WinDLL('kernel32',use_last_error=True)
+            k.GetFileAttributesW.argtypes=[w.LPCWSTR];k.GetFileAttributesW.restype=w.DWORD
+            k.SetFileAttributesW.argtypes=[w.LPCWSTR,w.DWORD];k.SetFileAttributesW.restype=w.BOOL
+            attributes=k.GetFileAttributesW(str(path));self.assertNotEqual(attributes,0xffffffff)
+            try:
+                before=h.handle_fingerprint(fd);time.sleep(.02)
+                self.assertTrue(k.SetFileAttributesW(str(path),attributes ^ 2))
+                after=h.handle_fingerprint(fd)
+                self.assertNotEqual(before[-1],after[-1],'native ChangeTime must detect metadata-only change')
+            finally:
+                k.SetFileAttributesW(str(path),attributes);os.close(fd)
     def test_alternate_stream_rejected(self):
         with tempfile.TemporaryDirectory() as t:
             path=Path(t)/'plain';path.write_bytes(b'plain');Path(str(path)+':extra').write_bytes(b'canary')

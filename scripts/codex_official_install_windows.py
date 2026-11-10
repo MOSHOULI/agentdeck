@@ -139,22 +139,36 @@ def handle_fingerprint(fd):
         _fields_ = [('attributes', w.DWORD), ('creation', w.FILETIME), ('access', w.FILETIME),
                     ('write', w.FILETIME), ('volume', w.DWORD), ('size_high', w.DWORD),
                     ('size_low', w.DWORD), ('links', w.DWORD), ('index_high', w.DWORD), ('index_low', w.DWORD)]
+    class BasicInformation(ctypes.Structure):
+        _fields_ = [('creation', ctypes.c_longlong), ('access', ctypes.c_longlong),
+                    ('write', ctypes.c_longlong), ('change', ctypes.c_longlong), ('attributes', w.DWORD)]
     k = ctypes.WinDLL('kernel32', use_last_error=True)
+    k.GetFileInformationByHandleEx.argtypes = [w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD]
+    k.GetFileInformationByHandleEx.restype = w.BOOL
     k.GetFileInformationByHandle.argtypes = [w.HANDLE, ctypes.POINTER(Information)]
     k.GetFileInformationByHandle.restype = w.BOOL
     info = Information()
     if not k.GetFileInformationByHandle(msvcrt.get_osfhandle(fd), ctypes.byref(info)):
         raise Failure('file_identity_unavailable')
+    basic = BasicInformation()
+    if not k.GetFileInformationByHandleEx(msvcrt.get_osfhandle(fd), 0, ctypes.byref(basic), ctypes.sizeof(basic)):
+        raise Failure('file_identity_unavailable')
     if info.links != 1 or info.attributes & (0x400 | 0x10): raise Failure('unsafe_regular_file')
+    if basic.attributes != info.attributes: raise Failure('file_changed')
     # Native identity/attributes avoid Python's path-extension-dependent st_mode.
     # Exclude access time: this verifier itself reads the file.
     return (info.volume, info.index_high, info.index_low, info.attributes, info.links,
             info.size_high, info.size_low, info.creation.dwHighDateTime, info.creation.dwLowDateTime,
-            info.write.dwHighDateTime, info.write.dwLowDateTime)
+            info.write.dwHighDateTime, info.write.dwLowDateTime, basic.creation, basic.write, basic.change)
 
 
 def metadata_families_match(path_stat, handle_stat, windows):
-    keys = ('st_dev', 'st_ino', 'st_size', 'st_nlink', 'st_mtime_ns', 'st_ctime_ns')
+    # Python 3.12 Windows path stat reports ctime as creation time while fstat
+    # can report last-write time. Compare the explicit birthtime across families;
+    # each family's ctime still must remain unchanged across the read below.
+    keys = ('st_dev', 'st_ino', 'st_size', 'st_nlink', 'st_mtime_ns') + (
+        ('st_birthtime_ns',) if windows else ('st_ctime_ns',))
+    if any(not hasattr(item, key) for item in (path_stat, handle_stat) for key in keys): return False
     mode_mask = ~0o111 if windows else ~0
     return (path_stat.st_mode & mode_mask) == (handle_stat.st_mode & mode_mask) and all(
         getattr(path_stat, key) == getattr(handle_stat, key) for key in keys)
@@ -185,6 +199,7 @@ def file_digest(path, limit, algorithm='sha256'):
         finally: os.close(named)
     final = path.lstat()
     keys = ('st_dev', 'st_ino', 'st_mode', 'st_size', 'st_nlink', 'st_mtime_ns', 'st_ctime_ns')
+    if os.name == 'nt': keys += ('st_birthtime_ns',)
     # Compare each Python metadata family with itself: on Windows path stat can
     # synthesize executable mode from '.cmd', while fstat has no filename.
     # Cross-family identity remains checked above, with native handle snapshots.
