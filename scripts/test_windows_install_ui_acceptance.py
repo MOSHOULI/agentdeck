@@ -23,9 +23,9 @@ class Tests(unittest.TestCase):
         self.assertIn('$env:PATH = $savedPath; $env:PATHEXT = $savedExt', UI)
     def test_all_evidence_checks_names_and_values_before_persistence(self):
         shared = (ROOT / 'scripts/windows-qwen-ui-acceptance.ps1').read_text(encoding='utf-8')
-        guard = shared[shared.index('function Assert-AcceptanceCanariesAbsent'):shared.index('function Save-QwenEvidence')]
+        guard = shared[shared.index('function Assert-AcceptanceCanaryValues'):shared.index('function Save-QwenEvidence')]
         for token in ('SYNTHETIC-NOT-A-CREDENTIAL', 'AGENTDECK_SYNTHETIC_INSTALL_PRIVATE_CANARY',
-                      '$node.Current.Name.Contains($canary)', 'ValuePattern', 'Current.Value.Contains($canary)'):
+                      '([string]$name).Contains($canary)', 'ValuePattern', '([string]$value).Contains($canary)'):
             self.assertIn(token, guard)
         save = shared[shared.index('function Save-QwenEvidence'):shared.index('function Open-QwenFixture')]
         self.assertLess(save.index('Assert-AcceptanceCanariesAbsent $nodes'), save.index('$names | ConvertTo-Json'))

@@ -48,16 +48,20 @@ function Assert-QwenNoConfirmation {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw 'Stale confirmation remains'
 }
+function Assert-AcceptanceCanaryValues($name, $value) {
+    foreach ($canary in @('SYNTHETIC-NOT-A-CREDENTIAL', 'AGENTDECK_SYNTHETIC_INSTALL_PRIVATE_CANARY')) {
+        if (([string]$name).Contains($canary)) { throw 'Synthetic canary leaked in accessibility tree' }
+        if (([string]$value).Contains($canary)) { throw 'Synthetic canary leaked in accessible value' }
+    }
+}
 function Assert-AcceptanceCanariesAbsent($nodes) {
-    # Check before any accessibility evidence or screenshot is persisted.
+    # UIA Name and Value can be null. Only null strings become empty; provider
+    # exceptions must still abort evidence collection, never bypass this guard.
     foreach ($node in $nodes) {
-        foreach ($canary in @('SYNTHETIC-NOT-A-CREDENTIAL', 'AGENTDECK_SYNTHETIC_INSTALL_PRIVATE_CANARY')) {
-            if ($node.Current.Name.Contains($canary)) { throw 'Synthetic canary leaked in accessibility tree' }
-            $pattern = $null
-            if ($node.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern) -and
-                ([Windows.Automation.ValuePattern]$pattern).Current.Value.Contains($canary)) {
-                throw 'Synthetic canary leaked in accessible value'
-            }
+        Assert-AcceptanceCanaryValues ([string]$node.Current.Name) $null
+        $pattern = $null
+        if ($node.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+            Assert-AcceptanceCanaryValues $null ([string]([Windows.Automation.ValuePattern]$pattern).Current.Value)
         }
     }
 }

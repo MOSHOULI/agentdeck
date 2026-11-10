@@ -290,6 +290,9 @@ jobs:
           $report = & python -B scripts/fetch_qoder_ui_archive.py --destination (Join-Path $env:RUNNER_TEMP 'qoder-real-ui')
           if ($LASTEXITCODE -ne 0) { throw 'Pinned Qoder archive unavailable or invalid; acceptance cannot be skipped' }
           $report | Set-Content -LiteralPath acceptance/evidence/qoder-download.json -Encoding utf8
+      - name: Execute Windows evidence canary guard regressions
+        shell: pwsh
+        run: ./scripts/test_windows_acceptance_canaries.ps1
       - name: Parse Windows installed UI acceptance scripts
         shell: pwsh
         run: |
