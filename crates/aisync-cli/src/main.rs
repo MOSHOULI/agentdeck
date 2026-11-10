@@ -101,6 +101,27 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum QoderAction {
+    /// Review fixed Qoder 1.1.85 baseline private executable deployment (no writes).
+    DeployPreview {
+        #[arg(long)]
+        cache: PathBuf,
+        #[arg(long)]
+        destination: PathBuf,
+    },
+    /// Copy reviewed payload into a NEW private directory; never execute or activate.
+    #[command(
+        long_about = "Linux x86_64 only. Deploy pinned Qoder 1.1.85 baseline to a NEW directory beneath an existing private 0700 parent. Requires a matching deploy-preview token and --yes. Source cache stays non-executable; only the new verified payload gets mode 0700. No PATH, global links, program execution, authentication or configuration changes. Existing destinations are never reused. Any failure after creation may leave executable partial output; preserve for manual review, never retry in place. Not latest-version, signature or runtime compatibility verification."
+    )]
+    DeployPrivate {
+        #[arg(long)]
+        cache: PathBuf,
+        #[arg(long)]
+        destination: PathBuf,
+        #[arg(long)]
+        preview_token: String,
+        #[arg(long)]
+        yes: bool,
+    },
     /// Read-only cache state and preservation plan, never deletion or repair authorization.
     #[command(
         long_about = "Linux x86_64 only. Observe an explicit Qoder 1.1.85 baseline staged or unpacked cache. Fixed record contracts and complete archive/payload hashes are rechecked. No locks, writes, cleanup, execution or PATH changes. Exit zero reports an observation, including conflict/unknown ownership, not readiness or permission to delete. Reads may update access times; same-user races are not an atomic guarantee."
@@ -522,6 +543,41 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             )?;
             use std::io::Write;
             writeln!(std::io::stdout().lock(), "{report}")?;
+        }
+        Commands::Qoder {
+            action: QoderAction::DeployPreview { cache, destination },
+        } => {
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&qoder::deployment::preview(&cache, &destination)?)?
+            )?;
+        }
+        Commands::Qoder {
+            action:
+                QoderAction::DeployPrivate {
+                    cache,
+                    destination,
+                    preview_token,
+                    yes,
+                },
+        } => {
+            if !yes {
+                anyhow::bail!(
+                    "Private executable deployment requires explicit --yes and a reviewed --preview-token; no files were created"
+                );
+            }
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&qoder::deployment::deploy(
+                    &cache,
+                    &destination,
+                    &preview_token
+                )?)?
+            )?;
         }
         Commands::Qoder {
             action: QoderAction::InspectCache { cache },
