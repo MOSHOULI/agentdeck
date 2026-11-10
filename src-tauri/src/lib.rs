@@ -30,6 +30,7 @@ pub fn run() {
             commands::deploy::get_agents,
             commands::deploy::preview_agent_install,
             commands::deploy::install_agent,
+            commands::deploy::inspect_codex_install_residual,
             commands::deploy::configure_agent,
             commands::deploy::preview_codex_configuration,
             commands::codex_animations::get_codex_animations_capability,

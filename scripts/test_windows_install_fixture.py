@@ -58,6 +58,7 @@ class FixtureTests(unittest.TestCase):
                 data=p.read_bytes();m=p.stat()
                 result.append((data,m.st_dev,m.st_ino,m.st_mode,m.st_nlink,m.st_size,m.st_mtime_ns,m.st_ctime_ns))
             return result
+        self.assertIn(h.CANARY.encode(), partial.read_bytes())
         before=snapshot()
         for _ in range(3):
             result=h.assert_phase(self.p,'failed')

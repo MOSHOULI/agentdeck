@@ -99,7 +99,7 @@ export const AgentSquare: React.FC<{ onOpenDshInventory?: () => void; active?: b
         </div>
 
         <div className="agent-list" aria-label="Agent 列表" aria-busy={loading}>
-          {filteredAgents.map((agent) => <AgentCard key={agent.id} reviewContext={JSON.stringify([active, selectedAgentId, filter, query, supportFilter])} agent={agent} busy={loading} dataStale={dataStale} selected={selectedAgentId === agent.id} onPrepareInstall={prepareInstall} onInstall={installAgent} onConfigure={configureAgent} onUninstall={uninstallAgent} onSelect={selectAgent} onOpenDshInventory={onOpenDshInventory} />)}
+          {filteredAgents.map((agent) => <AgentCard active={active} key={agent.id} reviewContext={JSON.stringify([active, selectedAgentId, filter, query, supportFilter])} agent={agent} busy={loading} dataStale={dataStale} selected={selectedAgentId === agent.id} onPrepareInstall={prepareInstall} onInstall={installAgent} onConfigure={configureAgent} onUninstall={uninstallAgent} onSelect={selectAgent} onOpenDshInventory={onOpenDshInventory} />)}
           {loading && agents.length === 0 && <div className="empty-state agent-empty"><Icon name="agents" size={28} /><h2>正在加载 Agent</h2><p>读取注册表与本地安装状态。</p></div>}
           {!loading && refreshError && agents.length === 0 && <div className="empty-state agent-empty"><Icon name="alert" size={28} /><h2>暂时无法读取 Agent 列表</h2><p>检查桌面后端连接后重试。</p><button type="button" className="button" onClick={() => { void loadAgents(); }}><Icon name="refresh" size={15} />重新加载</button></div>}
           {!loading && (!refreshError || agents.length > 0) && filteredAgents.length === 0 && (
