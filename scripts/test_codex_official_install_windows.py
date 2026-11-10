@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline parser/layout tests; Windows runner fixtures execute only authored Python."""
 import base64
+from contextlib import contextmanager
 import hashlib
 import io
 import json
@@ -15,6 +16,37 @@ import unittest
 from unittest.mock import patch
 import codex_official_install_windows as h
 import windows_job_process as job
+
+@contextmanager
+def synthetic_metadata_diagnostics():
+    """Only wrapped synthetic-fixture tests: report metadata, never paths/contents.
+
+    Keep the actual comparator's return value and failure unchanged. This records
+    the exact inputs at rejection, not a later stat that may describe another state.
+    """
+    original_digest = h.file_digest
+    original_compare = h.metadata_families_match
+    suffix = None
+    def digest(path, *args, **kwargs):
+        nonlocal suffix
+        previous = suffix; suffix = Path(path).suffix
+        try: return original_digest(path, *args, **kwargs)
+        finally: suffix = previous
+    def compare(before, opened, windows):
+        result = original_compare(before, opened, windows)
+        if not result:
+            keys = ('st_dev', 'st_ino', 'st_mode', 'st_size', 'st_nlink',
+                    'st_mtime_ns', 'st_ctime_ns', 'st_birthtime_ns', 'st_file_attributes')
+            print('SYNTHETIC_METADATA_DIAGNOSTIC ' + json.dumps({
+                'python': sys.version, 'suffix': suffix, 'windows': windows,
+                'before': {k: getattr(before, k, None) for k in keys},
+                'opened': {k: getattr(opened, k, None) for k in keys},
+                'different_fields': [k for k in keys if getattr(before, k, None) != getattr(opened, k, None)],
+            }, sort_keys=True), flush=True)
+        return result
+    with patch.object(h, 'file_digest', side_effect=digest), patch.object(h, 'metadata_families_match', side_effect=compare):
+        yield
+
 
 class Offline(unittest.TestCase):
     def test_path_handle_mode_normalization_is_narrow(self):
@@ -96,6 +128,7 @@ class Offline(unittest.TestCase):
         for name,b in native.items():(paths['prefix']/'node_modules/@openai/codex/node_modules/@openai/codex-win32-x64'/name).write_bytes(b)
         for name in h.SHIMS:(paths['prefix']/name).write_bytes((Path(__file__).parent/'fixtures/codex-windows-shims'/(name+'.txt')).read_bytes())
         return paths,rr,nr
+    @synthetic_metadata_diagnostics()
     def test_complete_layout_and_exact_shims(self):
         with tempfile.TemporaryDirectory() as t:
             paths,rr,nr=self.fixture(Path(t));result=h.verify_install(paths,rr,nr);self.assertTrue(result['launcher_shims_verified'])
@@ -124,6 +157,7 @@ class WindowsRunner(unittest.TestCase):
     def execute(self,code,path,seconds=5,limit=65536):
         env={'SystemRoot':h.windows_directory(),'WINDIR':h.windows_directory(),'TEMP':str(path),'TMP':str(path)}
         return job.run([str(Path(sys.executable).resolve()),'-I','-c',code],path,env,seconds,limit)
+    @synthetic_metadata_diagnostics()
     def test_native_plain_cmd_exe_metadata_consistency(self):
         with tempfile.TemporaryDirectory() as t:
             for name in ('plain','codex.cmd','codex.exe'):
