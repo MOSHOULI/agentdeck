@@ -197,7 +197,7 @@ jobs:
         shell: pwsh
         timeout-minutes: 10
         run: |
-          $node = (Get-Command node.exe -CommandType Application).Source
+          $node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
           $npm = Join-Path (Split-Path -Parent $node) 'node_modules/npm/bin/npm-cli.js'
           if (-not (Test-Path -LiteralPath $npm -PathType Leaf)) { throw 'Official npm CLI missing beside trusted Node' }
           $evidence = Join-Path $env:RUNNER_TEMP 'codex-windows-install-evidence'

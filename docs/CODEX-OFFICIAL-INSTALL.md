@@ -131,7 +131,7 @@ Run with official Node and its adjacent npm JavaScript CLI, never `npm.cmd`,
 using a fresh evidence path:
 
 ```powershell
-$node = (Get-Command node.exe -CommandType Application).Source
+$node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
 $npm = Join-Path (Split-Path -Parent $node) 'node_modules/npm/bin/npm-cli.js'
 python -B scripts/codex_official_install_windows.py --node $node --npm $npm --evidence "$env:RUNNER_TEMP/codex-windows-install-result.json"
 ```
