@@ -11,6 +11,7 @@ use serde_json::Value;
 
 use crate::registry::AgentDefinition;
 
+pub mod codex_animations;
 mod codex_preview;
 pub use codex_preview::{
     CodexConfigurationPreview, CodexConfigurationTarget, preview_codex_configuration,
