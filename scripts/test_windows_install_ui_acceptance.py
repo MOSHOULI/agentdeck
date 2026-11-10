@@ -57,10 +57,20 @@ class Tests(unittest.TestCase):
             self.assertNotIn(forbidden, flow)
         guard = UI[UI.index('function Assert-FailedInstallObservation'):UI.index('function Check-FailedReviewedInstall')]
         for check in ('installCalls -ne 1', 'versionProbes -ne 0', 'partialInstallRetained -ne $true',
-                      '(Get-FailedInstallState $fixture) -cne $residual', '(Get-CodexSnapshot) -cne $baseline',
+                      '$observedResidual -cne $residual', '(Get-CodexSnapshot) -cne $baseline',
                       'Assert-InstallNoConfirmation', "Contains('软件安装操作已完成')"):
             self.assertIn(check, guard)
         self.assertEqual(flow.count('Assert-FailedInstallObservation $fixture $manifest $baseline $residual'), 5)
+
+    def test_failed_residual_diagnostics_are_fixed_and_do_not_relax_guard(self):
+        diff = UI[UI.index('function Get-FailedStateDifference'):UI.index('function Assert-FailedInstallObservation')]
+        self.assertIn("@('path','directory','hash','length','created','modified','attributes','acl')", diff)
+        self.assertIn('entryIndex = $index; fields = $fields', diff)
+        guard = UI[UI.index('function Assert-FailedInstallObservation'):UI.index('function Check-FailedReviewedInstall')]
+        self.assertIn("throw ('Failed installation residual changed: ' + $stage)", guard)
+        self.assertIn("checkpoint = $stage; changes = $difference", guard)
+        for stage in ('initial', 'settled', 'refresh', 'restart', 'occupied-preview'):
+            self.assertIn("Assert-FailedInstallObservation $fixture $manifest $baseline $residual '" + stage + "'", UI)
 
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
