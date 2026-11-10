@@ -16,7 +16,7 @@ class OfflineDriver:
     """Assertion model only, not evidence of a browser/native execution."""
     def __init__(self, fixture, install, fault=None):
         self.fixture = fixture; self.install = install; self.fault = fault
-        self.dialog = False; self.confirmations = 0; self.clicks = []
+        self.dialog = False; self.confirmations = 0; self.clicks = []; self.commands = []
     def click(self, selector):
         self.clicks.append(selector)
         if selector == subject.PREVIEW: self.dialog = True
@@ -25,6 +25,10 @@ class OfflineDriver:
             self.dialog = False; self.confirmations += 1
             if self.fault == 'timeout': raise harness.Failure('ui_wait_expired')
             if self.confirmations == 2: self.install()
+    def one(self, selector):
+        if selector != "//*[@id='agent-search']": raise AssertionError('unexpected input')
+        return 'search-element'
+    def command(self, *args): self.commands.append(args)
     def type(self, *_): pass
     def enabled(self, *_): return True
     def value(self, *_): return 'Codex'
@@ -157,7 +161,9 @@ class FixtureTests(unittest.TestCase):
         subject.assert_coverage(records)
         self.assertEqual(driver.clicks.count(subject.CONFIRM), 2)
         self.assertEqual(driver.clicks.count(subject.CANCEL), 1)
-        self.assertLess(driver.clicks.index("//*[@id='workspace-panel-agents']//h1"), driver.clicks.index(subject.PREVIEW))
+        self.assertNotIn("//*[@id='workspace-panel-agents']//h1", driver.clicks)
+        self.assertEqual(driver.commands, [('POST', '/element/search-element/value', {'text': '\ue004', 'value': ['\ue004']})])
+        self.assertLess(phases.index('install_search_tab'), phases.index('install_initial_preview_click'))
         self.assertIn(subject.DETAILS, driver.clicks)
         self.assertNotIn('Codex', subject.DETAILS)
         self.assertEqual([entry['stage'] for entry in trace], ['install_initial_preview', 'install_stale_preview', 'install_fresh_preview'])
@@ -186,6 +192,19 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(trace, [{'stage': 'install_initial_preview',
                                  'before': {'prefix_queries': 0, 'root_queries': 0},
                                  'after': {'prefix_queries': 0, 'root_queries': 0}}])
+
+    def test_failed_native_tab_is_not_replayed_or_followed_by_preview(self):
+        driver = OfflineDriver(self.f, lambda: self.fail('must not install'))
+        def fail_tab(*args):
+            driver.commands.append(args)
+            raise harness.Failure('driver_http_error')
+        driver.command = fail_tab
+        with self.assertRaises(harness.Failure):
+            subject.exercise(driver, self.f, self.root, [], lambda _: None)
+        self.assertEqual(len(driver.commands), 1)
+        self.assertEqual(driver.clicks.count(subject.PREVIEW), 0)
+        self.assertEqual(driver.clicks.count(subject.CONFIRM), 0)
+        subject.assert_absent(self.f)
 
     def test_uncertain_confirm_never_replayed(self):
         driver = OfflineDriver(self.f, lambda: self.fail('must not install'), fault='timeout')

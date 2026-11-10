@@ -179,10 +179,13 @@ def exercise(driver, fixture, home, records, phase, trace=None):
     driver.click("//*[@role='tab' and @aria-label='Agent 管理']")
     phase('install_search')
     driver.type("//*[@id='agent-search']", 'Codex')
-    # End the native edit on a non-action heading before taking a review token.
-    # WebKit may defer the search change event until blur; never use the preview
-    # action itself to commit that edit. This is a real pointer click, not script.
-    driver.click("//*[@id='workspace-panel-agents']//h1")
+    # Commit the native edit with one WebDriver Tab key before review. Static
+    # headings are not interactable click targets in native WebKit. Tab changes
+    # focus only; it does not activate the next control or replay any action.
+    phase('install_search_tab')
+    search = driver.one("//*[@id='agent-search']")
+    driver.command('POST', '/element/' + search + '/value', {'text': '\ue004', 'value': ['\ue004']})
+    phase('install_search_ready')
     driver.wait(lambda: driver.value("//*[@id='agent-search']") == 'Codex')
     driver.wait(lambda: len(driver.elements("//*[@aria-label='Agent 列表']/article")) == 1)
     driver.wait(lambda: driver.elements(PREVIEW) and driver.enabled(PREVIEW))
