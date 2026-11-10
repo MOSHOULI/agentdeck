@@ -8,7 +8,7 @@ function Get-InstallAccessibleText {
     return (@($nodes | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) -join "`n")
 }
 function Wait-InstallText([string]$expected,
-    [ValidateSet('occupied-preview-error','authored-install-error','stale-error','install-complete','installed-version','version','source','package','global','prefix','manager')][string]$check) {
+    [ValidateSet('session-boundary','occupied-preview-error','authored-install-error','stale-error','install-complete','installed-version','version','source','package','global','prefix','manager')][string]$check) {
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
         if ((Get-InstallAccessibleText).Contains($expected)) { return }
@@ -133,7 +133,7 @@ function Check-ReviewedInstall {
         Open-ReviewedInstallPlan $fixture $manifest
         $null = Invoke-InstallFixture @('--stale', '--manifest', $manifest)
         Click-Qwen '确认安装软件'
-        Wait-InstallText 'Installation target changed since confirmation' 'stale-error'
+        Wait-InstallText '安装请求已发送，但完成状态未确认。' 'stale-error'
         Assert-InstallNoConfirmation
         $counts = Invoke-InstallFixture @('--assert', 'absent', '--manifest', $manifest) | ConvertFrom-Json
         if ((Get-CodexSnapshot) -cne $baseline) { throw 'Stale installation changed configuration' }
@@ -210,7 +210,7 @@ function Get-FailedStateDifference([string]$before, [string]$after) {
     return ,$changes
 }
 function Assert-FailedInstallObservation($fixture, [string]$manifest, [string]$baseline, [string]$residual,
-    [ValidateSet('initial','settled','refresh','restart','occupied-preview')][string]$stage) {
+    [ValidateSet('initial','settled','refresh','restart','occupied-preview','session-observation')][string]$stage) {
     $counts = Invoke-InstallFixture @('--assert', 'failed', '--manifest', $manifest) | ConvertFrom-Json
     if ($counts.installCalls -ne 1 -or $counts.versionProbes -ne 0 -or $counts.partialInstallRetained -ne $true) {
         throw 'Failed installation was retried, executed an agent or lost partial state'
@@ -226,6 +226,46 @@ function Assert-FailedInstallObservation($fixture, [string]$manifest, [string]$b
     Assert-InstallNoConfirmation
     if ((Get-InstallAccessibleText).Contains('软件安装操作已完成')) { throw 'Failed installation displayed success' }
     return $counts
+}
+function Assert-InstallSessionAbsent {
+    if ((Get-InstallAccessibleText).Contains('本会话安装记录：')) { throw 'Session installation record unexpectedly persisted across restart' }
+}
+function Observe-FailedInstallSession($fixture, [string]$manifest, [string]$baseline, [string]$residual) {
+    $before = Invoke-InstallFixture @('--assert', 'failed', '--manifest', $manifest) | ConvertFrom-Json
+    $condition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ProcessIdProperty, $script:running.Id)
+    $window = [Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Children, $condition)
+    $matches = $window.FindAll([Windows.Automation.TreeScope]::Descendants,
+        [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, '本会话安装记录：安装完成状态未确认'))
+    if ($matches.Count -ne 1) { throw 'Missing or ambiguous unconfirmed session record' }
+    $control = $matches[0]
+    $boundary = '这是本会话已确认请求的历史目标快照，不是当前磁盘检查、安装所有权或恢复凭据。关闭或重启应用后记录丢失。'
+    if (-not (Get-InstallAccessibleText).Contains($boundary)) {
+        $pattern = $null
+        if ($control.TryGetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) {
+            $expand = [Windows.Automation.ExpandCollapsePattern]$pattern
+            if ($expand.Current.ExpandCollapseState -ne [Windows.Automation.ExpandCollapseState]::Collapsed) { throw 'Unexpected session record expand state' }
+            $expand.Expand()
+        } else {
+            Add-Type -AssemblyName System.Windows.Forms
+            $control.SetFocus()
+            if (-not $control.Current.HasKeyboardFocus) { throw 'Session record focus not confirmed' }
+            [Windows.Forms.SendKeys]::SendWait('{ENTER}')
+        }
+    }
+    Wait-InstallText $boundary 'session-boundary'
+    $nodes = $window.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+    Assert-AcceptanceCanariesAbsent $nodes
+    $names = @($nodes | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
+    foreach ($value in @('已审核 npm prefix','已审核全局目录','已审核包目录','已审核启动文件目录','已审核 npm 入口','已审核安装器 Node',
+                         '@openai/codex', $fixture.prefix, $fixture.globalRoot, $fixture.package, $fixture.manager, $fixture.node)) {
+        if ($names -cnotcontains $value) { throw 'Unconfirmed session target snapshot mismatch' }
+    }
+    Wait-InstallText '再次预览不会清理残留或自动重试。此记录不提供可重放令牌或恢复命令。' 'session-boundary'
+    Wait-InstallText '请求可能在内部预检阶段被拒绝，也可能已执行或留下部分软件；仅凭失败不能判断。没有自动重试、回滚、清理或卸载。' 'session-boundary'
+    $after = Assert-FailedInstallObservation $fixture $manifest $baseline $residual 'session-observation'
+    foreach ($key in @('installCalls','versionProbes','prefixQueries','rootQueries')) {
+        if ($before.$key -ne $after.$key) { throw 'Read-only session inspection executed a fixture operation' }
+    }
 }
 function Check-FailedReviewedInstall {
     $savedPath = $env:PATH; $savedExt = $env:PATHEXT
@@ -251,7 +291,7 @@ function Check-FailedReviewedInstall {
 
         Open-ReviewedInstallPlan $fixture $manifest
         Click-Qwen '确认安装软件'
-        Wait-InstallText '安装失败（软件可能已安装，请查看检测状态）' 'authored-install-error'
+        Wait-InstallText '安装请求已发送，但完成状态未确认。' 'authored-install-error'
         Assert-InstallNoConfirmation
         $null = Wait-QwenControl '刷新列表' ([Windows.Automation.ControlType]::Button)
         $null = Invoke-InstallFixture @('--assert', 'failed', '--manifest', $manifest)
@@ -261,6 +301,7 @@ function Check-FailedReviewedInstall {
         # action. The event log counts attempts before exclusive-marker rejection.
         Start-Sleep -Milliseconds 1000
         $counts = Assert-FailedInstallObservation $fixture $manifest $baseline $residual 'settled'
+        Observe-FailedInstallSession $fixture $manifest $baseline $residual
         Save-QwenEvidence 'failed-reviewed-install-confirmed'
         Record 'failed-reviewed-install-confirmed' @{ fixtureCounts = $counts; residualUnchanged = $true; noSuccessNotice = $true }
 
@@ -268,13 +309,23 @@ function Check-FailedReviewedInstall {
         $null = Wait-QwenControl '刷新列表' ([Windows.Automation.ControlType]::Button)
         Start-Sleep -Milliseconds 1000
         $counts = Assert-FailedInstallObservation $fixture $manifest $baseline $residual 'refresh'
+        Observe-FailedInstallSession $fixture $manifest $baseline $residual
         Save-QwenEvidence 'failed-reviewed-install-refreshed'
         Record 'failed-reviewed-install-refreshed' @{ fixtureCounts = $counts; residualUnchanged = $true; configurationUnchanged = $true }
+
+        $tab = Wait-QwenControl 'Qwen 配置检查' ([Windows.Automation.ControlType]::TabItem)
+        ([Windows.Automation.SelectionItemPattern]$tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)).Select()
+        $tab = Wait-QwenControl 'Agent 管理' ([Windows.Automation.ControlType]::TabItem)
+        ([Windows.Automation.SelectionItemPattern]$tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)).Select()
+        Observe-FailedInstallSession $fixture $manifest $baseline $residual
+        Save-QwenEvidence 'failed-reviewed-install-session-navigation'
+        Record 'failed-reviewed-install-session-navigation' @{ reviewedTargetPreserved = $true; noFixtureExecution = $true; persistentRecovery = $false }
 
         Stop-App
         Check-Gui 'failed-reviewed-install-restart' -KeepOpen
         Set-QwenPath '搜索 Agent' 'Codex'
         $null = Wait-QwenControl '刷新列表' ([Windows.Automation.ControlType]::Button)
+        Assert-InstallSessionAbsent
         $counts = Assert-FailedInstallObservation $fixture $manifest $baseline $residual 'restart'
         Save-QwenEvidence 'failed-reviewed-install-restarted'
         # A partial package occupies the selected destination. A fresh preview
@@ -282,9 +333,10 @@ function Check-FailedReviewedInstall {
         Click-Qwen '安装 OpenAI Codex'
         Wait-InstallText '无法取得有效安装预览，请刷新后重新检查。' 'occupied-preview-error'
         $counts = Assert-FailedInstallObservation $fixture $manifest $baseline $residual 'occupied-preview'
+        Assert-InstallSessionAbsent
         Save-QwenEvidence 'failed-reviewed-install-occupied-preview'
         Record 'failed-reviewed-install-occupied-preview' @{ fixtureCounts = $counts; confirmationAbsent = $true; residualUnchanged = $true }
-        Record 'failed-reviewed-install-complete' @{ fixtureCounts = $counts; stages = @('preview_cancel','confirmed_failure','refresh_no_retry','restart_no_retry','occupied_preview_rejected'); residualUnchanged = $true; configurationUnchanged = $true; authoredNpmExecuted = $true; authoredAgentExecuted = $false; officialAgentExecuted = $false; automaticRollbackObserved = $false; retryAttempted = $false }
+        Record 'failed-reviewed-install-complete' @{ fixtureCounts = $counts; stages = @('preview_cancel','confirmed_failure','refresh_no_retry','session_navigation_retained','restart_no_retry','session_restart_absent','occupied_preview_rejected'); residualUnchanged = $true; configurationUnchanged = $true; authoredNpmExecuted = $true; authoredAgentExecuted = $false; officialAgentExecuted = $false; automaticRollbackObserved = $false; retryAttempted = $false }
     } finally {
         Stop-App
         $env:PATH = $savedPath; $env:PATHEXT = $savedExt

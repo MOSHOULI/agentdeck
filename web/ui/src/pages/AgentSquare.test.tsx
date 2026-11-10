@@ -25,7 +25,7 @@ describe('AgentSquare', () => {
     vi.mocked(bridge.configureAgent).mockReset().mockResolvedValue({ warnings: [] });
     vi.mocked(bridge.getAgents).mockReset().mockResolvedValue(agents);
     vi.mocked(bridge.runtimeMode).mockReturnValue('native');
-    useAgentStore.setState({ agents: [], loading: false, error: null, notice: null, refreshError: null, dataStale: true, selectedAgentId: null, memories: {} });
+    useAgentStore.setState({ installSessions: {}, agents: [], loading: false, error: null, notice: null, refreshError: null, dataStale: true, selectedAgentId: null, memories: {} });
   });
 
   it('renders the heading, two status filters, search and observed rows only', async () => {
@@ -149,7 +149,7 @@ describe('AgentSquare', () => {
     expect(configure).toBeDisabled();
     expect(screen.getByText(/显示上次检测结果，当前状态待刷新/)).toBeInTheDocument();
     fireEvent.click(refresh);
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('still offline'));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('加载 Agent 列表失败'));
     expect(install).toBeDisabled();
     expect(configure).toBeDisabled();
     fireEvent.click(install);

@@ -312,8 +312,8 @@ def exercise(driver, fixture, home, records, phase, trace=None, observe=None):
     preview('install_stale_preview')
     with fixture['manager'].open('a') as stream: stream.write('\n// harmless synthetic revision change\n')
     driver.click(CONFIRM)
-    driver.wait(lambda: driver.elements("//*[@role='alert' and contains(@class, 'agent-notice')]") and '安装失败' in driver.text("//*[@role='alert' and contains(@class, 'agent-notice')]"))
-    if 'Installation target changed since confirmation' not in driver.text("//*[@role='alert' and contains(@class, 'agent-notice')]"):
+    driver.wait(lambda: driver.elements("//*[@role='alert' and contains(@class, 'agent-notice')]"))
+    if '安装请求已发送，但完成状态未确认。' not in driver.text("//*[@role='alert' and contains(@class, 'agent-notice')]"):
         raise InstallFailure('stale_rejection_not_verified')
     assert_absent(fixture); done('stale_revision')
     phase('install_confirmed')

@@ -1,3 +1,4 @@
+import { InstallSessionNote } from './InstallSessionNote';
 import { CodexAnimations } from "./CodexAnimations";
 import { CodexConfigurationPlan } from './CodexConfigurationPlan';
 import { useWorkspaceActivityStore } from '../stores/workspaceActivity';
@@ -302,6 +303,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         </div>
       </div>
 
+      <InstallSessionNote agentId={agent.id} />
       {agent.id === 'codex' && <CodexConfigurationPlan busy={busy || pending !== null || plan !== null} context={JSON.stringify([reviewContext, selected, agent.id, dataStale])} />}
       {agent.id === 'codex' && <CodexAnimations busy={busy || pending !== null || plan !== null} context={JSON.stringify([reviewContext, selected, agent.id, dataStale])} />}
 

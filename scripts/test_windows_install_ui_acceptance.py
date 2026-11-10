@@ -79,6 +79,25 @@ class Tests(unittest.TestCase):
         for stage in ('initial', 'settled', 'refresh', 'restart', 'occupied-preview'):
             self.assertIn("Assert-FailedInstallObservation $fixture $manifest $baseline $residual '" + stage + "'", UI)
 
+    def test_session_panel_is_native_readonly_and_not_persistent_recovery(self):
+        method = UI[UI.index('function Observe-FailedInstallSession'):UI.index('function Check-FailedReviewedInstall')]
+        self.assertIn('本会话安装记录：安装完成状态未确认', method)
+        self.assertIn('TryGetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern', method)
+        self.assertIn('关闭或重启应用后记录丢失。', method)
+        self.assertIn('不是当前磁盘检查、安装所有权或恢复凭据', method)
+        self.assertIn("@('installCalls','versionProbes','prefixQueries','rootQueries')", method)
+        for field in ('已审核 npm prefix','已审核全局目录','已审核包目录','已审核启动文件目录','已审核 npm 入口','已审核安装器 Node'):
+            self.assertIn(field, method)
+        self.assertNotIn("Click-Qwen '确认安装软件'", method)
+        self.assertNotIn('catch', method)
+        flow = UI[UI.index('function Check-FailedReviewedInstall'):]
+        self.assertEqual(flow.count('Observe-FailedInstallSession $fixture $manifest $baseline $residual'), 3)
+        self.assertEqual(flow.count('Assert-InstallSessionAbsent'), 2)
+        self.assertIn("Wait-QwenControl 'Qwen 配置检查'", flow)
+        self.assertIn("Wait-QwenControl 'Agent 管理'", flow)
+        self.assertNotIn('Installation target changed since confirmation', UI)
+        self.assertIn('安装请求已发送，但完成状态未确认。', UI)
+
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
         self.assertLess(LIFECYCLE.index('    Check-ReviewedInstall'), LIFECYCLE.index('    Check-CodexReadonly'))
