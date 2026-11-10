@@ -29,6 +29,19 @@ class Tests(unittest.TestCase):
         self.assertIn("Wait-QwenControl '关闭 OpenAI Codex 详情'", method)
         self.assertNotIn("Click-Qwen '查看 OpenAI Codex 详情'", UI)
 
+    def test_details_failure_evidence_uses_fixed_keys_and_preserves_checks(self):
+        wait = UI[UI.index('function Wait-InstallText'):UI.index('function Assert-InstallNoConfirmation')]
+        self.assertIn('ValidateSet(', wait)
+        self.assertIn("Save-QwenEvidence ('reviewed-install-timeout-' + $check)", wait)
+        self.assertIn("@{ check = $check }", wait)
+        self.assertNotIn('+ $expected', wait)
+        self.assertLess(UI.index("Save-QwenEvidence 'reviewed-install-details-expanded'"),
+                        UI.index("Wait-InstallText '实测版本 1.2.3' 'version'"))
+        for line in ("Wait-InstallText 'npm 全局目录匹配，安装历史未知' 'source'",
+                     "Wait-InstallText $fixture.package 'package'", "Wait-InstallText $fixture.globalRoot 'global'",
+                     "Wait-InstallText $fixture.prefix 'prefix'", "Wait-InstallText $fixture.manager 'manager'"):
+            self.assertIn(line, UI)
+
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
         self.assertLess(LIFECYCLE.index('    Check-ReviewedInstall'), LIFECYCLE.index('    Check-CodexReadonly'))

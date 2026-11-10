@@ -7,13 +7,16 @@ function Get-InstallAccessibleText {
     $nodes = $window.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
     return (@($nodes | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) -join "`n")
 }
-function Wait-InstallText([string]$expected) {
+function Wait-InstallText([string]$expected,
+    [ValidateSet('stale-error','install-complete','installed-version','version','source','package','global','prefix','manager')][string]$check) {
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
         if ((Get-InstallAccessibleText).Contains($expected)) { return }
         Start-Sleep -Milliseconds 100
     } while ([DateTime]::UtcNow -lt $deadline)
-    throw 'Expected synthetic install UI evidence missing'
+    Save-QwenEvidence ('reviewed-install-timeout-' + $check)
+    Record 'reviewed-install-text-timeout' @{ check = $check }
+    throw ('Expected synthetic install UI evidence missing: ' + $check)
 }
 function Assert-InstallNoConfirmation {
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
@@ -130,7 +133,7 @@ function Check-ReviewedInstall {
         Open-ReviewedInstallPlan $fixture $manifest
         $null = Invoke-InstallFixture @('--stale', '--manifest', $manifest)
         Click-Qwen '确认安装软件'
-        Wait-InstallText 'Installation target changed since confirmation'
+        Wait-InstallText 'Installation target changed since confirmation' 'stale-error'
         Assert-InstallNoConfirmation
         $counts = Invoke-InstallFixture @('--assert', 'absent', '--manifest', $manifest) | ConvertFrom-Json
         if ((Get-CodexSnapshot) -cne $baseline) { throw 'Stale installation changed configuration' }
@@ -139,8 +142,8 @@ function Check-ReviewedInstall {
 
         Open-ReviewedInstallPlan $fixture $manifest
         Click-Qwen '确认安装软件'
-        Wait-InstallText '软件安装操作已完成，未应用配置。'
-        Wait-InstallText 'v1.2.3'
+        Wait-InstallText '软件安装操作已完成，未应用配置。' 'install-complete'
+        Wait-InstallText 'v1.2.3' 'installed-version'
         $deadline = [DateTime]::UtcNow.AddSeconds(30)
         while ((Get-InstallAccessibleText).Contains('安装操作处理中')) {
             if ([DateTime]::UtcNow -ge $deadline) { throw 'Installed card did not settle' }
@@ -150,11 +153,14 @@ function Check-ReviewedInstall {
         Record 'reviewed-install-confirmed' @{ fixtureCounts = $counts; authoredNpmAndAgentCodeExecuted = $true; officialAgentExecuted = $false }
         # Invoke the exact detail control, not a reflow-sensitive coordinate.
         Open-InstalledCodexDetails
-        Wait-InstallText '实测版本 1.2.3'
-        Wait-InstallText 'npm 全局目录匹配，安装历史未知'
-        foreach ($value in @('@openai/codex', $fixture.package, $fixture.globalRoot, $fixture.prefix, (Join-Path $fixture.managerBin 'npm.cmd'))) {
-            Wait-InstallText $value
-        }
+        Save-QwenEvidence 'reviewed-install-details-expanded'
+        Wait-InstallText '实测版本 1.2.3' 'version'
+        Wait-InstallText 'npm 全局目录匹配，安装历史未知' 'source'
+        Wait-InstallText '@openai/codex' 'package'
+        Wait-InstallText $fixture.package 'package'
+        Wait-InstallText $fixture.globalRoot 'global'
+        Wait-InstallText $fixture.prefix 'prefix'
+        Wait-InstallText $fixture.manager 'manager'
         $null = Invoke-InstallFixture @('--assert', 'no-config', '--manifest', $manifest)
         Assert-InstallNoConfiguration
         if ((Get-CodexSnapshot) -cne $baseline) { throw 'Installation changed configuration' }
