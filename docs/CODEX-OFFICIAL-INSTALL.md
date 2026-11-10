@@ -4,6 +4,8 @@ Development verification only. This does not enable a new adapter or publish an 
 
 ## English
 
+### Linux x86_64
+
 `scripts/codex_official_install.py` verifies a real npm global installation of the
 fixed official `@openai/codex` **0.167.0** package and its Linux x86_64 native
 optional package (`@openai/codex@0.167.0-linux-x64`, installed under the alias
@@ -91,3 +93,69 @@ npm 使用空 HOME、独立 prefix/cache/tmp、空 user/global npmrc，不继承
 不验证登录、模型调用或真实 AgentDeck 安装适配器。后者会运行已安装程序来检测版本，
 仍需要独立的运行隔离验收。本测试需要联网下载，不能当作“已实现网络隔离”；原本
 受阻的运行时隔离要求保持不变。无新安装包发布，其他平台、版本和 npm 布局不自动算通过。
+
+
+## Windows x64 / Windows x64 官方包布局验收
+
+### English
+
+The Windows lane is a separate real-package installation/layout gate. It does
+not convert the Linux verifier into a cross-platform success claim. It runs on
+an ephemeral GitHub-hosted Windows runner with the official Node 24/npm setup,
+using the pinned official Codex **0.167.0** root archive and Windows x64 optional
+package (`@openai/codex@0.167.0-win32-x64`, installed under
+`@openai/codex-win32-x64`). This is a fixed acceptance sample, not a promise that
+the pinned version remains the latest. The native inventory contains 47 files
+with 501,483,647 expanded bytes.
+Lifecycle scripts remain disabled. Codex and its generated launchers must never
+be executed, even for a version check. A layout test can read executable bytes
+without executing them.
+
+The Windows gate is mandatory inside the existing native Windows job, before
+building the AgentDeck installer. Its separate JSON artifact is tied to the
+exact `BUILD_SHA`, is uploaded even on failure, and must not be interpreted as a
+runtime, GUI, authentication or configuration-load result. Offline harness tests
+also run on Linux; those tests validate guard logic, not a Windows installation.
+All existing native, installed-lifecycle and Linux WebView gates remain in place.
+This CI addition does not publish a release or an installation package.
+
+**Boundaries:** successful npm installation and correct Windows file layout do
+not prove that Codex starts, reads AgentDeck configuration, or operates offline.
+AgentDeck's real install adapter runs a provenance/version probe and therefore
+still needs its separate runtime-isolation acceptance. The Windows Codex
+configuration UI remains read-only; this package-layout gate does not enable
+apply or restore. Unsupported architectures, other versions and alternative npm
+layouts are not covered.
+
+Run with official Node and its adjacent npm JavaScript CLI, never `npm.cmd`,
+using a fresh evidence path:
+
+```powershell
+$node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
+$npm = Join-Path (Split-Path -Parent $node) 'node_modules/npm/bin/npm-cli.js'
+python -B scripts/codex_official_install_windows.py --node $node --npm $npm --evidence "$env:RUNNER_TEMP/codex-windows-install-result.json"
+```
+
+Offline regressions on Linux and Windows:
+
+```sh
+python -B scripts/test_codex_official_install_windows.py
+```
+
+### 中文
+
+Windows 使用独立的真实官方包安装与布局门禁，不把 Linux 的成功结果直接当作
+Windows 支持。验收在一次性的 GitHub-hosted Windows runner 中，使用官方 Node 24/npm，
+安装固定 **0.167.0** 的 Codex 根包及 Windows x64 平台包（47 个文件，展开
+501,483,647 字节）。这是固定验收样本，不承诺未来始终为最新版。生命周期脚本始终禁用；只检查文件，
+不执行 Codex 或生成的启动器，也不通过运行 --version 来验证版本。
+
+门禁位于现有 Windows 原生任务中，必须通过后才能构建 AgentDeck 安装包。独立 JSON
+证据 artifact 与精确 BUILD_SHA 关联，失败也上传。新增离线安全回归同时在 Linux
+执行，但离线测试通过不代表 Windows 真实安装通过。原有原生测试、已安装应用生命周期
+和 Linux WebView 等门禁全部保留；本次增加 CI 不自动发布版本或安装包。
+
+**边界：** npm 安装成功、平台文件布局正确，不等于 Codex 能运行、已读取 AgentDeck
+配置、已完成登录或具备离线运行能力。真实 AgentDeck 安装适配器会执行版本和来源探测，
+仍须单独完成运行隔离验收。Windows Codex 配置界面仍为只读，本门禁不开放应用或恢复。
+其他架构、版本、npm 布局没有因此获得支持声明。
