@@ -8,10 +8,10 @@ fn location() -> Result<PathBuf, String> {
     }
     let home = aisync_core::home_dir().ok_or(ERROR)?;
     let dir = home.join(".codex");
-    if let Some(value) = std::env::var_os("CODEX_HOME") {
-        if value.is_empty() || Path::new(&value) != dir {
-            return Err(ERROR.into());
-        }
+    if let Some(value) = std::env::var_os("CODEX_HOME")
+        && (value.is_empty() || Path::new(&value) != dir)
+    {
+        return Err(ERROR.into());
     }
     let registry = registry::load_registry_read_only().map_err(|_| ERROR)?;
     let agent = registry.agents.get("codex").ok_or(ERROR)?;
