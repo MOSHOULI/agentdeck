@@ -29,26 +29,80 @@ pub(crate) fn can_install(agent: &AgentDefinition) -> bool {
     adapter(agent).is_some()
 }
 
-pub(crate) fn install_agent(agent: &AgentDefinition) -> crate::Result<()> {
-    // Serialize this application's installers, including direct IPC calls. This
-    // is not a lock against other package managers or another OS process.
-    static INSTALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// Preview and both install entrypoints share the application's installer lock.
+// This does not exclude other processes or same-user filesystem changes.
+static INSTALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn locked<T>(action: impl FnOnce() -> Result<T, String>) -> crate::Result<T> {
     let _guard = INSTALL_LOCK.try_lock().map_err(|_| {
         crate::Error::InstallFailed("Another installation is already running".into())
     })?;
-    let known = adapter(agent).ok_or_else(|| {
-        crate::Error::InstallFailed(
-            "No supported safe installation adapter; use the original official installation method"
-                .into(),
-        )
-    })?;
-    let search = SearchPath::from_environment().map_err(|_| {
-        crate::Error::InstallFailed("Cannot inspect the executable search path".into())
-    })?;
-    install_with(known, &search, &mut ProcessRunner, |command| {
-        run_bounded(command, INSTALL_TIMEOUT, 1024 * 1024).map(|_| ())
+    action().map_err(crate::Error::InstallFailed)
+}
+
+fn inputs(agent: &AgentDefinition) -> Result<(KnownAgent, SearchPath), String> {
+    let known = adapter(agent).ok_or(
+        "No supported safe installation adapter; use the original official installation method",
+    )?;
+    let search =
+        SearchPath::from_environment().map_err(|_| "Cannot inspect the executable search path")?;
+    Ok((known, search))
+}
+
+/// A reviewable observation, not a permission token or a zero-side-effect sandbox.
+/// npm queries execute local code. Version, registry, dependency closure, npm
+/// environment/configuration and script downloads are not pinned by this revision.
+/// nodePath is the installer interpreter, not every future launcher interpreter.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallPreview {
+    pub schema_version: u32,
+    pub agent_id: String,
+    pub package: String,
+    pub executable: String,
+    pub manager_path: String,
+    pub node_path: String,
+    pub prefix: String,
+    pub global_root: String,
+    pub package_root: String,
+    pub launcher_directory: String,
+    pub script_policy: String,
+    pub version_policy: String,
+    pub revision: String,
+}
+
+pub(crate) fn preview_install(agent: &AgentDefinition) -> crate::Result<InstallPreview> {
+    locked(|| {
+        let (known, search) = inputs(agent)?;
+        let plan = build_plan(known, &search, &mut ProcessRunner)?;
+        project_plan(&agent.id, known, search.platform, &plan)
     })
-    .map_err(crate::Error::InstallFailed)
+}
+
+pub(crate) fn install_agent(agent: &AgentDefinition) -> crate::Result<()> {
+    locked(|| {
+        let (known, search) = inputs(agent)?;
+        install_with(known, &search, &mut ProcessRunner, |command| {
+            run_bounded(command, INSTALL_TIMEOUT, 1024 * 1024).map(|_| ())
+        })
+    })
+}
+
+pub(crate) fn install_agent_from_preview(
+    agent: &AgentDefinition,
+    revision: &str,
+) -> crate::Result<()> {
+    locked(|| {
+        let (known, search) = inputs(agent)?;
+        install_reviewed_with(
+            &agent.id,
+            revision,
+            known,
+            &search,
+            &mut ProcessRunner,
+            |command| run_bounded(command, INSTALL_TIMEOUT, 1024 * 1024).map(|_| ()),
+        )
+    })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -67,6 +121,104 @@ struct InstallPlan {
     prefix: PathBuf,
     root: PathBuf,
     package: &'static str,
+}
+
+// Do not silently replace non-Unicode bytes/surrogates or display invisible
+// controls. Preserve exact spelling, including Windows verbatim prefixes.
+fn display_value(value: &std::ffi::OsStr) -> Result<String, String> {
+    let value = value
+        .to_str()
+        .ok_or("Installation path is not representable as Unicode")?;
+    if value.is_empty() || value.len() > 32768 || value.trim() != value
+        || value.chars().any(|c| c.is_control() || matches!(c,
+            '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}')) {
+        return Err("Installation path contains ambiguous, control or overlong text".into());
+    }
+    Ok(value.to_owned())
+}
+
+fn project_plan(
+    id: &str,
+    known: KnownAgent,
+    platform: Platform,
+    plan: &InstallPlan,
+) -> Result<InstallPreview, String> {
+    let mut preview = InstallPreview {
+        schema_version: 1,
+        agent_id: display_value(id.as_ref())?,
+        package: display_value(plan.package.as_ref())?,
+        executable: display_value(known.executable.as_ref())?,
+        manager_path: display_value(plan.manager.cli.as_os_str())?,
+        node_path: display_value(plan.manager.command.program.as_os_str())?,
+        prefix: display_value(plan.prefix.as_os_str())?,
+        global_root: display_value(plan.root.as_os_str())?,
+        package_root: display_value(plan.root.join(plan.package).as_os_str())?,
+        launcher_directory: display_value(
+            if platform == Platform::Windows {
+                plan.prefix.clone()
+            } else {
+                plan.prefix.join("bin")
+            }
+            .as_os_str(),
+        )?,
+        script_policy: if plan.package == "@earendil-works/pi-coding-agent" {
+            "disabled"
+        } else {
+            "npm_configured"
+        }
+        .into(),
+        version_policy: "npm_configured".into(),
+        revision: String::new(),
+    };
+    let mut hash = Sha256::new();
+    let mut field = |bytes: &[u8]| {
+        hash.update((bytes.len() as u64).to_be_bytes());
+        hash.update(bytes);
+    };
+    field(b"AgentDeck reviewed npm install v1; absent-only; double-preflight; bounded; provenance-postcheck");
+    field(if platform == Platform::Windows {
+        b"windows"
+    } else {
+        b"unix"
+    });
+    field(&serde_json::to_vec(&preview).map_err(|_| "Cannot serialize installation preview")?);
+    let command = install_command(plan);
+    field(&[u8::from(command.npm_metadata)]);
+    field(display_value(command.program.as_os_str())?.as_bytes());
+    for arg in &command.args {
+        field(display_value(arg)?.as_bytes());
+    }
+    field(&plan.manager.program_digest);
+    field(&plan.manager.cli_digest);
+    preview.revision = format!("{:x}", hash.finalize());
+    Ok(preview)
+}
+
+fn install_reviewed_with(
+    id: &str,
+    revision: &str,
+    known: KnownAgent,
+    search: &SearchPath,
+    runner: &mut impl Runner,
+    install: impl FnOnce(&ProbeCommand) -> io::Result<()>,
+) -> Result<(), String> {
+    if revision.len() != 64
+        || !revision
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    {
+        return Err(
+            "A valid installation preview revision is required; refresh and review the target"
+                .into(),
+        );
+    }
+    let plan = build_plan(known, search, runner)?;
+    if project_plan(id, known, search.platform, &plan)?.revision != revision {
+        return Err(
+            "Installation target changed since confirmation; refresh and review the target".into(),
+        );
+    }
+    execute_plan(plan, known, search, runner, install)
 }
 
 fn digest(path: &Path) -> Result<Vec<u8>, String> {
@@ -340,6 +492,16 @@ fn install_with(
     install: impl FnOnce(&ProbeCommand) -> io::Result<()>,
 ) -> Result<(), String> {
     let plan = build_plan(known, search, runner)?;
+    execute_plan(plan, known, search, runner, install)
+}
+
+fn execute_plan(
+    plan: InstallPlan,
+    known: KnownAgent,
+    search: &SearchPath,
+    runner: &mut impl Runner,
+    install: impl FnOnce(&ProbeCommand) -> io::Result<()>,
+) -> Result<(), String> {
     // Re-resolve the selected manager, paths and occupied destinations. The plan
     // is never accepted from IPC and is not a durable ownership receipt.
     if plan != build_plan(known, search, runner)? {
@@ -367,6 +529,273 @@ mod tests {
         executable: "codex",
         package: Some("@openai/codex"),
     };
+
+    #[test]
+    fn preview_serialization_and_exact_confirmation_install_once() {
+        for platform in [Platform::Windows, Platform::Unix] {
+            if platform == Platform::Unix && !cfg!(unix) {
+                continue;
+            }
+            let fixture = Fixture::new(platform);
+            let plan = build_plan(CODEX, &fixture.search, &mut fixture.runner()).unwrap();
+            let preview = project_plan("codex", CODEX, platform, &plan).unwrap();
+            let json = serde_json::to_value(&preview).unwrap();
+            assert_eq!(json.as_object().unwrap().len(), 13);
+            assert_eq!(json["schemaVersion"], 1);
+            assert_eq!(json["agentId"], "codex");
+            assert_eq!(json["package"], "@openai/codex");
+            assert_eq!(json["executable"], "codex");
+            assert_eq!(json["managerPath"], plan.manager.cli.to_str().unwrap());
+            assert_eq!(
+                json["nodePath"],
+                plan.manager.command.program.to_str().unwrap()
+            );
+            assert_eq!(json["prefix"], plan.prefix.to_str().unwrap());
+            assert_eq!(json["globalRoot"], plan.root.to_str().unwrap());
+            assert_eq!(
+                json["packageRoot"],
+                plan.root.join(plan.package).to_str().unwrap()
+            );
+            let bin = if platform == Platform::Windows {
+                plan.prefix.clone()
+            } else {
+                plan.prefix.join("bin")
+            };
+            assert_eq!(json["launcherDirectory"], bin.to_str().unwrap());
+            assert_eq!(json["scriptPolicy"], "npm_configured");
+            assert_eq!(json["versionPolicy"], "npm_configured");
+            assert_eq!(preview.revision.len(), 64);
+            assert!(
+                preview
+                    .revision
+                    .bytes()
+                    .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+            );
+            assert!(
+                !fixture.root.exists(),
+                "Preview must not create the installation target"
+            );
+            let mut calls = 0;
+            install_reviewed_with(
+                "codex",
+                &preview.revision,
+                CODEX,
+                &fixture.search,
+                &mut fixture.runner(),
+                |_| {
+                    calls += 1;
+                    fixture.populate();
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(calls, 1);
+        }
+    }
+
+    #[test]
+    fn missing_malformed_wrong_agent_and_wrong_revision_never_install() {
+        let fixture = Fixture::new(Platform::Windows);
+        let plan = build_plan(CODEX, &fixture.search, &mut fixture.runner()).unwrap();
+        let preview = project_plan("codex", CODEX, Platform::Windows, &plan).unwrap();
+        for (id, revision) in [
+            ("codex", "".to_owned()),
+            ("codex", "0".repeat(64)),
+            ("codex", "A".repeat(64)),
+            ("other", preview.revision),
+        ] {
+            assert!(
+                install_reviewed_with(
+                    id,
+                    &revision,
+                    CODEX,
+                    &fixture.search,
+                    &mut fixture.runner(),
+                    |_| panic!("Unconfirmed target must not install")
+                )
+                .is_err()
+            );
+        }
+        assert!(!fixture.root.exists());
+    }
+
+    #[test]
+    fn every_displayed_and_execution_identity_changes_revision() {
+        let fixture = Fixture::new(Platform::Windows);
+        let mut plan = build_plan(CODEX, &fixture.search, &mut fixture.runner()).unwrap();
+        let original = project_plan("codex", CODEX, Platform::Windows, &plan).unwrap();
+        let other_known = KnownAgent {
+            executable: "other",
+            package: CODEX.package,
+        };
+        assert_ne!(
+            original.revision,
+            project_plan("codex", other_known, Platform::Windows, &plan)
+                .unwrap()
+                .revision
+        );
+        assert_ne!(
+            original.revision,
+            project_plan("codex", CODEX, Platform::Unix, &plan)
+                .unwrap()
+                .revision
+        );
+        plan.package = "@earendil-works/pi-coding-agent";
+        let pi = project_plan("codex", CODEX, Platform::Windows, &plan).unwrap();
+        assert_eq!(pi.script_policy, "disabled");
+        assert_ne!(original.revision, pi.revision);
+        plan.package = "other-package";
+        assert_ne!(
+            original.revision,
+            project_plan("codex", CODEX, Platform::Windows, &plan)
+                .unwrap()
+                .revision
+        );
+        plan.package = "@openai/codex";
+        plan.manager.command.args.push("--synthetic-option".into());
+        assert_ne!(
+            original.revision,
+            project_plan("codex", CODEX, Platform::Windows, &plan)
+                .unwrap()
+                .revision
+        );
+    }
+
+    #[test]
+    fn stale_node_cli_prefix_and_root_never_reach_installer() {
+        for changed in ["node", "cli", "prefix", "root"] {
+            let mut fixture = Fixture::new(Platform::Windows);
+            let plan = build_plan(CODEX, &fixture.search, &mut fixture.runner()).unwrap();
+            let preview = project_plan("codex", CODEX, Platform::Windows, &plan).unwrap();
+            let mut runner = fixture.runner();
+            match changed {
+                "node" => {
+                    std::fs::write(&plan.manager.command.program, b"\x7fELFchanged bytes").unwrap()
+                }
+                "cli" => std::fs::write(&fixture.manager_cli, b"#!/usr/bin/env node\n// changed")
+                    .unwrap(),
+                "prefix" => {
+                    let prefix = fixture.directory.join("new global");
+                    std::fs::create_dir(&prefix).unwrap();
+                    fixture.search.directories.push(prefix.clone());
+                    runner.prefix = prefix.clone();
+                    runner.root = prefix.join("node_modules");
+                }
+                "root" => runner.root = fixture.directory.join("other root"),
+                _ => unreachable!(),
+            }
+            assert!(
+                install_reviewed_with(
+                    "codex",
+                    &preview.revision,
+                    CODEX,
+                    &fixture.search,
+                    &mut runner,
+                    |_| panic!("Stale preview must not install")
+                )
+                .is_err(),
+                "{changed}"
+            );
+            assert!(!fixture.root.exists());
+        }
+    }
+
+    #[test]
+    fn reviewed_target_still_requires_absence_double_preflight_and_postcheck() {
+        for scenario in ["occupied", "race", "postcheck", "failure"] {
+            let mut fixture = Fixture::new(Platform::Windows);
+            let plan = build_plan(CODEX, &fixture.search, &mut fixture.runner()).unwrap();
+            let preview = project_plan("codex", CODEX, Platform::Windows, &plan).unwrap();
+            let mut runner = fixture.runner();
+            if scenario == "occupied" {
+                fixture.search.directories.pop();
+                std::fs::create_dir_all(fixture.root.join("@openai/codex")).unwrap();
+            }
+            if scenario == "race" {
+                let cli = fixture.manager_cli.clone();
+                runner.mutate = Some(Box::new(move |call| {
+                    if call == 2 {
+                        std::fs::write(&cli, "#!/usr/bin/env node\n// changed").unwrap();
+                    }
+                }));
+            }
+            let mut calls = 0;
+            let error = install_reviewed_with(
+                "codex",
+                &preview.revision,
+                CODEX,
+                &fixture.search,
+                &mut runner,
+                |_| {
+                    calls += 1;
+                    assert!(scenario == "postcheck" || scenario == "failure");
+                    // An unrelated/partial install must be left intact, never rolled back.
+                    std::fs::create_dir_all(fixture.root.join("partial-output")).unwrap();
+                    if scenario == "failure" {
+                        Err(io::Error::other("synthetic failure"))
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+            .unwrap_err();
+            if scenario == "postcheck" || scenario == "failure" {
+                assert_eq!(calls, 1);
+                assert!(error.contains("no rollback"));
+                assert!(fixture.root.join("partial-output").exists());
+            } else {
+                assert_eq!(calls, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn display_projection_is_lossless_bounded_and_rejects_hidden_controls() {
+        for valid in [
+            "/tmp/中文 & %VAR% !",
+            r"C:\Users\测试\App Data",
+            r"\\?\C:\npm",
+        ] {
+            assert_eq!(display_value(valid.as_ref()).unwrap(), valid);
+        }
+        for invalid in [
+            "",
+            " /tmp/path",
+            "/tmp/path ",
+            "/tmp/a\nb",
+            "/tmp/a\0b",
+            "/tmp/a\u{202e}b",
+            "/tmp/a\u{200b}b",
+        ] {
+            assert!(display_value(invalid.as_ref()).is_err());
+        }
+        assert!(display_value("x".repeat(32769).as_ref()).is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            assert!(display_value(&OsString::from_vec(vec![b'/', 0xff])).is_err());
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            assert!(display_value(&OsString::from_wide(&[0xd800])).is_err());
+        }
+    }
+
+    #[test]
+    fn preview_and_reviewed_install_keep_unsupported_adapters_closed() {
+        let registry =
+            crate::registry::parse_registry(include_str!("../../../../../agents/registry-v3.json"))
+                .unwrap();
+        for id in ["claude-code", "qwen-code", "codex"] {
+            let mut agent = registry.agents[id].clone();
+            if id == "codex" {
+                agent.install.command = Some("npm install -g arbitrary".into());
+            }
+            assert!(preview_install(&agent).is_err());
+            assert!(install_agent_from_preview(&agent, &"0".repeat(64)).is_err());
+        }
+    }
 
     struct Fixture {
         directory: PathBuf,

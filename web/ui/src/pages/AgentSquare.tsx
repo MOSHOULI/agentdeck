@@ -11,8 +11,8 @@ const filters = [
   { id: 'installed', label: '已安装' },
 ] as const;
 
-export const AgentSquare: React.FC<{ onOpenDshInventory?: () => void }> = ({ onOpenDshInventory }) => {
-  const { agents, loading, error, notice, refreshError, dataStale, selectedAgentId, loadAgents, installAgent, configureAgent, uninstallAgent, selectAgent, clearError } = useAgentStore();
+export const AgentSquare: React.FC<{ onOpenDshInventory?: () => void; active?: boolean }> = ({ onOpenDshInventory, active = true }) => {
+  const { agents, loading, previewing, error, notice, refreshError, dataStale, selectedAgentId, loadAgents, prepareInstall, installAgent, configureAgent, uninstallAgent, selectAgent, clearError } = useAgentStore();
   const [filter, setFilter] = useState<'all' | 'installed'>('all');
   const [query, setQuery] = useState('');
   const [supportFilter, setSupportFilter] = useState<SupportFilter>('all');
@@ -27,16 +27,16 @@ export const AgentSquare: React.FC<{ onOpenDshInventory?: () => void }> = ({ onO
       .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
       .filter((agent) => {
         if (filter === 'installed' && !matchesInstalledFilter(agent)) return false;
-        if (!matchesSupportFilter(agent, supportFilter, { native, loading, dataStale })) return false;
+        if (!matchesSupportFilter(agent, supportFilter, { native, loading: loading && !previewing, dataStale })) return false;
         return !search || [agent.name, agent.id, agent.description, agent.uiType, agent.category]
           .some((value) => value.toLocaleLowerCase().includes(search));
       });
-  }, [agents, filter, query, supportFilter, native, loading, dataStale]);
+  }, [agents, filter, query, supportFilter, native, loading, previewing, dataStale]);
 
   const resetFilters = () => { setQuery(''); setFilter('all'); setSupportFilter('all'); };
   const supportHint = supportFilter === 'automatic'
     ? !native ? '当前为只读模式。请在桌面应用中刷新检测后查看可自动安装项。'
-      : loading || dataStale ? '当前检测状态待刷新，可自动安装列表暂不展示候选。'
+      : (loading && !previewing) || dataStale ? '当前检测状态待刷新，可自动安装列表暂不展示候选。'
       : '仅显示本次检测未发现、支持自动安装且检测证据无冲突的 Agent；安装仍需单独确认。'
     : supportFilter === 'manual' ? '仅表示目录未提供自动安装能力，不代表未安装；请查看条目详情及官方说明。'
       : supportFilter === 'attention' ? '包含检测出错、无法自动验证、证据冲突或待刷新的条目，不等于软件损坏。'
@@ -93,13 +93,13 @@ export const AgentSquare: React.FC<{ onOpenDshInventory?: () => void }> = ({ onO
         <p id="agent-support-hint" className="agent-support-hint">{supportHint}</p>
 
         <div className="agent-list-summary">
-          <span>{loading ? <span role="status">正在读取 Agent 状态…</span> : refreshError && agents.length === 0 ? '列表暂不可用' : `显示 ${filteredAgents.length} / ${agents.length} 款 Agent`}</span>
+          <span>{loading ? <span role="status">{previewing ? '正在检查 npm 安装计划…' : '正在读取 Agent 状态…'}</span> : refreshError && agents.length === 0 ? '列表暂不可用' : `显示 ${filteredAgents.length} / ${agents.length} 款 Agent`}</span>
           <span>按名称排序</span>
           <span>{selectedAgent ? `当前选择：${selectedAgent.name}` : '尚未选择 Agent'}</span>
         </div>
 
         <div className="agent-list" aria-label="Agent 列表" aria-busy={loading}>
-          {filteredAgents.map((agent) => <AgentCard key={agent.id} agent={agent} busy={loading} dataStale={dataStale} selected={selectedAgentId === agent.id} onInstall={installAgent} onConfigure={configureAgent} onUninstall={uninstallAgent} onSelect={selectAgent} onOpenDshInventory={onOpenDshInventory} />)}
+          {filteredAgents.map((agent) => <AgentCard key={agent.id} reviewContext={JSON.stringify([active, selectedAgentId, filter, query, supportFilter])} agent={agent} busy={loading} dataStale={dataStale} selected={selectedAgentId === agent.id} onPrepareInstall={prepareInstall} onInstall={installAgent} onConfigure={configureAgent} onUninstall={uninstallAgent} onSelect={selectAgent} onOpenDshInventory={onOpenDshInventory} />)}
           {loading && agents.length === 0 && <div className="empty-state agent-empty"><Icon name="agents" size={28} /><h2>正在加载 Agent</h2><p>读取注册表与本地安装状态。</p></div>}
           {!loading && refreshError && agents.length === 0 && <div className="empty-state agent-empty"><Icon name="alert" size={28} /><h2>暂时无法读取 Agent 列表</h2><p>检查桌面后端连接后重试。</p><button type="button" className="button" onClick={() => { void loadAgents(); }}><Icon name="refresh" size={15} />重新加载</button></div>}
           {!loading && (!refreshError || agents.length > 0) && filteredAgents.length === 0 && (

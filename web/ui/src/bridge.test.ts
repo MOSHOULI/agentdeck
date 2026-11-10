@@ -79,7 +79,7 @@ describe('runtime boundary', () => {
   it('rejects browser reads and writes without an explicit demo', async () => {
     expect(bridge.runtimeMode()).toBe('unavailable');
     await expect(bridge.getAgents()).rejects.toThrow('未连接桌面后端');
-    await expect(bridge.installAgent('codex')).rejects.toThrow('未连接桌面后端');
+    await expect(bridge.installAgent('codex', 'a'.repeat(64))).rejects.toThrow('未连接桌面后端');
     await expect(bridge.configureAgent('codex')).rejects.toThrow('未连接桌面后端');
     expect(invoke).not.toHaveBeenCalled();
   });
@@ -91,7 +91,7 @@ describe('runtime boundary', () => {
     expect(agents.every((agent) => agent.popular === false && agent.stars === 0)).toBe(true);
     expect(agents.every((agent) => agent.description.startsWith('合成示例：'))).toBe(true);
     expect(agents.every((agent) => !agent.version || agent.version === '0.0.0-demo')).toBe(true);
-    await expect(bridge.installAgent('codex')).rejects.toThrow('只读演示');
+    await expect(bridge.installAgent('codex', 'a'.repeat(64))).rejects.toThrow('只读演示');
     await expect(bridge.configureAgent('codex')).rejects.toThrow('只读演示');
     await expect(bridge.saveApiKey('codex', 'test', 'not-a-secret')).rejects.toThrow('只读演示');
     await expect(bridge.getApiKey('codex')).rejects.toThrow('只读演示');
@@ -132,8 +132,8 @@ describe('runtime boundary', () => {
   it('uses distinct native IPC commands for software installation and explicit configuration', async () => {
     Object.assign(window, { __TAURI_INTERNALS__: {} });
     vi.mocked(invoke).mockResolvedValue({ warnings: [] });
-    await bridge.installAgent('codex');
-    expect(invoke).toHaveBeenCalledExactlyOnceWith('install_agent', { id: 'codex' });
+    await bridge.installAgent('codex', 'a'.repeat(64));
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('install_agent', { id: 'codex', revision: 'a'.repeat(64) });
     vi.mocked(invoke).mockClear();
     await bridge.configureAgent('codex');
     expect(invoke).toHaveBeenCalledExactlyOnceWith('configure_agent', { id: 'codex' });
@@ -143,8 +143,8 @@ describe('runtime boundary', () => {
     Object.assign(window, { __TAURI_INTERNALS__: {} });
     vi.mocked(invoke).mockRejectedValue(new Error('backend unavailable'));
     expect(bridge.runtimeMode()).toBe('native');
-    await expect(bridge.installAgent('codex')).rejects.toThrow('backend unavailable');
-    expect(invoke).toHaveBeenCalledWith('install_agent', { id: 'codex' });
+    await expect(bridge.installAgent('codex', 'a'.repeat(64))).rejects.toThrow('backend unavailable');
+    expect(invoke).toHaveBeenCalledWith('install_agent', { id: 'codex', revision: 'a'.repeat(64) });
   });
 });
 

@@ -153,6 +153,19 @@ fn reject_symlinks(path: &Path) -> crate::Result<()> {
     Ok(())
 }
 
+/// Read-only existence check before opening a vault lock. Missing directories
+/// are empty vaults, not a request to initialize one. Check ancestors first so
+/// dangling links (including a linked ancestor above a missing vault) still fail.
+pub(super) fn vault_directory_exists(dir: &Path) -> crate::Result<bool> {
+    reject_symlinks(dir)?;
+    match std::fs::symlink_metadata(dir) {
+        Ok(meta) if meta.is_dir() => Ok(true),
+        Ok(_) => Err(Error::VaultError("vault 路径不是目录".into())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
 /// 原子写（临时文件 + 替换）
 pub(crate) fn atomic_write(path: &Path, content: &str) -> crate::Result<()> {
     atomic_write_bytes(path, content.as_bytes())

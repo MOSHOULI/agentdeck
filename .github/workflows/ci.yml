@@ -84,6 +84,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Reviewed install synthetic fixture contract (offline)
+        run: python -B scripts/test_linux_install_webview.py
       - name: Qoder pinned archive downloader (offline safety regressions)
         run: python -B scripts/test_fetch_qoder_ui_archive.py
       - name: Qwen distribution harness (offline safety regressions)
@@ -252,7 +254,7 @@ jobs:
           retention-days: 14
 
   linux-webview:
-    name: Linux real WebView cache observation
+    name: Linux real WebView cache and reviewed install acceptance
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -281,6 +283,7 @@ jobs:
         run: |
           python -B scripts/test_linux_qoder_webview.py
           python -B scripts/test_linux_qwen_webview.py
+          python -B scripts/test_linux_install_webview.py
           python -B scripts/test_qoder_complete_fixtures.py
           python -B scripts/test_fetch_qoder_ui_archive.py
           python -B scripts/test_dsh_distribution_smoke.py

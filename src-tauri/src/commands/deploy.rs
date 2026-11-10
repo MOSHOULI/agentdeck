@@ -152,12 +152,27 @@ fn list_agents_with_status() -> Result<Vec<AgentInfo>, String> {
         .collect())
 }
 
+/// Inspect an ephemeral target for review without running the installer.
+#[tauri::command]
+pub async fn preview_agent_install(
+    id: String,
+) -> Result<aisync_core::deploy::InstallPreview, String> {
+    let agent = find_agent(&id).map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || aisync_core::deploy::preview_install(&agent))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 /// Install software only. This must not initialize profiles, vaults or backups.
 #[tauri::command]
-pub async fn install_agent(id: String) -> Result<aisync_core::deploy::InstallOutcome, String> {
+pub async fn install_agent(
+    id: String,
+    revision: String,
+) -> Result<aisync_core::deploy::InstallOutcome, String> {
     let agent = find_agent(&id).map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
-        aisync_core::deploy::install_agent(&agent)?;
+        aisync_core::deploy::install_agent_from_preview(&agent, &revision)?;
         Ok::<_, aisync_core::Error>(aisync_core::deploy::InstallOutcome {
             warnings: Vec::new(),
         })
