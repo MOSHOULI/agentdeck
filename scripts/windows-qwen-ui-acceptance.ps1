@@ -48,21 +48,26 @@ function Assert-QwenNoConfirmation {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw 'Stale confirmation remains'
 }
+function Assert-AcceptanceCanariesAbsent($nodes) {
+    # Check before any accessibility evidence or screenshot is persisted.
+    foreach ($node in $nodes) {
+        foreach ($canary in @('SYNTHETIC-NOT-A-CREDENTIAL', 'AGENTDECK_SYNTHETIC_INSTALL_PRIVATE_CANARY')) {
+            if ($node.Current.Name.Contains($canary)) { throw 'Synthetic canary leaked in accessibility tree' }
+            $pattern = $null
+            if ($node.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern) -and
+                ([Windows.Automation.ValuePattern]$pattern).Current.Value.Contains($canary)) {
+                throw 'Synthetic canary leaked in accessible value'
+            }
+        }
+    }
+}
 function Save-QwenEvidence([string]$stage) {
     $processCondition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ProcessIdProperty, $script:running.Id)
     $window = [Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Children, $processCondition)
     if ($null -eq $window) { throw 'App window missing during evidence check' }
     $nodes = $window.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
     $names = @($nodes | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
-    # Check before writing evidence: never emit leaked configuration values.
-    if (($names -join "`n").Contains('SYNTHETIC-NOT-A-CREDENTIAL')) { throw 'Configuration canary leaked in accessibility tree' }
-    foreach ($node in $nodes) {
-        $pattern = $null
-        if ($node.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern) -and
-            ([Windows.Automation.ValuePattern]$pattern).Current.Value.Contains('SYNTHETIC-NOT-A-CREDENTIAL')) {
-            throw 'Configuration canary leaked in accessible value'
-        }
-    }
+    Assert-AcceptanceCanariesAbsent $nodes
     $names | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $EvidenceDirectory "$stage-accessibility.json") -Encoding utf8
 }
 function Open-QwenFixture([string]$settings, [string]$manifest) {
