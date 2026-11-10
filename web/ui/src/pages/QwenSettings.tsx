@@ -66,7 +66,7 @@ export function QwenSettings() {
       <input className="control" id="qwen-settings" value={settings} maxLength={4096} autoComplete="off" spellCheck={false} disabled={mode === 'unavailable' || mutating} onChange={e => change(setSettings, e.target.value)} />
       <label htmlFor="qwen-manifest">运行时 package.json 绝对路径</label>
       <input className="control" id="qwen-manifest" value={manifest} maxLength={4096} autoComplete="off" spellCheck={false} disabled={mode === 'unavailable' || mutating} onChange={e => change(setManifest, e.target.value)} />
-      <p className="muted">路径仅在本页保留，不自动发现。每文件最多 64 KiB，严格 JSON；注释、BOM、未知版本和链接不受支持。文件不受支持不代表 Qwen 未安装。</p>
+      <p className="muted">路径仅在本页保留，不自动发现。每文件最多 64 KiB，设置摘要支持单个开头 UTF-8 BOM 和行/块注释，不支持尾随逗号或重复键。包声明及 Vim 编辑仍须严格 JSON；未知版本和链接不受支持。文件不受支持不代表 Qwen 未安装。</p>
       <div className="dsh-form-actions"><button type="submit" className="button button-primary" disabled={busy || editingBusy || workspaceBusy || mode === 'unavailable' || !settings.trim() || !manifest.trim()}>{busy ? '检查中…' : mode === 'demo' ? '查看合成示例' : '检查所选文件'}</button>
         <button type="button" className="button" disabled={mutating} onClick={() => { generation.current++; setResult(null); setError(false); setSettings(''); setManifest(''); }}>清除路径与结果</button></div>
       {busy && <p role="status">正在读取。清除或修改路径后，旧请求的结果将被丢弃；文件读取本身无法中止。</p>}

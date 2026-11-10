@@ -108,6 +108,13 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 ))]
 fn explicit_inspection_is_redacted_and_has_no_content_writes() {
     let f = Fixture::new();
+    // Actual CLI/native-reader acceptance, still synthetic selected files.
+    let settings = fs::read_to_string(f.root.join("settings.json")).unwrap();
+    fs::write(
+        f.root.join("settings.json"),
+        format!("\u{feff}/*PRIVATE_COMMENT*/{settings}//SECRET_LINE\n"),
+    )
+    .unwrap();
     let before = snapshot(&f.root);
     let output = f
         .command()

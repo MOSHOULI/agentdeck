@@ -10,6 +10,7 @@
 //! filesystem reads can block on mounts or update atime. This is not a sandbox.
 pub mod owned;
 use crate::inspection::{parse, reader};
+mod settings_json;
 mod types;
 
 use reader::{NativeSelectedFileReader, SelectedFileReader};
@@ -58,7 +59,7 @@ fn inspect_with(
             "Only explicit settings.json and package.json files are read. No code, environment, credential files, other settings layers or registry are loaded; nothing is executed or written.",
             "Only the declared @qwen-code/qwen-code 0.27.0 and schema $version 4 are reviewed. A declaration does not verify installation, authenticity or association with these settings.",
             "Only known section presence is summarized. No configuration values, dynamic keys or raw errors are returned. Presence is not validity, ownership, authentication or effective configuration.",
-            "Strict JSON only: comments, BOM and other unsupported syntax produce no summary, not a claim that Qwen rejects the file. No migration or repair is attempted.",
+            "Read-only settings accept one leading UTF-8 BOM and line/block comments. Trailing commas and duplicate keys remain unsupported. Manifests and owned Vim edits still require strict JSON. No migration or repair is attempted.",
             "No backup, restoration or editing capability is enabled. Other configuration layers, CLI arguments and environment overrides are not resolved.",
             "Link and special-file checks are best effort, not a sandbox against same-user races or hostile mounts. File access times may change; there is no filesystem wall-clock deadline.",
         ],
@@ -110,7 +111,7 @@ fn inspect_with(
     report.version_recognition = VersionRecognition::ReviewedManifestVersion;
     let settings = reader
         .read_selected(settings_path)
-        .and_then(|bytes| parse::parse_json(&bytes))
+        .and_then(|bytes| settings_json::parse_settings(&bytes))
         .and_then(|value| {
             let object = value.as_object().ok_or(InspectionIssue::UnsupportedShape)?;
             if object.get("$version").and_then(|v| v.as_u64()) != Some(4) {
