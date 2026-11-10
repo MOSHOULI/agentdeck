@@ -146,6 +146,7 @@ try {
     Check-Gui 'restart' -KeepOpen
     Check-QoderReadonly
     Check-ReviewedInstall
+    Check-FailedReviewedInstall
     Check-CodexReadonly
     Run-Installer $Installer
     Assert-Version

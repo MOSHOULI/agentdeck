@@ -16,6 +16,7 @@ import sys
 
 CANARY = 'AGENTDECK_SYNTHETIC_INSTALL_PRIVATE_CANARY'
 MARKER = b'synthetic-install-once\n'
+PARTIAL = b'authored incomplete installation; retain for inspection\n'
 class Failure(Exception): pass
 
 def safe_file(path, limit):
@@ -43,7 +44,7 @@ def layout(root,home):
     paths={'root':root,'managerBin':root/'manager','manager':root/'manager/node_modules/npm/bin/npm-cli.js',
            'node':root/'manager/node.exe','prefix':root/'prefix','globalRoot':root/'prefix/node_modules',
            'package':root/'prefix/node_modules/@openai/codex','marker':root/'install-marker',
-           'queries':root/'query-events','versions':root/'version-events','canary':root/'canary.txt','home':Path(home)}
+           'installCalls':root/'install-events','queries':root/'query-events','versions':root/'version-events','canary':root/'canary.txt','home':Path(home)}
     return {k:str(v) for k,v in paths.items()}
 
 def codex_program(p):
@@ -70,7 +71,7 @@ function directory(target){
   if(!s.isDirectory()||s.isSymbolicLink()||canonical(current)!==path.toNamespacedPath(current))throw Error('directory');
  }
 }
-function record(kind){const s=fs.lstatSync(p.queries);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.size>=4096)throw Error('log');fs.appendFileSync(p.queries,kind);}
+function record(kind,target=p.queries){const s=fs.lstatSync(target);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.size>=4096||canonical(target)!==target)throw Error('log');fs.appendFileSync(target,kind);}
 function absent(target){try{fs.lstatSync(target);}catch(e){if(e.code==='ENOENT')return;throw e;}throw Error('exists');}
 try{
  for(const d of [p.prefix,p.globalRoot,path.dirname(p.manager)])directory(d);
@@ -79,12 +80,17 @@ try{
  if(args==='["prefix","--global"]'){record('p');console.log(p.prefix);}
  else if(args==='["root","--global"]'){record('r');console.log(p.globalRoot);}
  else if(args===JSON.stringify(expected)){
+  record('i',p.installCalls);
   absent(p.marker);absent(p.package);
   for(const suffix of ['','.cmd','.ps1','.exe','.com','.bat'])absent(path.join(p.prefix,'codex'+suffix));
   const scope=path.dirname(p.package);if(fs.existsSync(scope))directory(scope);
   fs.writeFileSync(p.marker,'synthetic-install-once\n',{flag:'wx'});
-  if(mode==='fail')throw Error('authored failure after exclusive marker');
-  fs.mkdirSync(scope,{recursive:true});fs.mkdirSync(p.package);fs.mkdirSync(path.join(p.package,'bin'));
+  fs.mkdirSync(scope,{recursive:true});fs.mkdirSync(p.package);
+  if(mode==='fail'){
+   fs.writeFileSync(path.join(p.package,'partial-install.txt'),'authored incomplete installation; retain for inspection\n',{flag:'wx'});
+   throw Error('authored failure after partial installation');
+  }
+  fs.mkdirSync(path.join(p.package,'bin'));
   fs.writeFileSync(path.join(p.package,'package.json'),JSON.stringify({name:'@openai/codex',version:'1.2.3',bin:{codex:'bin/codex.js'}}),{flag:'wx'});
   fs.writeFileSync(path.join(p.package,'bin/codex.js'),codex,{flag:'wx'});
   fs.writeFileSync(path.join(p.prefix,'codex.cmd'),launcher,{flag:'wx'});
@@ -105,7 +111,7 @@ def prepare(root,node,home,mode):
     for directory in (Path(p['manager']).parent,Path(p['globalRoot'])):directory.mkdir(parents=True)
     write_new(Path(p['node']),data)
     write_new(Path(p['manager']).parent.parent/'package.json',json.dumps({'name':'npm','version':'0.0.0','bin':{'npm':'bin/npm-cli.js'}}).encode())
-    for key in ('queries','versions'):write_new(Path(p[key]),b'')
+    for key in ('queries','versions','installCalls'):write_new(Path(p[key]),b'')
     write_new(Path(p['canary']),CANARY.encode())
     write_new(Path(p['manager']),manager_program(p,mode).encode())
     write_new(Path(p['managerBin'])/'npm.cmd',shim('node_modules/npm/bin/npm-cli.js'))
@@ -140,21 +146,26 @@ def no_configuration(m):
             elif entry.name not in ('registry','registry-update.lock'):raise Failure('configuration_created')
 
 def facts(m):
-    q=safe_file(Path(m['queries']),4096);v=safe_file(Path(m['versions']),4096)
-    if any(c not in b'pr' for c in q) or any(c!=ord('v') for c in v):raise Failure('invalid_event_log')
+    q=safe_file(Path(m['queries']),4096);v=safe_file(Path(m['versions']),4096);calls=safe_file(Path(m['installCalls']),4096)
+    if any(c not in b'pr' for c in q) or any(c!=ord('v') for c in v) or any(c!=ord('i') for c in calls):raise Failure('invalid_event_log')
     if safe_file(Path(m['canary']),256)!=CANARY.encode():raise Failure('canary_changed')
     if hashlib.sha256(safe_file(Path(m['node']),256*1024*1024)).hexdigest()!=m['nodeSha256']:raise Failure('node_changed')
-    return {'prefixQueries':q.count(b'p'),'rootQueries':q.count(b'r'),'versionProbes':len(v),'syntheticFixture':True,'officialAgentExecuted':False,'noConfigurationCreated':True}
+    return {'installCalls':len(calls),'partialInstallRetained':False,'prefixQueries':q.count(b'p'),'rootQueries':q.count(b'r'),'versionProbes':len(v),'syntheticFixture':True,'officialAgentExecuted':False,'noConfigurationCreated':True}
 
 def assert_phase(m,phase):
     result=facts(m);prefix=Path(m['prefix']);package=Path(m['package']);marker=Path(m['marker'])
     if phase=='absent':
         if any(os.path.lexists(p) for p in (marker,package,*[prefix/('codex'+s) for s in ('','.cmd','.ps1','.exe','.com','.bat')])):raise Failure('unconfirmed_install_write')
         if result['versionProbes']:raise Failure('unexpected_version_probe')
+        if result['installCalls']:raise Failure('unexpected_install_calls')
     elif phase in ('installed','failed'):
+        if result['installCalls']!=1:raise Failure('unexpected_install_calls')
         if safe_file(marker,128)!=MARKER:raise Failure('install_marker_mismatch')
         if phase=='failed':
-            if m['mode']!='fail' or package.exists() or (prefix/'codex.cmd').exists():raise Failure('failure_state_mismatch')
+            if m['mode']!='fail' or not package.is_dir() or any(os.path.lexists(prefix/('codex'+suffix)) for suffix in ('','.cmd','.ps1','.exe','.com','.bat')):raise Failure('failure_state_mismatch')
+            if {p.name for p in package.iterdir()}!={'partial-install.txt'} or safe_file(package/'partial-install.txt',256)!=PARTIAL:raise Failure('failure_state_mismatch')
+            if result['versionProbes']:raise Failure('unexpected_version_probe')
+            result['partialInstallRetained']=True
         else:
             expected={'package.json':json.dumps({'name':'@openai/codex','version':'1.2.3','bin':{'codex':'bin/codex.js'}},separators=(',',':')).encode(),
                       'bin/codex.js':codex_program(m).encode()}
@@ -174,7 +185,7 @@ FAILURE_CODES = frozenset({
     'unconfirmed_install_write', 'unexpected_version_probe', 'install_marker_mismatch',
     'failure_state_mismatch', 'installed_inventory_mismatch', 'installed_bytes_changed',
     'shim_changed', 'version_not_probed', 'unknown_assertion', 'missing_prepare_arguments',
-    'missing_manifest', 'manager_already_changed',
+    'missing_manifest', 'manager_already_changed', 'unexpected_install_calls',
 })
 
 def failure_diagnostic(error):

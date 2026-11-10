@@ -306,6 +306,9 @@ jobs:
       - name: Execute Windows fixture UTF8 transport regression
         shell: pwsh
         run: ./scripts/test_windows_install_transport.ps1
+      - name: Real Windows failed-install residual snapshot regressions
+        shell: pwsh
+        run: ./scripts/test_windows_failed_install_state.ps1
       - name: Execute Windows evidence canary guard regressions
         shell: pwsh
         run: ./scripts/test_windows_acceptance_canaries.ps1
