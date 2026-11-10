@@ -17,7 +17,7 @@ class FixtureTests(unittest.TestCase):
         home=Path(self.tmp.name)/'home';home.mkdir()
         self.p=h.layout(h.namespaced(self.root),h.namespaced(home))
         for d in (Path(self.p['manager']).parent,Path(self.p['globalRoot'])):d.mkdir(parents=True)
-        for k in ('queries','versions'):Path(self.p[k]).write_bytes(b'')
+        for k in ('queries','versions','installCalls'):Path(self.p[k]).write_bytes(b'')
         Path(self.p['node']).write_bytes(b'AUTHORED_NOT_EXECUTABLE')
         Path(self.p['canary']).write_text(h.CANARY)
         self.p['nodeSha256']=hashlib.sha256(Path(self.p['node']).read_bytes()).hexdigest()
@@ -48,10 +48,37 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(h.assert_phase(self.p,'installed')['versionProbes'],1)
         self.assertNotEqual(self.invoke(self.args()).returncode,0)
         self.assertEqual(Path(self.p['marker']).read_bytes(),h.MARKER)
-    def test_failure_after_marker_never_replays(self):
-        self.write('fail');self.assertNotEqual(self.invoke(self.args()).returncode,0)
-        h.assert_phase(self.p,'failed');self.assertNotEqual(self.invoke(self.args()).returncode,0)
-        self.assertFalse(Path(self.p['package']).exists())
+        with self.assertRaisesRegex(h.Failure,'unexpected_install_calls'):h.assert_phase(self.p,'installed')
+    def test_failure_partial_state_retained_and_retries_are_observable(self):
+        self.write('fail');self.assertEqual(self.invoke(self.args()).returncode,64)
+        partial=Path(self.p['package'])/'partial-install.txt'
+        def snapshot():
+            result=[]
+            for p in (partial,Path(self.p['marker'])):
+                data=p.read_bytes();m=p.stat()
+                result.append((data,m.st_dev,m.st_ino,m.st_mode,m.st_nlink,m.st_size,m.st_mtime_ns,m.st_ctime_ns))
+            return result
+        before=snapshot()
+        for _ in range(3):
+            result=h.assert_phase(self.p,'failed')
+            self.assertEqual((result['installCalls'],result['versionProbes'],result['partialInstallRetained']),(1,0,True))
+            self.assertEqual(self.invoke(['prefix','--global']).returncode,0)
+        self.assertEqual(snapshot(),before)
+        self.assertEqual(self.invoke(self.args()).returncode,64)
+        self.assertEqual(Path(self.p['installCalls']).read_bytes(),b'ii')
+        self.assertEqual(partial.read_bytes(),h.PARTIAL)
+        with self.assertRaisesRegex(h.Failure,'unexpected_install_calls'):h.assert_phase(self.p,'failed')
+    def test_failure_assertion_rejects_missing_changed_or_extra_residue_and_probe(self):
+        self.write('fail');self.assertEqual(self.invoke(self.args()).returncode,64)
+        partial=Path(self.p['package'])/'partial-install.txt'
+        partial.write_bytes(b'changed')
+        with self.assertRaisesRegex(h.Failure,'failure_state_mismatch'):h.assert_phase(self.p,'failed')
+        partial.write_bytes(h.PARTIAL);extra=partial.parent/'extra';extra.write_bytes(b'x')
+        with self.assertRaisesRegex(h.Failure,'failure_state_mismatch'):h.assert_phase(self.p,'failed')
+        extra.unlink();Path(self.p['versions']).write_bytes(b'v')
+        with self.assertRaisesRegex(h.Failure,'unexpected_version_probe'):h.assert_phase(self.p,'failed')
+        Path(self.p['versions']).write_bytes(b'');partial.unlink()
+        with self.assertRaisesRegex(h.Failure,'failure_state_mismatch'):h.assert_phase(self.p,'failed')
     def test_unknown_arguments_and_missing_ignore_scripts_do_nothing(self):
         cases=[['--version'],['exec','anything'],['prefix'],self.args()[:-1]+['@evil/package'],[x for x in self.args() if x!='--ignore-scripts']]
         for args in cases:self.assertNotEqual(self.invoke(args).returncode,0);h.assert_phase(self.p,'absent')

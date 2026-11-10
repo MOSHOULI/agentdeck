@@ -8,7 +8,7 @@ function Get-InstallAccessibleText {
     return (@($nodes | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) -join "`n")
 }
 function Wait-InstallText([string]$expected,
-    [ValidateSet('stale-error','install-complete','installed-version','version','source','package','global','prefix','manager')][string]$check) {
+    [ValidateSet('occupied-preview-error','authored-install-error','stale-error','install-complete','installed-version','version','source','package','global','prefix','manager')][string]$check) {
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
         if ((Get-InstallAccessibleText).Contains($expected)) { return }
@@ -166,6 +166,97 @@ function Check-ReviewedInstall {
         if ((Get-CodexSnapshot) -cne $baseline) { throw 'Installation changed configuration' }
         Save-QwenEvidence 'reviewed-install-source'
         Record 'reviewed-install-complete' @{ fixtureCounts = $counts; stages = @('preview_cancel','stale_revision','confirmed_install','observed_source','no_configuration'); authoredNpmAndAgentCodeExecuted = $true; officialAgentExecuted = $false; realRegistryCompatibilityVerified = $false }
+    } finally {
+        Stop-App
+        $env:PATH = $savedPath; $env:PATHEXT = $savedExt
+    }
+}
+function Get-FailedInstallState($fixture) {
+    # Exact residual state, not mutable query logs. Never write these private paths
+    # or contents into public evidence; retain only the comparison result.
+    $items = @((Get-Item -LiteralPath $fixture.prefix -Force), (Get-Item -LiteralPath $fixture.marker -Force))
+    $items += @(Get-ChildItem -LiteralPath $fixture.prefix -Recurse -Force)
+    if ($items.Count -gt 32) { throw 'Unexpected failed installation residual size' }
+    $values = foreach ($item in ($items | Sort-Object FullName)) {
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Failed installation residual became a reparse point' }
+        [ordered]@{ path = $item.FullName; directory = $item.PSIsContainer;
+            hash = if ($item.PSIsContainer) { '' } else { (Get-FileHash -LiteralPath $item.FullName).Hash };
+            length = if ($item.PSIsContainer) { 0 } else { $item.Length };
+            created = $item.CreationTimeUtc.Ticks; modified = $item.LastWriteTimeUtc.Ticks;
+            attributes = [int]$item.Attributes; acl = (Get-Acl -LiteralPath $item.FullName).Sddl }
+    }
+    return ConvertTo-Json -InputObject @($values) -Depth 5 -Compress
+}
+function Assert-FailedInstallObservation($fixture, [string]$manifest, [string]$baseline, [string]$residual) {
+    $counts = Invoke-InstallFixture @('--assert', 'failed', '--manifest', $manifest) | ConvertFrom-Json
+    if ($counts.installCalls -ne 1 -or $counts.versionProbes -ne 0 -or $counts.partialInstallRetained -ne $true) {
+        throw 'Failed installation was retried, executed an agent or lost partial state'
+    }
+    if ((Get-FailedInstallState $fixture) -cne $residual) { throw 'Failed installation residual changed' }
+    if ((Get-CodexSnapshot) -cne $baseline) { throw 'Failed installation changed configuration' }
+    Assert-InstallNoConfiguration
+    Assert-InstallNoConfirmation
+    if ((Get-InstallAccessibleText).Contains('软件安装操作已完成')) { throw 'Failed installation displayed success' }
+    return $counts
+}
+function Check-FailedReviewedInstall {
+    $savedPath = $env:PATH; $savedExt = $env:PATHEXT
+    $fixtureRoot = Join-Path $root 'Windows authored failed install fixture'
+    $manifest = Invoke-InstallFixture @('--prepare', $fixtureRoot, '--node', $script:acceptanceNode, '--home', $homeDir, '--mode', 'fail')
+    $fixture = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
+    try {
+        $env:PATH = "$($fixture.path);$savedPath"
+        $env:PATHEXT = '.COM;.EXE;.BAT;.CMD'
+        Check-Gui 'failed-reviewed-install-start' -KeepOpen
+        Set-QwenPath '搜索 Agent' 'Codex'
+        $null = Wait-QwenControl '安装 OpenAI Codex' ([Windows.Automation.ControlType]::Button)
+        Assert-InstallNoConfiguration
+        $baseline = Get-CodexSnapshot
+        Open-ReviewedInstallPlan $fixture $manifest
+        Click-Qwen '取消'
+        Assert-InstallNoConfirmation
+        $counts = Invoke-InstallFixture @('--assert', 'absent', '--manifest', $manifest) | ConvertFrom-Json
+        if ($counts.installCalls -ne 0 -or $counts.versionProbes -ne 0) { throw 'Cancelled failure fixture executed installation' }
+        if ((Get-CodexSnapshot) -cne $baseline) { throw 'Cancelled failure fixture changed configuration' }
+        Save-QwenEvidence 'failed-reviewed-install-cancel'
+        Record 'failed-reviewed-install-cancel' @{ fixtureCounts = $counts; configurationUnchanged = $true }
+
+        Open-ReviewedInstallPlan $fixture $manifest
+        Click-Qwen '确认安装软件'
+        Wait-InstallText '安装失败（软件可能已安装，请查看检测状态）' 'authored-install-error'
+        Assert-InstallNoConfirmation
+        $null = Wait-QwenControl '刷新列表' ([Windows.Automation.ControlType]::Button)
+        $null = Invoke-InstallFixture @('--assert', 'failed', '--manifest', $manifest)
+        $residual = Get-FailedInstallState $fixture
+        $counts = Assert-FailedInstallObservation $fixture $manifest $baseline $residual
+        # Observe the settled failure for a bounded interval, without retrying any
+        # action. The event log counts attempts before exclusive-marker rejection.
+        Start-Sleep -Milliseconds 1000
+        $counts = Assert-FailedInstallObservation $fixture $manifest $baseline $residual
+        Save-QwenEvidence 'failed-reviewed-install-confirmed'
+        Record 'failed-reviewed-install-confirmed' @{ fixtureCounts = $counts; residualUnchanged = $true; noSuccessNotice = $true }
+
+        Click-Qwen '刷新列表'
+        $null = Wait-QwenControl '刷新列表' ([Windows.Automation.ControlType]::Button)
+        Start-Sleep -Milliseconds 1000
+        $counts = Assert-FailedInstallObservation $fixture $manifest $baseline $residual
+        Save-QwenEvidence 'failed-reviewed-install-refreshed'
+        Record 'failed-reviewed-install-refreshed' @{ fixtureCounts = $counts; residualUnchanged = $true; configurationUnchanged = $true }
+
+        Stop-App
+        Check-Gui 'failed-reviewed-install-restart' -KeepOpen
+        Set-QwenPath '搜索 Agent' 'Codex'
+        $null = Wait-QwenControl '刷新列表' ([Windows.Automation.ControlType]::Button)
+        $counts = Assert-FailedInstallObservation $fixture $manifest $baseline $residual
+        Save-QwenEvidence 'failed-reviewed-install-restarted'
+        # A partial package occupies the selected destination. A fresh preview
+        # must be rejected by production guards; never erase it to force a retry.
+        Click-Qwen '安装 OpenAI Codex'
+        Wait-InstallText '无法取得有效安装预览，请刷新后重新检查。' 'occupied-preview-error'
+        $counts = Assert-FailedInstallObservation $fixture $manifest $baseline $residual
+        Save-QwenEvidence 'failed-reviewed-install-occupied-preview'
+        Record 'failed-reviewed-install-occupied-preview' @{ fixtureCounts = $counts; confirmationAbsent = $true; residualUnchanged = $true }
+        Record 'failed-reviewed-install-complete' @{ fixtureCounts = $counts; stages = @('preview_cancel','confirmed_failure','refresh_no_retry','restart_no_retry','occupied_preview_rejected'); residualUnchanged = $true; configurationUnchanged = $true; authoredNpmExecuted = $true; authoredAgentExecuted = $false; officialAgentExecuted = $false; automaticRollbackObserved = $false; retryAttempted = $false }
     } finally {
         Stop-App
         $env:PATH = $savedPath; $env:PATHEXT = $savedExt

@@ -168,8 +168,18 @@ confirmed install, observed version/source association, and unchanged agent
 configuration. Native accessibility activation is single-shot; uncertain writes
 are not retried. The authored process counters and complete stage list are
 recorded in the installed-lifecycle evidence, alongside the existing Qwen,
-Codex read-only and Qoder gates. This is not arbitrary installer-failure recovery
-coverage; the negative path in this batch is stale-plan rejection before install.
+Codex read-only and Qoder gates. A separate fail fixture records **every** install
+invocation before checking its exclusive marker, writes bounded partial package
+state, and exits unsuccessfully. The gate checks the production failure warning,
+consumed confirmation, no success claim, zero version probes, and unchanged
+partial bytes after a bounded wait, explicit list refresh and application restart.
+A subsequent preview is rejected because the partial package directory is occupied;
+no confirmation or additional installation is allowed in that observed state.
+These checks prove no automatic retry or rollback in those observed flows; they
+do not implement repair, test a manually confirmed retry, or establish arbitrary
+installer-failure recovery. The test never deletes partial state to make retry pass.
+No durable installation ownership receipt is created. A real failure still needs
+inspection before any separately reviewed retry or manual recovery.
 
 This proves the tested synthetic Windows adapter path, **not** official-agent
 execution, registry compatibility, model calls, lifecycle scripts, real Codex
@@ -186,7 +196,12 @@ Windows 已安装应用门禁通过真实 WebView 和原生 UIAutomation 操作�
 必须验证取消零安装、预览后管理器变化导致过期拒绝、重新预览后单次确认安装、
 版本及来源关联展示，以及配置未变化。每次原生激活只发送一次，不自动重试不确定写入。
 证据记录合成进程计数和完整阶段，原有 Qwen、Codex 只读及 Qoder 门禁全部保留。
-本批负向路径是安装前的过期拒绝，不声称覆盖任意安装器失败或部分安装恢复。
+独立失败替身在检查独占标记之前记录每次安装调用，写入有限部分文件后返回失败。
+门禁验证生产错误提示、确认已消耗、无成功提示、零版本探测，并在有限等待、应用重启、
+手动刷新列表后检查残留字节不变，证明这些被观察流程没有自动重试或回滚。
+重启后再次请求预览会因部分包目录被占用而拒绝，不出现安装确认，也不新增安装调用。
+这没有实现修复，也没有验收手动确认重试或任意安装器失败恢复；测试不删除残留以绕过失败。
+产品未生成持久安装所有权凭据；真实失败仍须先检查，再独立审核重试或手动恢复。
 
 这证明合成输入下的 Windows 适配器闭环，不代表官方 Agent 已运行、registry 或
 生命周期脚本兼容、真实 Codex 已读取配置、模型调用成功或运行网络隔离。官方包

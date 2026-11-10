@@ -42,6 +42,26 @@ class Tests(unittest.TestCase):
                      "Wait-InstallText $fixture.prefix 'prefix'", "Wait-InstallText $fixture.manager 'manager'"):
             self.assertIn(line, UI)
 
+    def test_failure_lane_preserves_partial_state_without_reinstall(self):
+        flow = UI[UI.index('function Check-FailedReviewedInstall'):]
+        self.assertIn("'--mode', 'fail'", flow)
+        self.assertEqual(flow.count("Click-Qwen '确认安装软件'"), 1)
+        self.assertEqual(flow.count('Open-ReviewedInstallPlan $fixture $manifest'), 2)
+        self.assertLess(flow.index("Click-Qwen '取消'"), flow.index("Click-Qwen '确认安装软件'"))
+        self.assertIn("Check-Gui 'failed-reviewed-install-restart' -KeepOpen", flow)
+        self.assertIn("Click-Qwen '刷新列表'", flow)
+        self.assertIn("Wait-InstallText '无法取得有效安装预览，请刷新后重新检查。' 'occupied-preview-error'", flow)
+        for stage in ('preview_cancel','confirmed_failure','refresh_no_retry','restart_no_retry','occupied_preview_rejected'):
+            self.assertIn(stage, flow)
+        for forbidden in ('Remove-Item', 'WriteAllText', '--stale', 'confirmInstall', 'Invoke-WebRequest'):
+            self.assertNotIn(forbidden, flow)
+        guard = UI[UI.index('function Assert-FailedInstallObservation'):UI.index('function Check-FailedReviewedInstall')]
+        for check in ('installCalls -ne 1', 'versionProbes -ne 0', 'partialInstallRetained -ne $true',
+                      '(Get-FailedInstallState $fixture) -cne $residual', '(Get-CodexSnapshot) -cne $baseline',
+                      'Assert-InstallNoConfirmation', "Contains('软件安装操作已完成')"):
+            self.assertIn(check, guard)
+        self.assertEqual(flow.count('Assert-FailedInstallObservation $fixture $manifest $baseline $residual'), 5)
+
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
         self.assertLess(LIFECYCLE.index('    Check-ReviewedInstall'), LIFECYCLE.index('    Check-CodexReadonly'))
@@ -50,8 +70,8 @@ class Tests(unittest.TestCase):
         for forbidden in ('executeScript', 'invoke_handler', '--no-sandbox', 'Invoke-WebRequest'):
             self.assertNotIn(forbidden, UI)
     def test_review_and_evidence_contract(self):
-        self.assertEqual(UI.count('Open-ReviewedInstallPlan $fixture $manifest'), 3)
-        self.assertEqual(UI.count("Click-Qwen '确认安装软件'"), 2)
+        self.assertEqual(UI[:UI.index('function Get-FailedInstallState')].count('Open-ReviewedInstallPlan $fixture $manifest'), 3)
+        self.assertEqual(UI[:UI.index('function Get-FailedInstallState')].count("Click-Qwen '确认安装软件'"), 2)
         self.assertLess(UI.index("'--stale', '--manifest'"), UI.index("Click-Qwen '确认安装软件'"))
         for text in ('preview_cancel', 'stale_revision', 'confirmed_install', 'observed_source', 'no_configuration',
                      'authoredNpmAndAgentCodeExecuted = $true', 'officialAgentExecuted = $false',
