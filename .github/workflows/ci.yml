@@ -86,6 +86,20 @@ jobs:
           node-version: 24
       - name: Reviewed install synthetic fixture contract (offline)
         run: python -B scripts/test_linux_install_webview.py
+      - name: Official Codex installation harness (offline safety regressions)
+        run: python -B scripts/test_codex_official_install.py
+      - name: Install pinned official Codex package layout (never execute agent)
+        timeout-minutes: 10
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/codex-install-evidence"
+          python -B scripts/codex_official_install.py --node "$(command -v node)" --npm "$(command -v npm)" --evidence "$RUNNER_TEMP/codex-install-evidence/result.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Codex-install-layout-${{ env.BUILD_SHA }}
+          path: ${{ runner.temp }}/codex-install-evidence/result.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Qoder pinned archive downloader (offline safety regressions)
         run: python -B scripts/test_fetch_qoder_ui_archive.py
       - name: Qwen distribution harness (offline safety regressions)
