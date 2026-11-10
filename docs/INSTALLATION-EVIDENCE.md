@@ -166,3 +166,25 @@ The source adapter boundary can later add native agents or DSH plugins without
 claiming that every agent is an npm package. Native-plugin capability negotiation,
 configuration reconciliation and package lifecycle management remain separate
 design work, not fields inferred from the current registry.
+
+### Bounded Node environment protection
+
+The shared subprocess runner for version probes, npm metadata queries, installation
+and post-install verification removes inherited `NODE_OPTIONS`, `NODE_PATH` and
+`npm_config_node_options` (all ASCII case variants) from each child command.
+This prevents those inherited variables from supplying Node preloads or extra
+module search paths, including npm's environment-sourced lifecycle Node options.
+The parent environment is not changed. Existing quiet npm metadata overrides stay
+in place; unrelated HOME/PATH, registry, prefix, authentication, proxy and certificate
+configuration are preserved. This is **not environment isolation**: npmrc
+`node-options`, local npm/agent code, native loader settings and other configuration
+are not neutralized. This applies to the shared installation-inspection runner,
+not unrelated deployment shell helpers or every command in the application.
+An agent relying on inherited Node options/module paths may now fail inspection;
+the runner will not retry with those controls restored.
+
+The explicit `trusted_node_preload_environment_smoke` test requires a trusted
+absolute `AGENTDECK_TEST_NODE` after CI Node setup. It first proves an authored
+local marker preload runs, then starts a separate test process and invokes the
+production runner with both metadata modes to verify suppression, retained
+unrelated values and unchanged parent state. No official agent is executed.
