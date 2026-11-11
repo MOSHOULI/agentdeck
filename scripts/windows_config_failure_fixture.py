@@ -17,7 +17,10 @@ AGENTS = (('claude', '@anthropic-ai/claude-code', '2.0.30 (Claude Code)', '.clau
 
 
 def program(log, version):
-    return ('"use strict";const fs=require("node:fs");\n'
+    # Required by the production Windows npm entrypoint inspector, even though
+    # invoking Node directly would accept a script without this interpreter line.
+    return ('#!/usr/bin/env node\n'
+            '"use strict";const fs=require("node:fs");\n'
             'const args=process.argv.slice(2);\n'
             'fs.appendFileSync(' + json.dumps(str(log)) + ',JSON.stringify(args)+"\\n");\n'
             'if(JSON.stringify(args)!==\'["--version"]\'){process.exit(64);}\n'

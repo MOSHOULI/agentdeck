@@ -54,6 +54,19 @@ class Tests(unittest.TestCase):
             os.utime(path, ns=(946684800000000000, 946684800000000000))
             self.assertNotEqual(after, fixture.snapshot([path]))
 
+    def test_authored_entrypoints_meet_production_windows_interpreter_contract(self):
+        # Node itself accepts a script without a shebang; production Windows
+        # inspection deliberately does not. Keep that distinction under test.
+        production = (ROOT / 'crates/aisync-core/src/deploy/inspection.rs').read_text(encoding='utf-8')
+        self.assertIn('if head != b"#!/usr/bin/env node" && head != b"#!/usr/bin/env node\\r"', production)
+        for binary, _, version, _ in fixture.AGENTS:
+            with self.subTest(agent=binary):
+                data = fixture.program(Path('authored-version-events'), version)
+                bounded_first_line = data[:256].split(b'\n', 1)[0]
+                self.assertIn(bounded_first_line, (b'#!/usr/bin/env node', b'#!/usr/bin/env node\r'))
+                self.assertNotIn(data.split(b'\n', 1)[1][:256].split(b'\n', 1)[0],
+                                 (b'#!/usr/bin/env node', b'#!/usr/bin/env node\r'))
+
     def test_version_only_program_rejects_any_other_invocation(self):
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / 'events'
