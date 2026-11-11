@@ -60,6 +60,20 @@ pub async fn preview_qwen_vim_update(
     .map_err(|_| "Qwen 预览未完成。".to_string())?
 }
 
+/// Separate read-only restore confirmation; observation does not grant this token.
+#[tauri::command]
+pub async fn preview_qwen_vim_restore(
+    settings_path: String,
+    runtime_manifest: String,
+) -> Result<qwen::owned::RestorePreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        qwen::owned::restore_preview(Path::new(&settings_path), Path::new(&runtime_manifest))
+            .map_err(edit_error)
+    })
+    .await
+    .map_err(|_| "Qwen 预览未完成。".to_string())?
+}
+
 /// Observation only: does not acquire a lock or authorize a later restore.
 #[tauri::command]
 pub async fn inspect_qwen_vim_recovery(
@@ -126,10 +140,22 @@ pub async fn update_qwen_vim(
 pub async fn restore_qwen_vim(
     settings_path: String,
     runtime_manifest: String,
+    token: String,
 ) -> Result<bool, String> {
+    if token.len() != 64
+        || !token
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err("预览无效，请重新预览。".to_string());
+    }
     tauri::async_runtime::spawn_blocking(move || {
-        qwen::owned::restore(Path::new(&settings_path), Path::new(&runtime_manifest))
-            .map_err(edit_error)
+        qwen::owned::restore_checked(
+            Path::new(&settings_path),
+            Path::new(&runtime_manifest),
+            &token,
+        )
+        .map_err(edit_error)
     })
     .await
     .map_err(|_| "Qwen 撤销结果未确认，请检查后再试。".to_string())?
@@ -306,12 +332,54 @@ mod tests {
                     .await
                     .unwrap()
             );
-            assert!(restore_qwen_vim(s.clone(), m.clone()).await.unwrap());
+            let restore = preview_qwen_vim_restore(s.clone(), m.clone())
+                .await
+                .unwrap();
+            assert_eq!(restore.current, Some(true));
+            assert_eq!(restore.initial, Some(false));
+            assert!(!serde_json::to_string(&restore).unwrap().contains("SECRET"));
+            let receipt_path = root.join(".agentdeck-qwen-vim.json");
+            let receipt = std::fs::read(&receipt_path).unwrap();
+            let mut edited: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
+            edited["after_preview"] = serde_json::json!(true);
+            let changed = serde_json::to_vec(&edited).unwrap();
+            std::fs::write(&settings, &changed).unwrap();
+            assert!(
+                restore_qwen_vim(s.clone(), m.clone(), restore.token)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(std::fs::read(&settings).unwrap(), changed);
+            assert_eq!(std::fs::read(&receipt_path).unwrap(), receipt);
+            assert!(
+                restore_qwen_vim(s.clone(), m.clone(), "BAD".into())
+                    .await
+                    .is_err()
+            );
+            let fresh = preview_qwen_vim_restore(s.clone(), m.clone())
+                .await
+                .unwrap();
+            assert!(
+                restore_qwen_vim(s.clone(), m.clone(), fresh.token)
+                    .await
+                    .unwrap()
+            );
             let value: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
             assert_eq!(value["general"]["vimMode"], false);
             assert_eq!(value["changed"], true);
-            assert!(restore_qwen_vim(s.clone(), m.clone()).await.is_err());
+            assert_eq!(value["after_preview"], true);
+            assert!(
+                preview_qwen_vim_restore(s.clone(), m.clone())
+                    .await
+                    .is_err()
+            );
+            assert!(
+                restore_qwen_vim(s.clone(), m.clone(), "0".repeat(64))
+                    .await
+                    .is_err()
+            );
         });
         std::fs::remove_dir_all(root).unwrap();
     }

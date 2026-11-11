@@ -9,7 +9,7 @@ import { validateDshRootPlan, validateDshRootVerification } from "./dshDistribut
 import { scopeIds, validateScopeReport, type ScopePaths } from './qoderScopeContract';
 import { validateQoderWrite, type QoderWriteOperation } from './qoderContract';
 import { requireQoderTarget, validateQoderPlan, validateQoderVerification, validateQoderCacheObservation } from './qoderContract';
-import { qwenDemoSummary, validateQwenReport, validateQwenVimPreview, validateQwenMutation, validateQwenRecovery } from './qwenContract';
+import { qwenDemoSummary, validateQwenReport, validateQwenVimPreview, validateQwenMutation, validateQwenRecovery, validateQwenVimRestorePreview } from './qwenContract';
 import type { QwenSummary } from './qwenContract';
 /**
  * Tauri 命令调用桥接层。
@@ -63,9 +63,14 @@ export async function inspectQwenVimRecovery(settingsPath: string, runtimeManife
   qwenOwnedPaths(settingsPath, runtimeManifest);
   return validateQwenRecovery(await invoke<unknown>('inspect_qwen_vim_recovery', { settingsPath, runtimeManifest }));
 }
-export async function restoreQwenVim(settingsPath: string, runtimeManifest: string) {
+export async function previewQwenVimRestore(settingsPath: string, runtimeManifest: string) {
   qwenOwnedPaths(settingsPath, runtimeManifest);
-  return validateQwenMutation(await invoke<unknown>('restore_qwen_vim', { settingsPath, runtimeManifest }));
+  return validateQwenVimRestorePreview(await invoke<unknown>('preview_qwen_vim_restore', { settingsPath, runtimeManifest }));
+}
+export async function restoreQwenVim(settingsPath: string, runtimeManifest: string, token: string) {
+  qwenOwnedPaths(settingsPath, runtimeManifest);
+  if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) throw new Error('请重新预览。');
+  return validateQwenMutation(await invoke<unknown>('restore_qwen_vim', { settingsPath, runtimeManifest, token }));
 }
 
 /** Native, read-only Qoder distribution checks. Never stage/unpack/install. */

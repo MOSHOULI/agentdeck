@@ -40,7 +40,7 @@ function Assert-QwenNoConfirmation {
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     do {
         $present = $false
-        foreach ($name in @('确认应用 Vim 变更','确认撤销 Vim 设置')) {
+        foreach ($name in @('确认应用 Vim 变更','确认更新受管 Vim 值','确认撤销 Vim 设置')) {
             if ($null -ne (Find-QwenControl $name ([Windows.Automation.ControlType]::Button))) { $present = $true }
         }
         if (-not $present) { return }
@@ -89,12 +89,12 @@ function Enable-QwenVim {
 function Assert-QwenHash([string]$path, [string]$expected) {
     if (-not (Test-Path -LiteralPath $path) -or (Get-FileHash -LiteralPath $path).Hash -ne $expected) { throw 'Qwen synthetic file changed unexpectedly' }
 }
-function Assert-QwenDocument([string]$settings, [bool]$enabled) {
+function Assert-QwenDocument([string]$settings, [bool]$enabled, [string]$other = 'preserve-me') {
     $doc = [IO.File]::ReadAllText($settings) | ConvertFrom-Json -AsHashtable
     # Assert both the managed field and every unrelated synthetic value, plus key counts.
     if ($doc.Count -ne 3 -or $doc['$version'] -ne 4 -or $doc.general.Count -ne 2 -or
         $doc.general.vimMode -isnot [bool] -or $doc.general.vimMode -ne $enabled -or
-        $doc.general.other -ne 'preserve-me' -or $doc.security.Count -ne 1 -or
+        $doc.general.other -ne $other -or $doc.security.Count -ne 1 -or
         $doc.security.token -ne 'SYNTHETIC-NOT-A-CREDENTIAL') { throw 'Wrong Qwen settings semantics' }
 }
 function Check-QwenRecoveryObservation([string]$fixture, [string]$label, [string]$stage) {
@@ -129,8 +129,7 @@ function Check-QwenManifestBoundary([string]$fixture, [string]$manifest) {
             Wait-QwenText '无法生成兼容预览。请检查所选文件、版本与受管记录。'
         } else {
             Click-Qwen '撤销受管 Vim 设置'
-            Click-Qwen '确认撤销 Vim 设置'
-            Wait-QwenText '未能确认操作完成。请检查文件与所有权记录；不要假定配置未改变或重复提交。重新预览或处理冲突后再试。'
+            Wait-QwenText '无法生成兼容预览。请检查所选文件、版本与受管记录。'
         }
         Assert-QwenNoConfirmation
         if ((Get-QwenFixtureSnapshot $fixture) -cne $before) { throw 'Manifest mismatch changed Qwen fixture or receipt' }
@@ -139,6 +138,15 @@ function Check-QwenManifestBoundary([string]$fixture, [string]$manifest) {
     Record 'qwen-cross-version-receipt-rejected' @{ fromVersion = '0.27.0'; toVersion = '0.27.2'; operations = @('recovery','update','restore'); unchanged = $true; qwenExecuted = $false }
     # Revert only our authored manifest bytes to resume legacy compatibility checks.
     [IO.File]::WriteAllBytes($manifest, $legacy)
+}
+function Preview-QwenRestore([string]$fixture) {
+    $before = Get-QwenFixtureSnapshot $fixture
+    Click-Qwen '撤销受管 Vim 设置'
+    Wait-QwenText '当前值：启用；首次原值：关闭。'
+    Wait-QwenText '动作：恢复首次原值并清理所有权记录。'
+    $null = Wait-QwenControl '确认撤销 Vim 设置' ([Windows.Automation.ControlType]::Button)
+    if ((Get-QwenFixtureSnapshot $fixture) -cne $before) { throw 'Restore preview changed fixture files' }
+    Save-QwenEvidence 'qwen-restore-preview'
 }
 function Check-QwenCurrentLifecycle {
     $fixture = Join-Path $homeDir 'Qwen current synthetic'
@@ -167,7 +175,7 @@ function Check-QwenCurrentLifecycle {
         if ($updated.format -ne 2 -or $updated.before -ne $false -or $updated.after -ne $enabled -or $updated.before_digest -cne $first.before_digest -or $updated.manifest_digest -cne $first.manifest_digest) { throw 'Current Qwen update lost original receipt binding' }
         if ([IO.File]::ReadAllText($receipt).Contains('SYNTHETIC-NOT-A-CREDENTIAL')) { throw 'Current Qwen receipt leaked configuration' }
     }
-    Click-Qwen '撤销受管 Vim 设置'; Click-Qwen '确认撤销 Vim 设置'
+    Preview-QwenRestore $fixture; Click-Qwen '确认撤销 Vim 设置'
     Wait-QwenText '受管字段已撤销。尚未验证 Qwen 实际运行效果。'
     Assert-QwenDocument $settings $false; Assert-QwenHash $manifest $manifestHash
     if (Test-Path -LiteralPath $receipt) { throw 'Current Qwen restore retained receipt' }
@@ -255,26 +263,31 @@ function Check-QwenLifecycle {
     Stop-App
     Check-Gui 'qwen-owned-restart' -KeepOpen
     Open-QwenFixture $settings $manifest
-    Click-Qwen '撤销受管 Vim 设置'
+    $cancelSnapshot = Get-QwenFixtureSnapshot $fixture
+    Preview-QwenRestore $fixture
     Click-Qwen '取消撤销'
     $null = Wait-QwenControl '撤销受管 Vim 设置' ([Windows.Automation.ControlType]::Button)
     Assert-QwenNoConfirmation
     Assert-QwenHash $settings $appliedHash
     Assert-QwenHash $receipt $receiptHash
+    if ((Get-QwenFixtureSnapshot $fixture) -cne $cancelSnapshot) { throw 'Cancelled restore changed fixture' }
     Save-QwenEvidence 'qwen-restart-restore-cancel'
     Record 'qwen-restart-restore-cancel' @{ settingsAndReceiptUnchanged = $true }
 
     # Simulate an external editor changing the owned field after confirmation opens.
-    Click-Qwen '撤销受管 Vim 设置'
+    Preview-QwenRestore $fixture
     $null = Wait-QwenControl '确认撤销 Vim 设置' ([Windows.Automation.ControlType]::Button)
     # Different bytes from the exact original ensure this is drift, not already-restored cleanup.
     [IO.File]::WriteAllText($settings, ($original + "`n"))
     $driftHash = (Get-FileHash -LiteralPath $settings).Hash
+    $driftSnapshot = Get-QwenFixtureSnapshot $fixture
     Click-Qwen '确认撤销 Vim 设置'
     Wait-QwenText '未能确认操作完成。请检查文件与所有权记录；不要假定配置未改变或重复提交。重新预览或处理冲突后再试。'
     Assert-QwenHash $settings $driftHash
     Assert-QwenHash $receipt $receiptHash
     Assert-QwenHash $manifest $manifestHash
+    Assert-QwenNoConfirmation
+    if ((Get-QwenFixtureSnapshot $fixture) -cne $driftSnapshot) { throw 'Conflicting restoration changed fixture' }
     Save-QwenEvidence 'qwen-restore-conflict'
     Record 'qwen-restore-conflict' @{ externalEditPreserved = $true; receiptPreserved = $true }
 
@@ -285,10 +298,36 @@ function Check-QwenLifecycle {
 
     # Only the isolated fixture is reset to its exact applied image; no real user repair.
     [IO.File]::WriteAllText($settings, $applied)
-    Click-Qwen '撤销受管 Vim 设置'
+    $beforeClear = Get-QwenFixtureSnapshot $fixture
+    Preview-QwenRestore $fixture
+    Click-Qwen '清除路径与结果'
+    Assert-QwenNoConfirmation
+    foreach ($name in @('settings.json 绝对路径', '运行时 package.json 绝对路径')) {
+        $control = Wait-QwenControl $name ([Windows.Automation.ControlType]::Edit)
+        if (([Windows.Automation.ValuePattern]$control.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)).Current.Value -ne '') { throw 'Restore clear retained path' }
+    }
+    if ((Get-QwenFixtureSnapshot $fixture) -cne $beforeClear) { throw 'Cleared restore changed fixture' }
+    Save-QwenEvidence 'qwen-restore-clear'
+    Record 'qwen-restore-clear' @{ settingsAndReceiptUnchanged = $true; confirmationRemoved = $true }
+    Set-QwenPath 'settings.json 绝对路径' $settings
+    Set-QwenPath '运行时 package.json 绝对路径' $manifest
+    Preview-QwenRestore $fixture
+    # Authored synthetic external edit AFTER the UI obtains its snapshot token.
+    $external = $applied | ConvertFrom-Json -AsHashtable
+    $external.general.other = 'external-edit-preserved'
+    [IO.File]::WriteAllText($settings, ($external | ConvertTo-Json -Depth 5 -Compress))
+    $staleSnapshot = Get-QwenFixtureSnapshot $fixture
+    Click-Qwen '确认撤销 Vim 设置'
+    Wait-QwenText '未能确认操作完成。请检查文件与所有权记录；不要假定配置未改变或重复提交。重新预览或处理冲突后再试。'
+    Assert-QwenNoConfirmation
+    if ((Get-QwenFixtureSnapshot $fixture) -cne $staleSnapshot) { throw 'Stale restoration changed fixture or receipt' }
+    Save-QwenEvidence 'qwen-restore-stale'
+    Record 'qwen-restore-stale' @{ externalEditPreserved = $true; receiptPreserved = $true; noAutomaticRetry = $true }
+    # Explicitly obtain a new preview after rejection; do not replay the old write.
+    Preview-QwenRestore $fixture
     Click-Qwen '确认撤销 Vim 设置'
     Wait-QwenText '受管字段已撤销。尚未验证 Qwen 实际运行效果。'
-    Assert-QwenDocument $settings $false
+    Assert-QwenDocument $settings $false 'external-edit-preserved'
     Assert-QwenHash $manifest $manifestHash
     if (Test-Path -LiteralPath $receipt) { throw 'Successful restore left receipt' }
     Assert-QwenNoConfirmation

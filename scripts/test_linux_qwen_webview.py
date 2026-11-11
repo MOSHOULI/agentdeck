@@ -24,6 +24,7 @@ class OfflineDriver:
         self.preview_value = False
         self.preview_target = False
         self.updating = False
+        self.restoring = False
         self.clicks = []
 
     def one(self, selector): return 'checkbox'
@@ -46,6 +47,8 @@ class OfflineDriver:
     def text(self, selector):
         if 'Vim 恢复状态观察' in selector: return self.recovery
         if "@role='dialog'" in selector:
+            if self.restoring:
+                return "incorrect" if self.fault == "restore_intent" else subject.RESTORE_INTENT + subject.RESTORE_ACTION
             return ('当前值：' + ('启用' if self.preview_value else '关闭') + '；目标：'
                     + ('启用' if self.preview_target else '关闭') + '。'
                     + ('首次管理前的原值' if self.updating else ''))
@@ -63,11 +66,11 @@ class OfflineDriver:
         label = selector.split("text()='")[1].split("']")[0]
         self.status = ''; self.recovery = ''
         mismatched = receipt.exists() and json.loads(receipt.read_bytes())['manifest_digest'] != subject.digest((self.root / 'package.json').read_bytes())
-        if mismatched and label in ('只读检查 Vim 恢复状态', '预览更新受管 Vim 值', '确认撤销 Vim 设置'):
+        if mismatched and label in ('只读检查 Vim 恢复状态', '预览更新受管 Vim 值', '撤销受管 Vim 设置'):
             self.dialog = False
             self.status = {'只读检查 Vim 恢复状态': '恢复诊断未完成。请检查所选文件与所有权记录；未获得有效观察结果。',
                            '预览更新受管 Vim 值': '无法生成兼容预览。请检查所选文件、版本与受管记录。',
-                           '确认撤销 Vim 设置': subject.ERROR}[label]
+                           '撤销受管 Vim 设置': subject.PREVIEW_ERROR}[label]
             if self.fault == 'manifest_boundary_write': settings.write_bytes(settings.read_bytes() + b' ')
             return
         if label == '清除路径与结果':
@@ -80,11 +83,16 @@ class OfflineDriver:
             if self.fault == 'cancel_recovery': self.recovery = 'stale recovery'
         elif label in ('预览 Vim 变更', '预览更新受管 Vim 值'):
             self.dialog = True
+            self.restoring = False
             self.preview_hash = subject.digest(settings.read_bytes())
             self.preview_value = json.loads(settings.read_bytes())['general']['vimMode']
             self.preview_target = self.target
             self.updating = label == '预览更新受管 Vim 值'
-        elif label == '撤销受管 Vim 设置': self.dialog = True
+        elif label == '撤销受管 Vim 设置':
+            self.dialog = True; self.restoring = True
+            self.preview_hash = subject.digest(settings.read_bytes())
+            if self.fault == 'restore_preview_write': settings.write_bytes(settings.read_bytes() + b' ')
+
         elif label == '确认应用 Vim 变更':
             self.dialog = False
             if self.preview_hash != subject.digest(settings.read_bytes()):
@@ -118,11 +126,14 @@ class OfflineDriver:
             self.status = '受管 Vim 值已更新；首次原值仍保留供撤销。尚未验证 Qwen 实际运行效果。'
         elif label == '确认撤销 Vim 设置':
             self.dialog = False
-            if not json.loads(settings.read_bytes())['general']['vimMode']:
+            if (self.preview_hash != subject.digest(settings.read_bytes()) and self.fault != 'restore_stale_accepted') or not json.loads(settings.read_bytes())['general']['vimMode']:
                 self.status = subject.ERROR
                 if self.fault == 'conflict_write': receipt.unlink()
                 return
-            settings.write_bytes(json.dumps(subject.document(False)).encode())
+            restored = json.loads(settings.read_bytes())
+            restored['general']['vimMode'] = False
+            if self.fault == 'restore_unrelated_lost': restored['general']['other'] = 'preserve-me'
+            settings.write_bytes(json.dumps(restored).encode())
             if self.fault != 'restore_receipt': receipt.unlink()
             self.status = '受管字段已撤销。尚未验证 Qwen 实际运行效果。'
         elif label == '只读检查 Vim 恢复状态':
@@ -237,7 +248,7 @@ class Tests(unittest.TestCase):
 
     def test_offline_lifecycle_model_and_injected_failures(self):
         for fault in (None, 'canary', 'stale_write', 'apply_extra', 'conflict_write',
-                      'restore_receipt', 'recovery_write', 'manifest_boundary_write', 'update_stale_write', 'update_backup', 'update_value'):
+                      'restore_receipt', 'restore_preview_write', 'restore_unrelated_lost', 'recovery_write', 'manifest_boundary_write', 'update_stale_write', 'update_backup', 'update_value'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 driver = OfflineDriver(root, fault)
@@ -245,13 +256,21 @@ class Tests(unittest.TestCase):
                 if fault is None:
                     subject.exercise(driver, root, records, harness.write_private)
                     subject.assert_coverage(records)
-                    subject.assert_document(root, False, subject.BASE | {subject.LOCK})
+                    subject.assert_document(root, False, subject.BASE | {subject.LOCK}, other='external-edit-preserved')
                     self.assertEqual(driver.values, {})
                 else:
                     with self.assertRaises(subject.QwenFailure):
                         subject.exercise(driver, root, records, harness.write_private)
                     with self.assertRaises(subject.QwenFailure): subject.assert_coverage(records)
                     self.assertLess(len(records), len(subject.STAGES))
+
+    def test_restore_intent_and_snapshot_binding_faults_are_detected(self):
+        for fault in ('restore_intent', 'restore_stale_accepted'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
+                records = []
+                with self.assertRaises((subject.QwenFailure, harness.Failure)):
+                    subject.exercise(OfflineDriver(Path(tmp), fault), Path(tmp), records, harness.write_private)
+                self.assertNotIn({'stage': 'restore', 'verified': True}, records)
 
     def test_current_version_independent_model_and_exact_coverage(self):
         for fault in (None, 'canary', 'update_backup', 'update_value', 'restore_receipt'):
@@ -317,6 +336,23 @@ class Tests(unittest.TestCase):
                 subject.exercise(driver, Path(tmp), records, harness.write_private)
             self.assertEqual(records, [])
             self.assertFalse(any(click.startswith('//button') for click in driver.clicks))
+
+    def test_hosted_native_and_windows_restore_wiring(self):
+        # Source-level guard only; actual Windows/Linux UI evidence comes from CI.
+        repo = Path(__file__).resolve().parents[1]
+        workflow = (repo / '.github/workflows/ci.yml').read_text()
+        self.assertIn('cargo test --locked -p agentdeck commands::qwen --lib', workflow)
+        source = (repo / 'scripts/windows-qwen-ui-acceptance.ps1').read_text()
+        preview = source.split('function Preview-QwenRestore', 1)[1].split('function Check-QwenCurrentLifecycle', 1)[0]
+        for value in (subject.RESTORE_INTENT, subject.RESTORE_ACTION, 'Get-QwenFixtureSnapshot $fixture'):
+            self.assertIn(value, preview)
+        lifecycle = source.split('# Authored synthetic external edit AFTER', 1)[1]
+        self.assertLess(lifecycle.index("$external.general.other = 'external-edit-preserved'"),
+                        lifecycle.index("Click-Qwen '确认撤销 Vim 设置'"))
+        self.assertLess(lifecycle.index('-cne $staleSnapshot'), lifecycle.index('Preview-QwenRestore $fixture'))
+        self.assertIn("Assert-QwenDocument $settings $false 'external-edit-preserved'", lifecycle)
+        for unsafe in ('executeScript', 'invoke_handler', '--no-sandbox', '--remote-debugging'):
+            self.assertNotIn(unsafe, source)
 
     def test_unknown_failure_detail_not_retained(self):
         self.assertEqual(harness.failure_code(subject.QwenFailure(subject.CANARY)), 'qwen_gui_acceptance_failed')

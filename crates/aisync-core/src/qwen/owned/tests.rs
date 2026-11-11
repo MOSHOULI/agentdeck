@@ -1081,7 +1081,14 @@ fn interrupted_recovery_of_preupdate_image_can_retry() {
     // Exercise the production transition, then simulate failure immediately
     // after its actual Restoring receipt is persisted but before settings write.
     assert!(matches!(
-        restore_impl(&f.settings, &f.manifest, &|| Err(EditError::Io)),
+        restore_impl(
+            &f.settings,
+            &f.manifest,
+            None,
+            &|| Ok(()),
+            &|| Err(EditError::Io),
+            &|| Ok(())
+        ),
         Err(EditError::Io)
     ));
     assert_eq!(fs::read(&f.settings).unwrap(), applied_bytes);
@@ -1239,16 +1246,23 @@ fn restore_lock_released_before_forked_child_exits() {
         assert!(f.apply(true).unwrap());
         let child = std::cell::RefCell::new(None);
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            restore_impl(&f.settings, &f.manifest, &|| {
-                *child.borrow_mut() = Some(BeforeExecChild::fork());
-                assert_busy(&f.dir.join(LOCK));
-                assert_ne!(exit, "panic", "injected restore unwind");
-                if exit == "error" {
-                    Err(EditError::Io)
-                } else {
-                    Ok(())
-                }
-            })
+            restore_impl(
+                &f.settings,
+                &f.manifest,
+                None,
+                &|| Ok(()),
+                &|| {
+                    *child.borrow_mut() = Some(BeforeExecChild::fork());
+                    assert_busy(&f.dir.join(LOCK));
+                    assert_ne!(exit, "panic", "injected restore unwind");
+                    if exit == "error" {
+                        Err(EditError::Io)
+                    } else {
+                        Ok(())
+                    }
+                },
+                &|| Ok(()),
+            )
         }));
         assert!(child.borrow().is_some());
         match exit {
@@ -1264,5 +1278,356 @@ fn restore_lock_released_before_forked_child_exits() {
         assert_eq!(f.value(), original);
         assert!(!f.dir.join(RECEIPT).exists());
         assert!(f.dir.join(LOCK).exists());
+    }
+}
+
+// Checked desktop restoration has a separate confirmation contract. Legacy
+// recovery observations and CLI restore remain independently tested above.
+fn checked_fixture(cleanup: bool) -> Fixture {
+    let f = Fixture::new(r#"{"$version":4,"general":{"vimMode":false},"secret":"SECRET"}"#);
+    let original = fs::read(&f.settings).unwrap();
+    f.apply(true).unwrap();
+    if cleanup {
+        update_fixture(&f, false).unwrap();
+        fs::write(&f.settings, original).unwrap();
+    }
+    fs::remove_file(f.dir.join(LOCK)).unwrap();
+    f
+}
+
+fn assert_checked_refused_without_writes(f: &Fixture, token: &str) {
+    let settings = fs::read(&f.settings).unwrap();
+    let manifest = fs::read(&f.manifest).unwrap();
+    let receipt = fs::read(f.dir.join(RECEIPT)).unwrap();
+    assert!(restore_checked(&f.settings, &f.manifest, token).is_err());
+    assert_eq!(fs::read(&f.settings).unwrap(), settings);
+    assert_eq!(fs::read(&f.manifest).unwrap(), manifest);
+    assert_eq!(fs::read(f.dir.join(RECEIPT)).unwrap(), receipt);
+    assert!(!f.dir.join(LOCK).exists());
+}
+
+#[test]
+fn restore_confirmation_is_read_only_concrete_and_redacted() {
+    for cleanup in [false, true] {
+        let f = checked_fixture(cleanup);
+        let settings = fs::read(&f.settings).unwrap();
+        let receipt = fs::read(f.dir.join(RECEIPT)).unwrap();
+        let p = restore_preview(&f.settings, &f.manifest).unwrap();
+        assert_eq!(p.current, Some(!cleanup));
+        assert_eq!(p.initial, Some(false));
+        assert_eq!(p.changes_settings, !cleanup);
+        assert_eq!(
+            p.state,
+            if cleanup {
+                RecoveryState::CleanupReceipt
+            } else {
+                RecoveryState::RestoreField
+            }
+        );
+        let dto = serde_json::to_string(&p).unwrap();
+        assert!(!dto.contains("SECRET"));
+        assert!(!dto.contains("before_digest"));
+        assert_eq!(fs::read(&f.settings).unwrap(), settings);
+        assert_eq!(fs::read(f.dir.join(RECEIPT)).unwrap(), receipt);
+        assert!(!f.dir.join(LOCK).exists());
+        assert_eq!(
+            restore_checked(&f.settings, &f.manifest, &p.token).unwrap(),
+            !cleanup
+        );
+        assert_eq!(f.value()["general"]["vimMode"], false);
+        assert!(!f.dir.join(RECEIPT).exists());
+    }
+}
+
+#[test]
+fn restore_confirmation_rejects_other_domains_and_malformed_tokens() {
+    for cleanup in [false, true] {
+        let f = checked_fixture(cleanup);
+        let apply = preview(&f.settings, &f.manifest, false).unwrap();
+        let update = update_preview(&f.settings, &f.manifest, false).unwrap();
+        let observation = recovery_preview(&f.settings, &f.manifest).unwrap();
+        assert!(
+            serde_json::to_value(&observation)
+                .unwrap()
+                .get("token")
+                .is_none()
+        );
+        for token in [
+            apply.token,
+            update.token,
+            serde_json::to_string(&observation).unwrap(),
+            "".into(),
+            "x".repeat(64),
+            "A".repeat(64),
+            "0".repeat(65),
+            "0".repeat(64),
+        ] {
+            assert_checked_refused_without_writes(&f, &token);
+        }
+    }
+}
+
+#[test]
+fn restore_confirmation_binds_exact_settings_manifest_receipt_bytes() {
+    for cleanup in [false, true] {
+        for target in ["settings", "manifest", "receipt", "initial", "phase"] {
+            let f = checked_fixture(cleanup);
+            let p = restore_preview(&f.settings, &f.manifest).unwrap();
+            let path = match target {
+                "settings" => &f.settings,
+                "manifest" => &f.manifest,
+                _ => &f.dir.join(RECEIPT),
+            };
+            let mut bytes = fs::read(path).unwrap();
+            if target == "initial" || target == "phase" {
+                let mut r = parse_receipt(&bytes).unwrap();
+                if target == "initial" {
+                    r.before = None;
+                } else {
+                    r.phase = Phase::Prepared;
+                }
+                bytes = serde_json::to_vec(&r).unwrap();
+            } else {
+                bytes.push(b' '); // Even semantically identical JSON is a new confirmation.
+            }
+            fs::write(path, bytes).unwrap();
+            assert_checked_refused_without_writes(&f, &p.token);
+        }
+    }
+}
+
+#[test]
+fn restore_confirmation_rechecks_under_lock_before_restore_or_cleanup() {
+    for cleanup in [false, true] {
+        let f = checked_fixture(cleanup);
+        let p = restore_preview(&f.settings, &f.manifest).unwrap();
+        let original = fs::read(&f.settings).unwrap();
+        let receipt = fs::read(f.dir.join(RECEIPT)).unwrap();
+        let mut changed = receipt.clone();
+        changed.push(b' ');
+        let result = restore_impl(
+            &f.settings,
+            &f.manifest,
+            Some(&p.token),
+            &|| {
+                fs::write(f.dir.join(RECEIPT), &changed).unwrap();
+                Ok(())
+            },
+            &|| panic!("stale confirmation must not write"),
+            &|| panic!("stale confirmation must not clean up"),
+        );
+        assert!(matches!(result, Err(EditError::Changed)));
+        assert_eq!(fs::read(&f.settings).unwrap(), original);
+        assert_eq!(fs::read(f.dir.join(RECEIPT)).unwrap(), changed);
+    }
+}
+
+#[test]
+fn restore_confirmation_rejects_updates_changed_cycles_and_different_paths() {
+    let f = checked_fixture(false);
+    let p = restore_preview(&f.settings, &f.manifest).unwrap();
+    update_fixture(&f, false).unwrap();
+    fs::remove_file(f.dir.join(LOCK)).unwrap();
+    assert_checked_refused_without_writes(&f, &p.token);
+    restore(&f.settings, &f.manifest).unwrap();
+    let mut changed = f.value();
+    changed["unrelated"] = Value::Bool(true);
+    fs::write(&f.settings, encode(&changed).unwrap()).unwrap();
+    f.apply(true).unwrap();
+    fs::remove_file(f.dir.join(LOCK)).unwrap();
+    assert_checked_refused_without_writes(&f, &p.token);
+    let other = checked_fixture(false);
+    assert_checked_refused_without_writes(&other, &p.token);
+    // An alternate manifest with identical bytes still changes path selection.
+    let dir = f.dir.join("runtime");
+    fs::create_dir(&dir).unwrap();
+    let alternative = dir.join("package.json");
+    fs::copy(&f.manifest, &alternative).unwrap();
+    let fresh = restore_preview(&f.settings, &f.manifest).unwrap();
+    assert!(restore_checked(&f.settings, &alternative, &fresh.token).is_err());
+    assert!(!f.dir.join(LOCK).exists());
+}
+
+#[test]
+fn restore_confirmation_has_no_token_for_missing_conflicting_or_malformed_receipts() {
+    let f = Fixture::new(r#"{"$version":4}"#);
+    assert!(restore_preview(&f.settings, &f.manifest).is_err());
+    assert_eq!(fs::read_dir(&f.dir).unwrap().count(), 2);
+    f.apply(true).unwrap();
+    fs::remove_file(f.dir.join(LOCK)).unwrap();
+    fs::write(
+        &f.settings,
+        br#"{"$version":4,"general":{"vimMode":false}}"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        restore_preview(&f.settings, &f.manifest),
+        Err(EditError::Drift)
+    ));
+    fs::write(f.dir.join(RECEIPT), b"malformed SECRET").unwrap();
+    assert!(restore_preview(&f.settings, &f.manifest).is_err());
+    assert!(!f.dir.join(LOCK).exists());
+}
+
+#[test]
+fn restore_confirmation_preserves_unrelated_edits_before_preview_and_initial_absence() {
+    let f = Fixture::new(r#"{"$version":4}"#);
+    f.apply(true).unwrap();
+    update_fixture(&f, false).unwrap();
+    let mut document = f.value();
+    document["unrelated"] = Value::String("keep".into());
+    fs::write(&f.settings, encode(&document).unwrap()).unwrap();
+    let p = restore_preview(&f.settings, &f.manifest).unwrap();
+    assert_eq!(p.initial, None);
+    assert_eq!(p.current, Some(false));
+    assert!(restore_checked(&f.settings, &f.manifest, &p.token).unwrap());
+    assert_eq!(
+        f.value(),
+        serde_json::json!({"$version":4,"unrelated":"keep"})
+    );
+}
+
+#[test]
+fn restore_confirmation_byte_binding_does_not_claim_unique_cycle_identity() {
+    let f = checked_fixture(false);
+    let p = restore_preview(&f.settings, &f.manifest).unwrap();
+    let original = fs::read(&f.settings).unwrap();
+    let receipt = fs::read(f.dir.join(RECEIPT)).unwrap();
+    restore_checked(&f.settings, &f.manifest, &p.token).unwrap();
+    // Exact byte recreation is deliberately not a supported identity boundary.
+    fs::write(&f.settings, original).unwrap();
+    fs::write(f.dir.join(RECEIPT), receipt).unwrap();
+    assert_eq!(
+        restore_preview(&f.settings, &f.manifest).unwrap().token,
+        p.token
+    );
+    assert!(restore_checked(&f.settings, &f.manifest, &p.token).unwrap());
+}
+
+#[test]
+fn restore_confirmation_equal_current_and_initial_still_can_write_settings() {
+    let f = Fixture::new(r#"{"$version":4,"general":{"vimMode":false}}"#);
+    f.apply(true).unwrap();
+    update_fixture(&f, false).unwrap();
+    let mut document = f.value();
+    document["unrelated"] = Value::Bool(true);
+    fs::write(&f.settings, encode(&document).unwrap()).unwrap();
+    let p = restore_preview(&f.settings, &f.manifest).unwrap();
+    assert_eq!(p.current, p.initial);
+    assert_eq!(p.current, Some(false));
+    assert_eq!(p.state, RecoveryState::RestoreField);
+    assert!(p.changes_settings);
+    assert!(restore_checked(&f.settings, &f.manifest, &p.token).unwrap());
+    assert_eq!(f.value(), document);
+}
+
+#[test]
+fn restore_confirmation_preserves_interrupted_apply_update_restore_recovery() {
+    for phase in [Phase::Prepared, Phase::Updating, Phase::Restoring] {
+        for completed in [false, true] {
+            let f = Fixture::new(r#"{"$version":4,"general":{"vimMode":false}}"#);
+            let original = fs::read(&f.settings).unwrap();
+            f.apply(true).unwrap();
+            let expected_write = match phase {
+                Phase::Prepared => {
+                    let mut r = parse_receipt(&fs::read(f.dir.join(RECEIPT)).unwrap()).unwrap();
+                    r.phase = Phase::Prepared;
+                    fs::write(f.dir.join(RECEIPT), serde_json::to_vec(&r).unwrap()).unwrap();
+                    if !completed {
+                        fs::write(&f.settings, &original).unwrap();
+                    }
+                    completed
+                }
+                Phase::Updating => {
+                    let (_, output) = pending_update(&f, false);
+                    if completed {
+                        fs::write(&f.settings, output).unwrap();
+                    }
+                    true
+                }
+                Phase::Restoring => {
+                    let p = restore_preview(&f.settings, &f.manifest).unwrap();
+                    assert!(matches!(
+                        restore_impl(
+                            &f.settings,
+                            &f.manifest,
+                            Some(&p.token),
+                            &|| Ok(()),
+                            &|| Err(EditError::Io),
+                            &|| Ok(())
+                        ),
+                        Err(EditError::Io)
+                    ));
+                    if completed {
+                        let mut d = f.value();
+                        set_field(&mut d, Some(false), false);
+                        fs::write(&f.settings, encode(&d).unwrap()).unwrap();
+                    }
+                    !completed
+                }
+                _ => unreachable!(),
+            };
+            let p = restore_preview(&f.settings, &f.manifest).unwrap();
+            assert_eq!(p.changes_settings, expected_write);
+            assert_eq!(
+                restore_checked(&f.settings, &f.manifest, &p.token).unwrap(),
+                expected_write
+            );
+            assert_eq!(
+                f.value(),
+                serde_json::from_slice::<Value>(&original).unwrap()
+            );
+            assert!(!f.dir.join(RECEIPT).exists());
+        }
+    }
+}
+
+#[test]
+fn restore_transition_drift_never_overwrites_or_consumes_changed_state() {
+    // Check both real transition gaps, not only stale input before locking.
+    // No concurrent writer is launched: each hook changes exactly one file.
+    for after_replacement in [false, true] {
+        for target in ["settings", "manifest", "receipt"] {
+            let f = checked_fixture(false);
+            let p = restore_preview(&f.settings, &f.manifest).unwrap();
+            let receipt_path = f.dir.join(RECEIPT);
+            let observed = std::cell::RefCell::new(None);
+            let mutate = || -> Result<()> {
+                let path = match target {
+                    "settings" => &f.settings,
+                    "manifest" => &f.manifest,
+                    _ => &receipt_path,
+                };
+                let mut changed = fs::read(path).unwrap();
+                changed.push(b' ');
+                fs::write(path, changed).unwrap();
+                *observed.borrow_mut() = Some((
+                    fs::read(&f.settings).unwrap(),
+                    fs::read(&f.manifest).unwrap(),
+                    fs::read(&receipt_path).unwrap(),
+                ));
+                Ok(())
+            };
+            let before = || if after_replacement { Ok(()) } else { mutate() };
+            let after = || {
+                assert!(after_replacement, "must stop before settings replacement");
+                mutate()
+            };
+            let result = restore_impl(
+                &f.settings,
+                &f.manifest,
+                Some(&p.token),
+                &|| Ok(()),
+                &before,
+                &after,
+            );
+            assert!(matches!(result, Err(EditError::Changed)));
+            let (settings, manifest, receipt) = observed.into_inner().unwrap();
+            assert_eq!(fs::read(&f.settings).unwrap(), settings);
+            assert_eq!(fs::read(&f.manifest).unwrap(), manifest);
+            assert_eq!(fs::read(&receipt_path).unwrap(), receipt);
+            assert_eq!(parse_receipt(&receipt).unwrap().phase, Phase::Restoring);
+            assert_eq!(f.value()["general"]["vimMode"], !after_replacement);
+        }
     }
 }

@@ -11,6 +11,7 @@ beforeEach(() => {
   vi.spyOn(bridge, 'previewQwenVim').mockResolvedValue(preview);
   vi.spyOn(bridge, 'applyQwenVim').mockResolvedValue(true);
   vi.spyOn(bridge, 'inspectQwenVimRecovery').mockResolvedValue({ field: 'general.vimMode', state: 'no_receipt', changesSettings: false });
+  vi.spyOn(bridge, 'previewQwenVimRestore').mockResolvedValue({ field: 'general.vimMode', state: 'restore_field', current: true, initial: false, changesSettings: true, token });
   vi.spyOn(bridge, 'restoreQwenVim').mockResolvedValue(true);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -69,13 +70,13 @@ describe('Qwen single field management', () => {
   it('requires separate restore confirmation and cancellation does nothing', async () => {
     const work = defer<boolean>(); vi.mocked(bridge.restoreQwenVim).mockReturnValue(work.promise);
     render(<QwenSettings />); fill();
-    fireEvent.click(screen.getByRole('button', { name: '撤销受管 Vim 设置' }));
+    fireEvent.click(screen.getByRole('button', { name: '撤销受管 Vim 设置' })); await screen.findByRole('dialog', { name: '确认撤销 Vim 设置' });
     expect(bridge.restoreQwenVim).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: '取消撤销' }));
-    fireEvent.click(screen.getByRole('button', { name: '撤销受管 Vim 设置' }));
+    fireEvent.click(screen.getByRole('button', { name: '撤销受管 Vim 设置' })); await screen.findByRole('dialog', { name: '确认撤销 Vim 设置' });
     const confirm = screen.getByRole('button', { name: '确认撤销 Vim 设置' });
     fireEvent.click(confirm); fireEvent.click(confirm);
-    expect(bridge.restoreQwenVim).toHaveBeenCalledExactlyOnceWith('/selected/settings.json', '/runtime/package.json');
+    expect(bridge.restoreQwenVim).toHaveBeenCalledExactlyOnceWith('/selected/settings.json', '/runtime/package.json', token);
     expect(screen.getByRole('button', { name: '清除路径与结果' })).toBeDisabled();
     await act(async () => { work.resolve(true); });
     await screen.findByText('受管字段已撤销。尚未验证 Qwen 实际运行效果。');
@@ -109,7 +110,7 @@ describe('Qwen single field management', () => {
     fireEvent.submit(screen.getByRole('form', { name: 'Qwen 检查路径' }));
     await screen.findByRole('region', { name: 'Qwen 检查结果' });
     if (action === 'apply') { await showPreview(); fireEvent.click(screen.getByRole('button', { name: '确认应用 Vim 变更' })); }
-    else { fireEvent.click(screen.getByRole('button', { name: '撤销受管 Vim 设置' })); fireEvent.click(screen.getByRole('button', { name: '确认撤销 Vim 设置' })); }
+    else { fireEvent.click(screen.getByRole('button', { name: '撤销受管 Vim 设置' })); await screen.findByRole('dialog', { name: '确认撤销 Vim 设置' }); fireEvent.click(screen.getByRole('button', { name: '确认撤销 Vim 设置' })); }
     await screen.findByRole('alert');
     expect(screen.queryByRole('region', { name: 'Qwen 检查结果' })).not.toBeInTheDocument();
   });
@@ -132,7 +133,7 @@ describe('Qwen recovery observation UI', () => {
     expect(region).toHaveTextContent('后端会再次检查');
     expect(bridge.restoreQwenVim).not.toHaveBeenCalled();
     expect(bridge.applyQwenVim).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: '撤销受管 Vim 设置' }));
+    fireEvent.click(screen.getByRole('button', { name: '撤销受管 Vim 设置' })); await screen.findByRole('dialog', { name: '确认撤销 Vim 设置' });
     expect(screen.queryByRole('region', { name: 'Vim 恢复状态观察' })).not.toBeInTheDocument();
     expect(screen.getByRole('dialog', { name: '确认撤销 Vim 设置' })).toBeInTheDocument();
     expect(bridge.restoreQwenVim).not.toHaveBeenCalled();
@@ -160,7 +161,7 @@ describe('Qwen recovery observation UI', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await showPreview();
     expect(screen.queryByRole('region', { name: 'Vim 恢复状态观察' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '撤销受管 Vim 设置' })); observe();
+    fireEvent.click(screen.getByRole('button', { name: '撤销受管 Vim 设置' })); await screen.findByRole('dialog', { name: '确认撤销 Vim 设置' }); observe();
     await screen.findByRole('region', { name: 'Vim 恢复状态观察' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '清除恢复诊断结果' }));

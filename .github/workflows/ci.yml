@@ -483,6 +483,8 @@ jobs:
         run: npm exec --prefix web/ui -- tauri build --debug --no-bundle --ci -- --locked
       - name: Native Linux Qoder IPC regression tests
         run: cargo test --locked -p agentdeck commands::qoder --lib
+      - name: Native Linux Qwen checked restoration IPC regression tests
+        run: cargo test --locked -p agentdeck commands::qwen --lib
       - name: Native Linux DSH root package IPC regression tests
         run: cargo test --locked -p agentdeck commands::dsh_distribution --lib
       - name: Real WebView click/type cache observation and confirmed writes (sandbox retained)

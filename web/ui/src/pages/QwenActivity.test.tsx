@@ -8,14 +8,15 @@ import { QwenSettings } from './QwenSettings';
 
 const inspection = { summary: qwenDemoSummary(), synthetic: false };
 const preview = { field: 'general.vimMode' as const, before: null, after: true, changes: true, token: 'a'.repeat(64) };
+const restorePreview = { field: 'general.vimMode' as const, state: 'restore_field' as const, current: true, initial: null, changesSettings: true, token: 'c'.repeat(64) };
 const recovery = { field: 'general.vimMode' as const, state: 'restore_field' as const, changesSettings: true };
-const actions = ['inspect', 'preview', 'update-preview', 'recovery', 'apply', 'update', 'restore'] as const;
+const actions = ['inspect', 'preview', 'update-preview', 'restore-preview', 'recovery', 'apply', 'update', 'restore'] as const;
 type Action = typeof actions[number];
 const pending: (() => void)[] = [];
 const activity = () => useWorkspaceActivityStore.getState();
 const inspect = () => fireEvent.submit(screen.getByRole('form', { name: 'Qwen 检查路径' }));
 const buttonNames = {
-  inspect: '检查所选文件', preview: '预览 Vim 变更', recovery: '只读检查 Vim 恢复状态',
+  'restore-preview': '撤销受管 Vim 设置', inspect: '检查所选文件', preview: '预览 Vim 变更', recovery: '只读检查 Vim 恢复状态',
   'update-preview': '预览更新受管 Vim 值', update: '确认更新受管 Vim 值', apply: '确认应用 Vim 变更', restore: '确认撤销 Vim 设置',
 } satisfies Record<Action, string>;
 function fill() {
@@ -39,6 +40,9 @@ function hold(action: Action) {
   if (action === 'update-preview') {
     const work = defer(preview); vi.mocked(bridge.previewQwenVimUpdate).mockReturnValueOnce(work.promise); return work;
   }
+  if (action === 'restore-preview') {
+    const work = defer(restorePreview); vi.mocked(bridge.previewQwenVimRestore).mockReturnValueOnce(work.promise); return work;
+  }
   if (action === 'recovery') {
     const work = defer(recovery); vi.mocked(bridge.inspectQwenVimRecovery).mockReturnValueOnce(work.promise); return work;
   }
@@ -55,10 +59,11 @@ async function prepare(action: Action) {
     await screen.findByRole('dialog', { name: '确认更新受管 Vim 值' });
   } else if (action === 'restore') {
     fireEvent.click(screen.getByRole('button', { name: '撤销受管 Vim 设置' }));
+    await screen.findByRole('dialog', { name: '确认撤销 Vim 设置' });
   }
 }
 function calls() {
-  return [bridge.inspectQwenSettings, bridge.previewQwenVimUpdate, bridge.updateQwenVim, bridge.previewQwenVim, bridge.inspectQwenVimRecovery, bridge.applyQwenVim, bridge.restoreQwenVim]
+  return [bridge.previewQwenVimRestore, bridge.inspectQwenSettings, bridge.previewQwenVimUpdate, bridge.updateQwenVim, bridge.previewQwenVim, bridge.inspectQwenVimRecovery, bridge.applyQwenVim, bridge.restoreQwenVim]
     .map(fn => vi.mocked(fn).mock.calls.length);
 }
 function expectNoResults() {
@@ -81,6 +86,7 @@ beforeEach(() => {
   vi.spyOn(bridge, 'applyQwenVim').mockResolvedValue(true);
   vi.spyOn(bridge, 'previewQwenVimUpdate').mockResolvedValue(preview);
   vi.spyOn(bridge, 'updateQwenVim').mockResolvedValue(true);
+  vi.spyOn(bridge, 'previewQwenVimRestore').mockResolvedValue(restorePreview);
   vi.spyOn(bridge, 'restoreQwenVim').mockResolvedValue(true);
 });
 afterEach(async () => {
@@ -147,9 +153,16 @@ describe('Qwen pending operation ownership', () => {
       if (action === 'inspect') inspect(); else fireEvent.click(button);
     });
     expect(calls()).toEqual(dispatched);
-    expect(button).toBeDisabled();
+    const isConfirmation = action === 'apply' || action === 'update' || action === 'restore';
+    if (isConfirmation) expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    else expect(button).toBeDisabled();
     expect(activity().owners.qwen).toEqual([otherOwner]);
     act(() => activity().setActivity('qwen', otherOwner, false));
+    if (isConfirmation) {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(calls()).toEqual(dispatched);
+      return;
+    }
     expect(button).toBeEnabled();
     if (action === 'inspect') inspect(); else fireEvent.click(button);
     await act(async () => {});
