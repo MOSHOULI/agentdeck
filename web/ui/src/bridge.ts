@@ -1,3 +1,4 @@
+import { exportTarget, exportIds, exportToken, validateExportSnapshot, validateExportPreview, validateExportReceipt } from './memoryExportContract';
 import { requireDshNativePackage, dshNativeEvidence, validateDshNativeVerification, type DshNativePackage } from './dshNativeContract';
 import { requireQoderRelease, type QoderRelease } from './qoderReleases';
 import { validQoderDeploymentPath, validQoderDeploymentToken, validateQoderDeploymentPreview, validateQoderDeploymentOutcome } from "./qoderDeploymentContract";
@@ -717,4 +718,22 @@ export async function verifyDshNativePackage(packageId: DshNativePackage, archiv
     throw new Error('DSH_NATIVE_INVALID_PATH');
   }
   return validateDshNativeVerification(await invoke<unknown>('verify_dsh_native_package', {packageId, archivePath}), packageId);
+}
+
+/** Export editor never simulates reads or writes outside the native desktop. */
+function requireMemoryExportNative(agentId: string) {
+  exportTarget(agentId);
+  if (runtimeMode() !== 'native') throw new Error('记忆导出编辑需要桌面后端；演示模式不读写文件。');
+}
+export async function readMemoryExport(agentId: string) {
+  requireMemoryExportNative(agentId); exportTarget(agentId);
+  return validateExportSnapshot(await invoke<unknown>('read_memory_export', { agentId }), agentId);
+}
+export async function previewMemoryExport(agentId: string, expectedStateToken: string, memoryIds: string[]) {
+  requireMemoryExportNative(agentId); exportTarget(agentId); exportToken(expectedStateToken); exportIds(memoryIds);
+  return validateExportPreview(await invoke<unknown>('preview_memory_export', { agentId, expectedStateToken, memoryIds }), agentId, expectedStateToken, memoryIds);
+}
+export async function replaceMemoryExport(agentId: string, previewToken: string, memoryIds: string[]) {
+  requireMemoryExportNative(agentId); exportTarget(agentId); exportToken(previewToken); exportIds(memoryIds);
+  return validateExportReceipt(await invoke<unknown>('replace_memory_export', { agentId, previewToken, memoryIds }), agentId, memoryIds);
 }

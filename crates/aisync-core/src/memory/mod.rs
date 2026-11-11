@@ -5,6 +5,7 @@
 //! 被动注入 + 自动标签双模式。
 
 pub mod collector;
+pub mod export;
 pub mod search;
 pub mod storage;
 
@@ -200,6 +201,7 @@ pub fn collect(agent_id: &str) -> crate::Result<Vec<MemoryEntry>> {
         "claude" => "claude-code",
         other => other,
     };
+    let _write_guard = INJECTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let store = MemoryStore::open(&default_db_path()?)?;
     match canonical {
         "codex" => {
@@ -220,8 +222,10 @@ pub fn collect(agent_id: &str) -> crate::Result<Vec<MemoryEntry>> {
 
 /// 全文搜索记忆
 pub fn search(query: &str) -> crate::Result<Vec<MemoryEntry>> {
-    let store = MemoryStore::open(&default_db_path()?)?;
-    store.search(query, 50)
+    match MemoryStore::open_existing_read_only(&default_db_path()?)? {
+        Some(store) => store.search(query, 50),
+        None => Ok(Vec::new()),
+    }
 }
 
 /// 生成记忆注入 Markdown 内容（inject 与自动注入共用）
@@ -259,8 +263,8 @@ fn write_memory_file(agent_id: &str, entries: &[MemoryEntry]) -> crate::Result<(
 /// 注入指定记忆到 agent（生成 ~/.agentdeck/memory/<agent_id>.md）
 pub fn inject(agent_id: &str, memory_ids: &[String]) -> crate::Result<()> {
     let agent_id = validate_injection_target(agent_id)?;
-    let store = MemoryStore::open(&default_db_path()?)?;
     let _guard = INJECTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let store = MemoryStore::open(&default_db_path()?)?;
     let ids: Vec<i64> = memory_ids
         .iter()
         .map(|s| {
@@ -280,8 +284,10 @@ pub fn inject(agent_id: &str, memory_ids: &[String]) -> crate::Result<()> {
         .injection_entries(&agent_id)
         .and_then(|entries| write_memory_file(&agent_id, &entries));
     if let Err(error) = result {
-        store.set_manual_injection_ids(&agent_id, &previous)?;
-        return Err(error);
+        store.set_manual_injection_ids(&agent_id, &previous).map_err(|rollback| crate::Error::Other(format!("Injection failed: {error}; manual selection rollback also failed: {rollback}; outcome uncertain")))?;
+        return Err(crate::Error::Other(format!(
+            "Injection failed: {error}; previous manual selection restored"
+        )));
     }
     Ok(())
 }
@@ -289,8 +295,8 @@ pub fn inject(agent_id: &str, memory_ids: &[String]) -> crate::Result<()> {
 /// 把某 agent 全部 auto_inject 记忆回写记忆文件，返回写入条数
 pub fn inject_auto(agent_id: &str) -> crate::Result<usize> {
     let agent_id = validate_injection_target(agent_id)?;
-    let store = MemoryStore::open(&default_db_path()?)?;
     let _guard = INJECTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let store = MemoryStore::open(&default_db_path()?)?;
     let home = crate::home_dir().ok_or_else(|| crate::Error::Other("无法定位用户主目录".into()))?;
     reconcile_auto_at(&store, &agent_id, &home.join(".agentdeck").join("memory"))
 }
@@ -313,6 +319,7 @@ pub fn collect_all_and_inject_controlled(
     let _guard = COLLECTION_LOCK.try_lock().map_err(|_| {
         crate::Error::Other("Memory collection already running; retry when complete".into())
     })?;
+    let write_guard = INJECTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let store = MemoryStore::open(&default_db_path()?)?;
     let mut agents = Vec::new();
     let mut total = 0usize;
@@ -340,6 +347,7 @@ pub fn collect_all_and_inject_controlled(
         });
     }
 
+    drop(write_guard);
     let mut auto_injected = Vec::new();
     for agent_id in ["codex", "claude-code", "opencode"] {
         control.check()?;
@@ -362,8 +370,8 @@ pub fn toggle_auto_inject(memory_id: &str, enabled: bool) -> crate::Result<()> {
     let id: i64 = memory_id
         .parse()
         .map_err(|_| crate::Error::Other(format!("非法记忆 id: {}", memory_id)))?;
-    let store = MemoryStore::open(&default_db_path()?)?;
     let _guard = INJECTION_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let store = MemoryStore::open(&default_db_path()?)?;
     let entry = store
         .get_by_ids(&[id])?
         .into_iter()
@@ -405,7 +413,9 @@ fn update_auto_and_reconcile(
 
 /// 最近记忆（供 UI 展示）
 pub fn recent(agent_id: &str, limit: usize) -> crate::Result<Vec<MemoryEntry>> {
-    let store = MemoryStore::open(&default_db_path()?)?;
+    let Some(store) = MemoryStore::open_existing_read_only(&default_db_path()?)? else {
+        return Ok(Vec::new());
+    };
     store.recent(
         if agent_id == "claude" {
             "claude-code"

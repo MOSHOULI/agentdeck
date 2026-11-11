@@ -45,7 +45,7 @@ it('never renders installed sample agents without explicit demo', async () => {
   render(<App />);
   expect(screen.getByText(/未连接桌面后端 · 请在/)).toBeInTheDocument();
   await screen.findByRole('alert');
-  expect(screen.queryByText('OpenCode')).not.toBeInTheDocument();
+  expect(within(screen.getByRole('tabpanel', { name: /^Agent 管理/ })).queryByText('OpenCode')).not.toBeInTheDocument();
 });
 
 it('omits the demo banner for a native runtime', async () => {
@@ -347,4 +347,31 @@ it.each(['completed', 'pending'] as const)('invalidates Qoder private preview on
   fireEvent.click(screen.getByRole('tab', { name: /^Qoder 分发与校验/ }));
   expect(screen.queryByRole('dialog', { name: '确认 Qoder 私有可执行部署' })).not.toBeInTheDocument();
   expect(preview).toHaveBeenCalledTimes(1); expect(deploy).not.toHaveBeenCalled();
+});
+
+it('retains export write ownership across workspace navigation without relabeling a late receipt', async () => {
+  vi.spyOn(bridge, 'runtimeMode').mockReturnValue('native');
+  const row = {id:'1',agentId:'claude-code',content:'Selected from a different source',contentHash:'b'.repeat(64),collectedAt:1,autoInject:false,tags:[]};
+  const snapshot = {agentId:'codex' as const,databaseExists:true,stateToken:'a'.repeat(64),manualEntries:[row],automaticEntries:[]};
+  const preview = {agentId:'codex' as const,stateToken:snapshot.stateToken,previewToken:'c'.repeat(64),manualEntries:[row],automaticEntries:[],outputEntries:[row]};
+  vi.spyOn(bridge, 'readMemoryExport').mockResolvedValue(snapshot);
+  vi.spyOn(bridge, 'previewMemoryExport').mockResolvedValue(preview);
+  let finish!: (value: {agentId:'codex';manualIds:string[];exportedCount:number}) => void;
+  const write = vi.spyOn(bridge, 'replaceMemoryExport').mockReturnValue(new Promise(resolve => {finish=resolve;}));
+  await renderReadyApp(true);
+  fireEvent.click(screen.getByRole('tab', {name:/^记忆管理/}));
+  fireEvent.click(screen.getByTestId('memory-export-load'));
+  await screen.findByTestId('memory-export-saved');
+  fireEvent.click(screen.getByTestId('memory-export-preview'));
+  fireEvent.click(await screen.findByTestId('memory-export-confirm'));
+  fireEvent.click(screen.getByRole('tab', {name:/^Agent 管理/}));
+  expect(screen.getByText(/进行中：.*记忆管理/)).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', {name:/^记忆管理/}));
+  expect(screen.getByLabelText('导出目标')).toBeDisabled();
+  expect(screen.getByTestId('memory-export-load')).toBeDisabled();
+  expect(write).toHaveBeenCalledTimes(1);
+  await act(async()=>finish({agentId:'codex',manualIds:['1'],exportedCount:1}));
+  expect(screen.getByTestId('memory-export-status')).toHaveTextContent('已更新 Codex');
+  expect(screen.getByLabelText('导出目标')).toHaveValue('codex');
+  expect(screen.getByTestId('memory-export-preview')).toBeDisabled();
 });

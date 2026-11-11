@@ -3,7 +3,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useAgentStore } from '../stores/agentStore';
 import { useWorkspaceActivity } from '../stores/workspaceActivity';
 import type { CollectionStatus, MemoryEntry } from '../bridge';
-import { getMemoryCollectionStatus, runtimeMode, setMemoryCollectionEnabled } from '../bridge';
+import { readMemoryExport, previewMemoryExport, replaceMemoryExport, getMemoryCollectionStatus, runtimeMode, setMemoryCollectionEnabled } from '../bridge';
+import type { ExportSnapshot, ExportPreview } from '../memoryExportContract';
 import { Icon } from './Icon';
 import './MemoryMcp.css';
 
@@ -28,7 +29,7 @@ function formatTime(timestamp: number): string {
 }
 
 export const MemoryPanel: React.FC = () => {
-  const { collectMemories, searchMemories, injectMemories, toggleAutoInject } = useAgentStore();
+  const { collectMemories, searchMemories, toggleAutoInject } = useAgentStore();
   const [collection, setCollection] = useState<CollectionStatus | null>(null);
   const [collectionLoading, setCollectionLoading] = useState(true);
   const [collectionError, setCollectionError] = useState<string | null>(null);
@@ -41,6 +42,12 @@ export const MemoryPanel: React.FC = () => {
   const operation = useRef(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [target, setTarget] = useState('codex');
+  const [snapshot, setSnapshot] = useState<ExportSnapshot | null>(null);
+  const [draft, setDraft] = useState<MemoryEntry[]>([]);
+  const [preview, setPreview] = useState<ExportPreview | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
   const mode = runtimeMode();
   const readOnly = mode !== 'native';
   const canRead = mode !== 'unavailable';
@@ -81,6 +88,7 @@ export const MemoryPanel: React.FC = () => {
     if (enabled && !window.confirm('启用后将立即并每小时读取 Codex、Claude 与 OpenCode 本地会话，保存到本机记忆库。确认允许自动采集？')) return;
     operation.current = true;
     setBusy('auto-collection');
+    invalidateExport();
     setNotice(null);
     try {
       await setMemoryCollectionEnabled(enabled);
@@ -111,6 +119,7 @@ export const MemoryPanel: React.FC = () => {
     if (operation.current || readOnly) return;
     operation.current = true;
     setBusy(`collect-${agentId}`);
+    invalidateExport();
     setNotice(null);
     setFailedQuery(null);
     try {
@@ -155,6 +164,7 @@ export const MemoryPanel: React.FC = () => {
     if (operation.current || readOnly) return;
     operation.current = true;
     setBusy(`toggle-${entry.id}`);
+    invalidateExport();
     setNotice(null);
     setFailedQuery(null);
     const previous = entry.autoInject;
@@ -166,28 +176,82 @@ export const MemoryPanel: React.FC = () => {
         : { tone: 'warning', text: '已关闭此条记忆的自动导出。若此前已手动选择导出，此条仍会保留在导出文件中。' });
     } catch (error) {
       setResults((entries) => entries.map((item) => item.id === entry.id ? { ...item, autoInject: previous } : item));
-      setNotice({ tone: 'error', text: `更新自动导出失败，已恢复原设置: ${error}` });
+      setNotice({ tone: 'error', text: `更新自动导出失败，请重新读取确认状态: ${error}` });
     } finally {
       operation.current = false;
       setBusy(null);
     }
   };
 
-  const onExport = async (entry: MemoryEntry) => {
+  function invalidateExport() {
+    setSnapshot(null);
+    setPreview(null);
+    setExportNotice(null);
+  }
+
+  function editDraft(entries: MemoryEntry[]) {
+    if (operation.current || readOnly || !snapshot) return;
+    setDraft(entries);
+    setPreview(null);
+    setExportNotice(null);
+  }
+
+  function changeTarget(value: string) {
+    if (operation.current) return;
+    setTarget(value);
+    invalidateExport();
+    setDraft([]);
+    setExportError(null);
+  }
+
+  const exportFailure = (error: unknown) => {
+    const detail = error && typeof error === 'object' && 'message' in error ? String(error.message) : String(error);
+    const stale = error && typeof error === 'object' && 'code' in error && error.code === 'stale';
+    invalidateExport();
+    setExportError(`导出状态未确认，请重新读取并预览。${stale ? '已保存选择或记忆内容已变化。' : ''}${detail}`);
+  };
+
+  const loadExport = async () => {
     if (operation.current || readOnly) return;
     operation.current = true;
-    setBusy(`export-${entry.id}`);
-    setNotice(null);
-    setFailedQuery(null);
+    setBusy('export-read');
+    invalidateExport();
+    setExportError(null);
     try {
-      await injectMemories(entry.agentId, [entry.id]);
-      setNotice({ tone: 'success', text: `已导出到 ~/.agentdeck/memory/${entry.agentId}.md（不代表 Agent 已读取）。本次手动选择已替换该 Agent 的上次手动选择，自动导出记忆仍会保留。` });
-    } catch (error) {
-      setNotice({ tone: 'error', text: `导出失败: ${error}` });
-    } finally {
-      operation.current = false;
-      setBusy(null);
-    }
+      const state = await readMemoryExport(target);
+      setSnapshot(state);
+      setDraft(state.manualEntries);
+    } catch (error) { exportFailure(error); }
+    finally { operation.current = false; setBusy(null); }
+  };
+
+  const previewExport = async () => {
+    if (operation.current || readOnly || !snapshot) return;
+    operation.current = true;
+    setBusy('export-preview');
+    setPreview(null);
+    setExportError(null);
+    setExportNotice(null);
+    try {
+      setPreview(await previewMemoryExport(target, snapshot.stateToken, draft.map(row => row.id)));
+    } catch (error) { exportFailure(error); }
+    finally { operation.current = false; setBusy(null); }
+  };
+
+  const confirmExport = async () => {
+    if (operation.current || readOnly || !snapshot || !preview) return;
+    operation.current = true;
+    setBusy('export-write');
+    const approved = preview;
+    setPreview(null); // Consume confirmation before dispatch, including rapid clicks.
+    setExportError(null);
+    try {
+      const receipt = await replaceMemoryExport(approved.agentId, approved.previewToken, approved.manualEntries.map(row => row.id));
+      if (receipt.exportedCount !== approved.outputEntries.length) throw new Error('写入回执与预览不一致。');
+      invalidateExport();
+      setExportNotice(`已更新 ${agentLabel(receipt.agentId)} 本地 Markdown：手动 ${receipt.manualIds.length} 条，合计 ${receipt.exportedCount} 条。不代表 Agent 已读取。继续编辑前请重新读取。`);
+    } catch (error) { exportFailure(error); }
+    finally { operation.current = false; setBusy(null); }
   };
 
   return (
@@ -244,11 +308,55 @@ export const MemoryPanel: React.FC = () => {
           <p>采集不会让 Agent 自动读取记忆。导出仅维护本机 Markdown 文件，仍需自行让 Agent 读取。</p>
           <code className="memory-export-path">~/.agentdeck/memory/</code>
           <dl className="memory-export-rules">
-            <div><dt>导出此条</dt><dd>替换该 Agent 上次手动选择的记忆，保留其自动导出记忆。</dd></div>
+            <div><dt>手动选择</dt><dd>明确选择目标后，可跨来源、跨搜索添加多条记忆；预览确认后才替换保存。</dd></div>
             <div><dt>自动导出</dt><dd>开关会更新导出文件。关闭后移除自动选择，已手动选择的记忆仍保留。</dd></div>
           </dl>
         </aside>
       </div>
+
+      <section className="panel memory-export-editor" aria-labelledby="memory-editor-title" data-testid="memory-export-editor">
+        <div className="panel-heading"><h2 id="memory-editor-title">编辑手动导出</h2></div>
+        <p className="notice notice-warning">仅更新本地 Markdown，不代表 Agent 已读取。最终文件 = 手动选择（可跨来源）∪ 目标来源的自动导出记忆。</p>
+        <div className="toolbar">
+          <label htmlFor="memory-export-target">导出目标</label>
+          <select id="memory-export-target" className="control" value={target} disabled={busy !== null || readOnly} onChange={event => changeTarget(event.target.value)}>
+            {AGENTS.map(agent => <option key={agent.id} value={agent.id}>{agent.label}</option>)}
+          </select>
+          <button className="button" data-testid="memory-export-load" disabled={writeDisabled} onClick={() => void loadExport()}>读取已保存选择</button>
+        </div>
+        <p className="muted">当前导出目标：{agentLabel(target)} · ~/.agentdeck/memory/{target}.md · 手动最多 200 条，最终最多 500 条；超限会报错，不会截断。读取不会采集会话。</p>
+        {readOnly && <p>导出编辑仅在桌面后端可用，浏览器与演示模式不会写入。</p>}
+        {!snapshot && <p data-testid="memory-export-unread">请读取当前目标的已保存选择后编辑。当前草稿不能提交。</p>}
+        {snapshot && <p data-testid="memory-export-saved">已保存手动 {snapshot.manualEntries.length} 条；目标自动导出 {snapshot.automaticEntries.length} 条。{!snapshot.databaseExists && '本地记忆库尚不存在。'}</p>}
+        <h3>手动选择草稿（{draft.length} / 200）</h3>
+        <p className="muted">独立于下方最多 50 条的查询结果。添加或移除仅修改草稿。</p>
+        <ul className="memory-entries" aria-label="手动选择草稿" data-testid="memory-export-draft">
+          {draft.map(row => <li key={row.id} className="memory-entry" data-memory-id={row.id}>
+            <div className="memory-entry-meta">{agentLabel(row.agentId)} · #{row.id}</div>
+            <p className="memory-entry-content">{row.content}</p>
+            <button className="button" aria-label={`移除手动记忆 ${row.id}`} disabled={writeDisabled || !snapshot} onClick={() => editDraft(draft.filter(item => item.id !== row.id))}>移除</button>
+          </li>)}
+        </ul>
+        <div className="toolbar">
+          <button className="button" data-testid="memory-export-reset" disabled={writeDisabled || !snapshot} onClick={() => editDraft(snapshot!.manualEntries)}>重置草稿</button>
+          <button className="button" data-testid="memory-export-cancel" disabled={writeDisabled} onClick={() => { invalidateExport(); setDraft([]); setExportError(null); }}>取消编辑</button>
+          <button className="button" data-testid="memory-export-clear" disabled={writeDisabled || !snapshot} onClick={() => editDraft([])}>清空手动草稿</button>
+          <button className="button button-primary" data-testid="memory-export-preview" disabled={writeDisabled || !snapshot} onClick={() => void previewExport()}>预览替换</button>
+        </div>
+        <p className="muted">清空手动选择仍保留自动导出、数据库、其他目标及采集设置。重置或取消不会写入。</p>
+        {preview && <section className="memory-export-preview" aria-label="导出替换预览" data-testid="memory-export-preview-result">
+          <h3>{agentLabel(preview.agentId)} 替换预览</h3>
+          <p>手动 {preview.manualEntries.length} 条 + 自动 {preview.automaticEntries.length} 条，去重后 {preview.outputEntries.length} 条。</p>
+          <p>确认将替换此目标之前的全部手动选择。{preview.manualEntries.length === 0 && '本次清空手动选择，自动导出仍保留。'}</p>
+          <ul className="memory-entries" aria-label="最终导出内容">{preview.outputEntries.map(row => <li key={row.id} className="memory-entry"><div>{agentLabel(row.agentId)} · #{row.id}</div><p className="memory-entry-content">{row.content}</p></li>)}</ul>
+          <div className="toolbar">
+            <button className="button" data-testid="memory-export-preview-cancel" disabled={writeDisabled} onClick={() => setPreview(null)}>取消预览</button>
+            <button className="button button-primary" data-testid="memory-export-confirm" disabled={writeDisabled} onClick={() => void confirmExport()}>确认替换手动选择</button>
+          </div>
+        </section>}
+        {exportError && <p className="notice notice-error" role="alert" data-testid="memory-export-error">{exportError}</p>}
+        {exportNotice && <p className="notice notice-success" role="status" data-testid="memory-export-status">{exportNotice}</p>}
+      </section>
 
       <section className="panel memory-library" aria-labelledby="memory-library-title">
         <div className="panel-heading">
@@ -301,10 +409,10 @@ export const MemoryPanel: React.FC = () => {
                         <input type="checkbox" aria-label={`${agentLabel(entry.agentId)} 记忆 ${entry.id} 的自动导出`} disabled={writeDisabled} checked={entry.autoInject} onChange={(event) => void onToggleAuto(entry, event.target.checked)} />
                         <span>{busy === `toggle-${entry.id}` ? '更新导出设置中…' : '自动导出'}</span>
                       </label>
-                      <button className="button" aria-label={`导出 ${agentLabel(entry.agentId)} 记忆 ${entry.id}`} onClick={() => void onExport(entry)} disabled={writeDisabled}>
-                        <Icon name={busy === `export-${entry.id}` ? 'refresh' : 'external'} className={busy === `export-${entry.id}` ? 'memory-spinning' : undefined} size={15} />
-                        {busy === `export-${entry.id}` ? '导出中…' : '导出此条'}
-                      </button>
+                      <label className="check-row">
+                        <input type="checkbox" aria-label={`选择手动记忆 ${entry.id}`} data-testid={`memory-select-${entry.id}`} checked={draft.some(row => row.id === entry.id)} disabled={writeDisabled || !snapshot || (draft.length >= 200 && !draft.some(row => row.id === entry.id))} onChange={event => editDraft(event.target.checked ? [...draft, entry] : draft.filter(row => row.id !== entry.id))} />
+                        <span>加入手动选择</span>
+                      </label>
                     </div>
                   </article>
                 </li>
