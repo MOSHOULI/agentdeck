@@ -229,7 +229,8 @@ pub(crate) fn atomic_write_bytes(path: &Path, content: &[u8]) -> crate::Result<(
     }
 }
 
-/// OS-backed advisory lock: released on panic/process exit, never stolen by age.
+/// OS-backed advisory lock: explicitly released on return/unwind, never stolen by age.
+/// Abrupt process exit relies on OS/last-handle cleanup.
 /// The persistent lock file must not be removed (unlinking splits lock ownership).
 pub(crate) fn with_file_lock<T>(
     dir: &Path,
@@ -250,7 +251,10 @@ pub(crate) fn with_file_lock<T>(
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         match lock.try_lock() {
-            Ok(()) => return f(), // Dropping the file releases its lock, also on unwind.
+            Ok(()) => {
+                let _lock = crate::file_lock::FileLock::acquired(lock);
+                return f();
+            }
             Err(std::fs::TryLockError::WouldBlock) => {
                 if std::time::Instant::now() >= deadline {
                     return Err(Error::VaultError("vault 锁等待超时".into()));
@@ -386,6 +390,43 @@ mod tests {
             .collect();
         for handle in handles {
             handle.join().unwrap();
+        }
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[test]
+    fn operation_lock_released_before_forked_child_exits() {
+        use crate::lock_tests::{BeforeExecChild, assert_busy, assert_released, isolated};
+        if !isolated("vault::keystore::tests::operation_lock_released_before_forked_child_exits") {
+            return;
+        }
+        for exit in ["success", "error", "panic"] {
+            let dir = temp_dir("fork-lock");
+            let child = std::cell::RefCell::new(None);
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                with_file_lock(&dir, || {
+                    *child.borrow_mut() = Some(BeforeExecChild::fork());
+                    assert_busy(&dir.join(".vault.lock"));
+                    assert_ne!(exit, "panic", "injected vault unwind");
+                    if exit == "error" {
+                        Err(Error::Other("injected".into()))
+                    } else {
+                        Ok(())
+                    }
+                })
+            }));
+            assert!(child.borrow().is_some());
+            match exit {
+                "panic" => assert!(outcome.is_err()),
+                "error" => assert!(outcome.unwrap().is_err()),
+                _ => outcome.unwrap().unwrap(),
+            }
+            assert_released(&dir.join(".vault.lock"));
+            with_file_lock(&dir, || Ok(())).unwrap();
+            assert!(dir.join(".vault.lock").exists());
+            assert!(!dir.join("master.key").exists());
+            drop(child);
+            std::fs::remove_dir_all(dir).unwrap();
         }
     }
 

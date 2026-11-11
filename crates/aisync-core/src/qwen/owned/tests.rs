@@ -1225,3 +1225,44 @@ fn manifest_upgrade_refuses_every_receipt_phase_without_writes() {
         assert_eq!(fs::read(&path).unwrap(), owned);
     }
 }
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[test]
+fn restore_lock_released_before_forked_child_exits() {
+    use crate::lock_tests::{BeforeExecChild, assert_busy, assert_released, isolated};
+    if !isolated("qwen::owned::tests::restore_lock_released_before_forked_child_exits") {
+        return;
+    }
+    for exit in ["success", "error", "panic"] {
+        let f = Fixture::new(r#"{"$version":4,"general":{"vimMode":false},"other":1}"#);
+        let original = f.value();
+        assert!(f.apply(true).unwrap());
+        let child = std::cell::RefCell::new(None);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            restore_impl(&f.settings, &f.manifest, &|| {
+                *child.borrow_mut() = Some(BeforeExecChild::fork());
+                assert_busy(&f.dir.join(LOCK));
+                assert_ne!(exit, "panic", "injected restore unwind");
+                if exit == "error" {
+                    Err(EditError::Io)
+                } else {
+                    Ok(())
+                }
+            })
+        }));
+        assert!(child.borrow().is_some());
+        match exit {
+            "panic" => assert!(outcome.is_err()),
+            "error" => assert!(matches!(outcome.unwrap(), Err(EditError::Io))),
+            _ => assert!(outcome.unwrap().unwrap()),
+        }
+        assert_released(&f.dir.join(LOCK));
+        if exit != "success" {
+            assert!(f.dir.join(RECEIPT).exists());
+            assert!(restore(&f.settings, &f.manifest).unwrap());
+        }
+        assert_eq!(f.value(), original);
+        assert!(!f.dir.join(RECEIPT).exists());
+        assert!(f.dir.join(LOCK).exists());
+    }
+}

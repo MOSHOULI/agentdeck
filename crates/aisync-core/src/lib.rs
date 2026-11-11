@@ -5,8 +5,11 @@ pub mod config;
 /// 本库不依赖 Tauri，纯 Rust 实现，可供 CLI 和桌面端共用。
 pub mod deploy;
 pub mod dsh;
+mod file_lock;
 pub mod git;
 mod inspection;
+#[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
+mod lock_tests;
 pub mod mcp;
 pub mod memory;
 pub mod qoder;

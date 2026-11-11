@@ -214,9 +214,20 @@ impl DataPaths {
     }
 }
 
-/// Serializes readers and writers across processes. OS releases the lock on crash;
+/// Serializes readers and writers across processes. Explicitly unlocks when the
+/// operation returns or unwinds. Abrupt exit relies on OS/last-handle cleanup;
 /// never unlink the inode, which could let another process lock a different file.
-pub(crate) fn lock_and_recover(paths: &DataPaths) -> crate::Result<std::fs::File> {
+pub(crate) fn lock_and_recover(paths: &DataPaths) -> crate::Result<crate::file_lock::FileLock> {
+    lock_and_recover_impl(
+        paths,
+        #[cfg(test)]
+        &|| {},
+    )
+}
+fn lock_and_recover_impl(
+    paths: &DataPaths,
+    #[cfg(test)] after_lock: &dyn Fn(),
+) -> crate::Result<crate::file_lock::FileLock> {
     let parent = paths
         .registry_dir
         .parent()
@@ -241,6 +252,10 @@ pub(crate) fn lock_and_recover(paths: &DataPaths) -> crate::Result<std::fs::File
             Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
         }
     }
+    // Own the acquired lock before recovery: errors/unwind there also release it.
+    let lock = crate::file_lock::FileLock::acquired(lock);
+    #[cfg(test)]
+    after_lock();
     recover_locked(paths)?;
     Ok(lock)
 }
@@ -330,6 +345,16 @@ pub fn load_registry_read_only() -> crate::Result<RegistryDoc> {
 }
 
 pub fn load_registry_read_only_at(paths: &DataPaths) -> crate::Result<RegistryDoc> {
+    load_registry_read_only_impl(
+        paths,
+        #[cfg(test)]
+        &|| {},
+    )
+}
+fn load_registry_read_only_impl(
+    paths: &DataPaths,
+    #[cfg(test)] after_lock: &dyn Fn(),
+) -> crate::Result<RegistryDoc> {
     let parent = paths
         .registry_dir
         .parent()
@@ -343,7 +368,7 @@ pub fn load_registry_read_only_at(paths: &DataPaths) -> crate::Result<RegistryDo
             lock.try_lock_shared().map_err(|_| {
                 crate::Error::Other("Registry is busy; retry the dry run later".into())
             })?;
-            Some(lock)
+            Some(crate::file_lock::FileLock::acquired(lock))
         }
         Ok(_) => {
             return Err(crate::Error::Other(
@@ -360,6 +385,8 @@ pub fn load_registry_read_only_at(paths: &DataPaths) -> crate::Result<RegistryDo
         }
         Err(error) => return Err(error.into()),
     };
+    #[cfg(test)]
+    after_lock();
     match std::fs::symlink_metadata(&journal) {
         Ok(_) => {
             return Err(crate::Error::Other(
@@ -831,5 +858,75 @@ mod tests {
             reader.join().unwrap();
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[test]
+    fn exclusive_lock_released_before_forked_child_exits() {
+        if crate::lock_tests::isolated(
+            "registry::tests::exclusive_lock_released_before_forked_child_exits",
+        ) {
+            forked_registry_lock(false);
+        }
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[test]
+    fn shared_lock_released_before_forked_child_exits() {
+        if crate::lock_tests::isolated(
+            "registry::tests::shared_lock_released_before_forked_child_exits",
+        ) {
+            forked_registry_lock(true);
+        }
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    fn forked_registry_lock(shared: bool) {
+        use crate::lock_tests::{BeforeExecChild, assert_busy, assert_released};
+        for exit in ["success", "error", "panic"] {
+            let root = std::env::temp_dir()
+                .join(format!("agentdeck-registry-fork-{}", uuid::Uuid::new_v4()));
+            let paths = DataPaths::from_data_dir(&root);
+            drop(lock_and_recover(&paths).unwrap());
+            let path = root.join("registry-update.lock");
+            // Invalid journal exercises the real recover_locked error path
+            // after acquiring the exclusive guard, before returning it.
+            if exit == "error" {
+                std::fs::write(root.join("registry-update.json"), b"invalid").unwrap();
+            }
+            let child = std::cell::RefCell::new(None);
+            let hook = || {
+                *child.borrow_mut() = Some(BeforeExecChild::fork());
+                assert_busy(&path);
+                if shared {
+                    let reader = std::fs::File::open(&path).unwrap();
+                    reader.try_lock_shared().unwrap();
+                    reader.unlock().unwrap();
+                }
+                assert_ne!(exit, "panic", "injected registry unwind");
+            };
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if shared {
+                    load_registry_read_only_impl(&paths, &hook).map(|_| ())
+                } else {
+                    lock_and_recover_impl(&paths, &hook).map(drop)
+                }
+            }));
+            assert!(child.borrow().is_some());
+            match exit {
+                "panic" => assert!(outcome.is_err()),
+                "error" => assert!(outcome.unwrap().is_err()),
+                _ => outcome.unwrap().unwrap(),
+            }
+            assert_released(&path);
+            if exit == "error" {
+                assert_eq!(
+                    std::fs::read(root.join("registry-update.json")).unwrap(),
+                    b"invalid"
+                );
+                std::fs::remove_file(root.join("registry-update.json")).unwrap();
+            }
+            assert!(!load_registry_at(&paths).unwrap().agents.is_empty());
+            assert!(path.exists());
+            drop(child);
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 }
