@@ -285,6 +285,14 @@ pub fn verify_subprocess_package(archive: &Path) -> Result<VerifiedSubprocess> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unconditional_decoder_has_a_target_independent_dependency() {
+        // The decoder is not cfg-gated: a Linux-only dependency passes Linux CI
+        // but leaves Windows (and unsupported-host builds) unable to compile.
+        let manifest: toml::Value = toml::from_str(include_str!("../../Cargo.toml")).unwrap();
+        assert!(manifest["dependencies"].get("flate2").is_some());
+    }
+
     fn checksum(h: &mut [u8]) {
         h[148..156].fill(b' ');
         let sum: usize = h.iter().map(|b| *b as usize).sum();

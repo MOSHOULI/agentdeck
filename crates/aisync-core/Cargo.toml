@@ -27,6 +27,9 @@ walkdir = "2"
 regex = "1"
 base64 = "0.22"
 ureq = "2"
+# Pure in-memory DSH archive decoding is compiled on all targets. Actual file
+# access still fails closed outside the audited selected-reader platforms.
+flate2 = "1.1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_WindowsProgramming"] }
@@ -34,4 +37,3 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Securit
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 libc = "0.2"
 tar = { version = "0.4", default-features = false }
-flate2 = "1.1"
