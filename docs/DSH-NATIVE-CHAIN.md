@@ -94,3 +94,10 @@ pass where ptrace is unavailable cannot substitute for this hosted trace gate.
 真实正反例均要求执行追踪证明只有一次初始 AgentDeck CLI exec；任何额外执行、
 缺失或被拒绝的追踪均使验收失败，不允许退化为未追踪通过。此边界仅覆盖这两次
 静态核验命令，不代表任意未来安装或平台运行行为安全。
+
+## Fixed native archive follow-up
+
+A separate [four-package native archive verifier](DSH-NATIVE-ARCHIVES.md) now covers
+node-pty, Koffi and Koffi Linux/Windows x64 archive bytes and reviewed source snapshots.
+It does not change this subprocess command’s scope or establish installation, native
+loading, lifecycle safety or full dependency closure.

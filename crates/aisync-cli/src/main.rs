@@ -292,8 +292,33 @@ fn parse_qwen_manifest(value: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+#[derive(Clone, clap::ValueEnum)]
+enum DshNativePackage {
+    NodePty,
+    Koffi,
+    KoffiLinuxX64,
+    KoffiWin32X64,
+}
+impl From<DshNativePackage> for dsh::native_archive::NativePackage {
+    fn from(value: DshNativePackage) -> Self {
+        match value {
+            DshNativePackage::NodePty => Self::NodePty,
+            DshNativePackage::Koffi => Self::Koffi,
+            DshNativePackage::KoffiLinuxX64 => Self::KoffiLinuxX64,
+            DshNativePackage::KoffiWin32X64 => Self::KoffiWin32X64,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum DshAction {
+    /// Verify one fixed native dependency archive as data only, never install or execute.
+    VerifyNativePackage {
+        #[arg(long, value_enum)]
+        package: DshNativePackage,
+        #[arg(long, value_name = "ABSOLUTE_TGZ")]
+        archive: PathBuf,
+    },
     /// Verify an explicit fixed subprocess-local tgz and static contents, never install or execute.
     VerifySubprocessPackage {
         #[arg(long, value_name = "ABSOLUTE_TGZ")]
@@ -517,6 +542,19 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     }
                 );
             }
+        }
+        Commands::Dsh {
+            action: DshAction::VerifyNativePackage { package, archive },
+        } => {
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&dsh::native_archive::verify_native_package(
+                    package.into(),
+                    &archive
+                )?)?
+            )?;
         }
         Commands::Dsh {
             action: DshAction::VerifySubprocessPackage { archive },

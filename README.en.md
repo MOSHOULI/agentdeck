@@ -94,6 +94,8 @@ Installation, configuration, synchronization and restoration require `--yes`. In
 
 The CLI supports a [read-only sync plan](docs/SYNC-DRY-RUN.md): `sync --tools codex,claude-code --dry-run` reports target/action metadata without executing probes, initializing data, or modifying files. It is not a diff or verified apply readiness.
 
+Four fixed native dependency archives can be checked with `aisync dsh verify-native-package --package node-pty|koffi|koffi-linux-x64|koffi-win32-x64 --archive <absolute-path>`. This verifies archive/declaration/source evidence without extraction or native loading, not install readiness. See [DSH native archive verification](docs/DSH-NATIVE-ARCHIVES.md).
+
 ## Tests and releases
 
 ```powershell
