@@ -54,6 +54,47 @@ function Wait-ConfigurationMarkerError {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw 'Expected malformed managed-marker error not observed through installed UI'
 }
+function Wait-ConfigurationLinkedTargetError {
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $text = Get-InstallAccessibleText
+        if ($text.Contains('配置失败（可能已写入部分配置，请检查备份与当前配置）:') -and
+            $text.Contains('Configuration target or parent is linked or is not a regular file/directory; AgentDeck refused this target.') -and
+            $text.Contains('Manage it with the tool that created the link') -and
+            $text.Contains('No links were automatically detached.')) { return }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'Expected linked-target refusal not observed through installed UI'
+}
+function Check-ConfigurationHardlinkPreservation($manifest) {
+    Stop-App
+    $null = Invoke-ConfigurationFixture @('prepare-hardlinks', '--manifest', $manifest)
+    $fixture = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($fixture.hardlinkAliases.Count -ne 2 -or $fixture.configurationTargets.Count -ne 6) { throw 'Incomplete hardlink fixture' }
+    $baseline = Get-ConfigurationSnapshot $fixture $manifest
+    $entries = @()
+    foreach ($agent in @(@{ id = 'claude'; name = 'Claude Code' }, @{ id = 'gemini'; name = 'Gemini CLI' })) {
+        Check-Gui ("configuration-hardlink-" + $agent.id + '-start') -KeepOpen
+        Set-QwenPath '搜索 Agent' $agent.name
+        $null = Wait-QwenControl ("应用默认配置 " + $agent.name) ([Windows.Automation.ControlType]::Button)
+        if ((Get-ConfigurationSnapshot $fixture $manifest) -cne $baseline) { throw 'Discovery changed hardlink fixture' }
+        Click-Qwen ("应用默认配置 " + $agent.name)
+        Confirm-ConfigurationOnce $agent.name
+        Wait-ConfigurationLinkedTargetError
+        $null = Wait-QwenControl ("应用默认配置 " + $agent.name) ([Windows.Automation.ControlType]::Button)
+        if ((Get-InstallAccessibleText).Contains('默认 profile 配置操作已完成（写前备份）。')) { throw 'Linked configuration displayed success' }
+        if ((Get-ConfigurationSnapshot $fixture $manifest) -cne $baseline) { throw 'Linked configuration changed either alias or metadata' }
+        $counts = Invoke-ConfigurationFixture @('verify', '--manifest', $manifest) | ConvertFrom-Json
+        Save-QwenEvidence ("configuration-hardlink-" + $agent.id)
+        Stop-App
+        if ((Get-ConfigurationSnapshot $fixture $manifest) -cne $baseline) { throw 'Hardlink fixture changed while closing application' }
+        $entry = @{ agent = $agent.id; validContentHardlinkRefused = $true; confirmations = 1; bothAliasesBytesIdentityMetadataAclPreserved = $true; inactiveSettingsPreserved = $true; versionOnlyProbes = $counts; officialAgentExecuted = $false }
+        $entries += $entry
+        Record ("configuration-hardlink-" + $agent.id) $entry
+    }
+    if ($entries.Count -ne 2) { throw 'Missing hardlink rejection stage' }
+    return $entries
+}
 function Check-ConfigurationFailurePreservation {
     Stop-App
     $savedPath = $env:PATH; $savedExt = $env:PATHEXT
@@ -90,6 +131,7 @@ function Check-ConfigurationFailurePreservation {
             Record ("configuration-failure-" + $agent.id) $entry
         }
         if ($result.agents.Count -ne 2) { throw 'Missing configuration rejection stage' }
+        $result.hardlinks = @(Check-ConfigurationHardlinkPreservation $manifest)
         $result.passed = $true
         Record $stage $result
     } finally {

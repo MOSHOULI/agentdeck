@@ -31,12 +31,55 @@ class Tests(unittest.TestCase):
         self.assertIn('$names -cnotcontains $expected', SCRIPT)
         self.assertIn('Instruction file has ambiguous or incomplete AgentDeck markers; left unchanged', SCRIPT)
         self.assertIn('Get-Acl -LiteralPath', SCRIPT)
-        self.assertEqual(SCRIPT.count('(Get-ConfigurationSnapshot $fixture $manifest) -cne $baseline'), 3)
+        self.assertEqual(SCRIPT.split("function Check-ConfigurationFailurePreservation", 1)[1].count('(Get-ConfigurationSnapshot $fixture $manifest) -cne $baseline'), 3)
         self.assertIn("'.agentdeck/git-backup/.git'", SCRIPT)
         self.assertIn('$result.agents.Count -ne 2', SCRIPT)
         self.assertIn('$result.passed = $true', SCRIPT)
         self.assertIn('"$stage.json"', SCRIPT)
         self.assertIn('$env:PATH = $savedPath; $env:PATHEXT = $savedExt', SCRIPT)
+
+    def test_hardlink_stages_are_additive_real_ui_and_preserve_both_aliases(self):
+        self.assertIn("$result.hardlinks = @(Check-ConfigurationHardlinkPreservation $manifest)", SCRIPT)
+        self.assertLess(SCRIPT.index("if ($result.agents.Count -ne 2)"), SCRIPT.index("$result.hardlinks ="))
+        body = SCRIPT.split('function Check-ConfigurationHardlinkPreservation', 1)[1].split('function Check-ConfigurationFailurePreservation', 1)[0]
+        self.assertEqual(body.count('Confirm-ConfigurationOnce $agent.name'), 1)
+        self.assertEqual(body.count('Click-Qwen ("应用默认配置 " + $agent.name)'), 1)
+        self.assertIn('Wait-ConfigurationLinkedTargetError', body)
+        self.assertIn('bothAliasesBytesIdentityMetadataAclPreserved = $true', body)
+        self.assertIn('$fixture.configurationTargets.Count -ne 6', body)
+        self.assertEqual(body.count('(Get-ConfigurationSnapshot $fixture $manifest) -cne $baseline'), 3)
+        self.assertIn('No links were automatically detached.', SCRIPT)
+
+    def test_valid_hardlink_fixture_detects_detachment_and_alias_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / 'home'
+            root = Path(tmp) / 'root'
+            root.mkdir()
+            targets = []
+            for _, _, _, instruction in fixture.AGENTS:
+                target = home / instruction
+                target.parent.mkdir(parents=True)
+                target.write_bytes(b'malformed')
+                settings = target.parent / 'settings.json'
+                settings.write_bytes(b'{}')
+                targets.extend((str(target), str(settings)))
+            m = fixture.prepare_hardlinks(dict(home=str(home), root=str(root), configurationTargets=targets))
+            before = fixture.snapshot(m['configurationTargets'])
+            self.assertEqual(len(before), 6)
+            for index, alias_index in ((0, 4), (2, 5)):
+                self.assertEqual(before[index]['fileId'], before[alias_index]['fileId'])
+                self.assertEqual(before[index]['links'], 2)
+                self.assertNotIn(b'agentdeck:personalization', Path(m['configurationTargets'][index]).read_bytes())
+            target = Path(m['configurationTargets'][0])
+            data = target.read_bytes()
+            target.unlink()
+            target.write_bytes(data)
+            after = fixture.snapshot(m['configurationTargets'])
+            self.assertNotEqual(before, after)
+            self.assertEqual(before[0]['hash'], after[0]['hash'])
+            self.assertEqual(after[4]['links'], 1)
+            Path(m['hardlinkAliases'][1]).write_bytes(b'changed alias')
+            self.assertNotEqual(after, fixture.snapshot(m['configurationTargets']))
 
     def test_snapshot_detects_identical_bytes_replacement_and_metadata_change(self):
         with tempfile.TemporaryDirectory() as tmp:
