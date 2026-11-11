@@ -77,6 +77,8 @@ jobs:
           path: ${{ runner.temp }}/qwen-release-evidence.json
           if-no-files-found: error
           retention-days: 14
+      - name: DSH exact-metadata platform and graph boundaries (offline)
+        run: python -B scripts/test_dsh_platform_plan.py
       - name: Preserve DSH evidence bytes across Git checkout modes
         run: python -B scripts/test_dsh_evidence_checkout.py
       - uses: dtolnay/rust-toolchain@stable
@@ -233,6 +235,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.BUILD_SHA }}
+      - name: DSH exact-metadata platform and graph boundaries (offline)
+        run: python -B scripts/test_dsh_platform_plan.py
       - name: Preserve DSH evidence bytes across Git checkout modes
         run: python -B scripts/test_dsh_evidence_checkout.py
       - uses: actions/setup-node@v4
