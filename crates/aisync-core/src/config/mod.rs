@@ -19,6 +19,8 @@ mod destination;
 mod metadata;
 #[cfg(all(test, target_os = "linux"))]
 mod metadata_tests;
+#[cfg(all(test, windows))]
+mod windows_metadata_tests;
 pub use codex_preview::{
     CodexConfigurationPreview, CodexConfigurationTarget, preview_codex_configuration,
 };
