@@ -8,8 +8,8 @@ from unittest.mock import patch
 import windows_config_failure_fixture as fixture
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = (ROOT / 'scripts/windows-config-failure-ui-acceptance.ps1').read_text()
-LIFECYCLE = (ROOT / 'scripts/windows-installer-acceptance.ps1').read_text()
+SCRIPT = (ROOT / 'scripts/windows-config-failure-ui-acceptance.ps1').read_text(encoding='utf-8')
+LIFECYCLE = (ROOT / 'scripts/windows-installer-acceptance.ps1').read_text(encoding='utf-8')
 
 
 class Tests(unittest.TestCase):
@@ -67,7 +67,7 @@ class Tests(unittest.TestCase):
                 bad = subprocess.run(['node', str(js), *args], capture_output=True)
                 self.assertEqual(bad.returncode, 64)
                 self.assertEqual(bad.stdout, b'')
-            self.assertEqual([json.loads(x) for x in log.read_text().splitlines()], [['--version'], [], ['login'], ['--version', 'extra']])
+            self.assertEqual([json.loads(x) for x in log.read_text(encoding='utf-8').splitlines()], [['--version'], [], ['login'], ['--version', 'extra']])
 
     def test_real_setup_is_windows_only(self):
         if fixture.os.name == 'nt':
@@ -96,11 +96,11 @@ class Tests(unittest.TestCase):
                 paths.update(nodeSha256=fixture.hashlib.sha256(b'').hexdigest(),
                              managerSha256=fixture.hashlib.sha256(b'').hexdigest())
                 manifest = root / 'fixture.json'
-                manifest.write_text(json.dumps(paths))
+                manifest.write_text(json.dumps(paths), encoding='utf-8')
                 return manifest
             with patch.object(fixture, 'prepare', side_effect=base_prepare):
                 manifest = fixture.setup(root, Path(tmp) / 'unused', home)
-            m = json.loads(manifest.read_text())
+            m = json.loads(manifest.read_text(encoding='utf-8'))
             self.assertEqual(len(m['configurationTargets']), 4)
             self.assertEqual(len(m['authored']), 8)
             for binary, package, version, instruction in fixture.AGENTS:
@@ -116,12 +116,37 @@ class Tests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'unexpected_install'):
                 fixture.verify(m)
             Path(m['installCalls']).write_bytes(b'')
-            (root / 'gemini-versions.jsonl').write_text('["login"]\n')
+            (root / 'gemini-versions.jsonl').write_text('["login"]\n', encoding='utf-8')
             with self.assertRaisesRegex(ValueError, 'missing_or_nonversion_invocation'):
                 fixture.verify(m)
 
+    def test_cp1252_default_does_not_change_authored_utf8_io(self):
+        # Simulate Windows Python's legacy default without relying on the host
+        # locale. Explicit encodings pass through; omitted encodings use cp1252.
+        import sys
+        code = r'''import io, runpy, unittest, sys
+sys.path.insert(0, "scripts")
+# pathlib normalizes None via io.text_encoding before calling Path.open.
+# Override that normalization, rather than missing its resolved "locale" value.
+original = io.text_encoding
+def legacy_text_encoding(encoding, stacklevel=2):
+    return "cp1252" if encoding is None else original(encoding, stacklevel)
+io.text_encoding = legacy_text_encoding
+module = runpy.run_path("scripts/test_windows_config_failure_ui_acceptance.py", run_name="locale_probe")
+case = module["Tests"]
+suite = unittest.TestSuite(case(name) for name in (
+    "test_package_contract_matches_registry",
+    "test_setup_authors_only_two_version_packages_and_preserved_targets",
+    "test_version_only_program_rejects_any_other_invocation",
+))
+raise SystemExit(not unittest.TextTestRunner().run(suite).wasSuccessful())
+'''
+        completed = subprocess.run([sys.executable, '-B', '-c', code], cwd=ROOT,
+                                   capture_output=True, text=True, encoding='utf-8')
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
     def test_package_contract_matches_registry(self):
-        registry = json.loads((ROOT / 'agents/registry-v3.json').read_text())['agents']
+        registry = json.loads((ROOT / 'agents/registry-v3.json').read_text(encoding='utf-8'))['agents']
         for binary, _, _, target in fixture.AGENTS:
             agent = registry['claude-code' if binary == 'claude' else 'gemini-cli']
             self.assertEqual(agent['config_inject']['personalization']['target'], '~/' + target)

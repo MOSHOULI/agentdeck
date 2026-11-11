@@ -26,7 +26,7 @@ def program(log, version):
 
 def setup(root, node, home):
     manifest = prepare(root, node, home, 'success')
-    m = json.loads(manifest.read_text())
+    m = json.loads(manifest.read_text(encoding='utf-8'))
     authored = {}
     targets = []
     for binary, package, version, instruction in AGENTS:
