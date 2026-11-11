@@ -147,7 +147,10 @@ class Tests(unittest.TestCase):
         workflow=(Path(__file__).resolve().parents[1]/'.github/workflows/ci.yml').read_text()
         self.assertIn('python -B scripts/qoder_private_deploy_acceptance.py',workflow)
         self.assertIn('qoder-private-deploy-evidence/result.json',workflow)
-        self.assertIn('dbus-x11 strace',workflow)
+        from install_ci_ubuntu_dependencies import PACKAGES
+        self.assertIn('python -B scripts/install_ci_ubuntu_dependencies.py webview', workflow)
+        self.assertIn('dbus-x11', PACKAGES['webview'])
+        self.assertIn('strace', PACKAGES['webview'])
         source=Path(h.__file__).read_text()
         self.assertNotIn('--hash',source)
         self.assertNotIn('sysctl',source)

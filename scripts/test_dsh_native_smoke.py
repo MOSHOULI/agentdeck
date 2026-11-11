@@ -233,7 +233,9 @@ class Tests(unittest.TestCase):
         block = workflow.split('name: DSH-native-verification-', 1)[1].split('retention-days: 14', 1)[0]
         self.assertIn('path: ${{ runner.temp }}/dsh-native-evidence.json', block)
         self.assertNotIn('*.tgz', block)
-        self.assertLess(workflow.index('sudo apt-get install --no-install-recommends -y strace'), workflow.index('python -B scripts/dsh_native_smoke.py'))
+        from install_ci_ubuntu_dependencies import PACKAGES
+        self.assertEqual(PACKAGES['tracer'], ('strace',))
+        self.assertLess(workflow.index('python -B scripts/install_ci_ubuntu_dependencies.py tracer'), workflow.index('python -B scripts/dsh_native_smoke.py'))
 
 
 # These safety primitives are reused unchanged; execute their edge-case tests here

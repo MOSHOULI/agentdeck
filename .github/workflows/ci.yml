@@ -48,12 +48,13 @@ jobs:
 
   portable-core:
     name: Linux core, CLI and GLib regression
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.BUILD_SHA }}
+      - run: python -B scripts/test_install_ci_ubuntu_dependencies.py
       - run: python -B scripts/test_build_nsis_resilient.py
       - run: python -B scripts/test_linux_dsh_native_webview.py
       - run: python -B scripts/test_fetch_dsh_native_ui_archives.py
@@ -103,9 +104,9 @@ jobs:
         timeout-minutes: 5
         run: python -B scripts/dsh_distribution_smoke.py --cli "$PWD/target/debug/aisync" --destination "$RUNNER_TEMP/dsh-root-package-smoke"
       - name: Install official exec tracer for DSH static acceptance
+        timeout-minutes: 14
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y strace
+          python -B scripts/install_ci_ubuntu_dependencies.py tracer
           test -x /usr/bin/strace
       - name: Verify reachable DSH subprocess archive without lifecycle execution
         timeout-minutes: 5
@@ -172,9 +173,9 @@ jobs:
       - name: Qwen owned field compatibility (synthetic, pinned offline source)
         run: python scripts/run-isolated.py node scripts/test-qwen-owned-setting.mjs
       - name: Install official runner GLib development dependencies
+        timeout-minutes: 14
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libglib2.0-dev pkg-config
+          python -B scripts/install_ci_ubuntu_dependencies.py glib
           dpkg-query -W libglib2.0-dev pkg-config
           pkg-config --modversion glib-2.0 gobject-2.0 gio-2.0
           rustc --version --verbose
@@ -424,9 +425,9 @@ jobs:
           toolchain: 1.99.1
       - uses: Swatinem/rust-cache@v2
       - name: Install official Linux WebView and display dependencies
+        timeout-minutes: 14
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev webkit2gtk-driver xvfb xauth dbus-x11 strace
+          python -B scripts/install_ci_ubuntu_dependencies.py webview
           test -x /usr/bin/WebKitWebDriver
           pkg-config --modversion gtk+-3.0 webkit2gtk-4.1
           dpkg-query -W webkit2gtk-driver xvfb libwebkit2gtk-4.1-dev
