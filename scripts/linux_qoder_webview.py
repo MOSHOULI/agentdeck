@@ -97,7 +97,23 @@ class Driver:
         return self.request(method, '/session/' + self.session + path, body)
 
     def elements(self, xpath):
-        return self.command('POST', '/elements', {'using': 'xpath', 'value': xpath})
+        # A dynamic DOM can detach a node while WebKit serializes an XPath
+        # result. Only this read-only lookup may reacquire a fresh snapshot.
+        # Never replay element actions or uncertain/incomplete responses.
+        for attempt in range(3):
+            try:
+                return self.command('POST', '/elements', {'using': 'xpath', 'value': xpath})
+            except Failure as error:
+                response = self.last_response or {}
+                if (str(error) != 'driver_http_error' or attempt == 2
+                        or response.get('operation') != 'elements'
+                        or response.get('method') != 'POST'
+                        or response.get('received') is not True
+                        or response.get('status') != 404
+                        or response.get('within_limit') is not True
+                        or response.get('webdriver_error') != 'stale element reference'):
+                    raise
+                time.sleep(0.1)
 
     def one(self, xpath):
         found = self.elements(xpath)

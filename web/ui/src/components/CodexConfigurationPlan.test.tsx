@@ -50,3 +50,106 @@ it('labels demo and blocks unavailable mode', () => {
   expect(screen.getByRole('button', { name: '查看 Codex 合成配置计划' })).toBeEnabled();
   vi.mocked(bridge.runtimeMode).mockReturnValue('unavailable'); view.rerender(<CodexConfigurationPlan busy={false} context="two" />); expect(screen.getByTestId('codex-config-preview')).toBeDisabled();
 });
+
+it('invalidates a displayed plan on another Agent activity and never automatically rereads', async () => {
+  render(<CodexConfigurationPlan busy={false} context="one" />);
+  fireEvent.click(screen.getByTestId('codex-config-preview'));
+  await screen.findByTestId('codex-config-result');
+  const other = Symbol('other-agent-operation');
+  act(() => useWorkspaceActivityStore.getState().setActivity('agents', other, true));
+  expect(screen.queryByTestId('codex-config-result')).not.toBeInTheDocument();
+  expect(screen.getByTestId('codex-config-preview')).toBeDisabled();
+  act(() => useWorkspaceActivityStore.getState().setActivity('agents', other, false));
+  expect(screen.queryByTestId('codex-config-result')).not.toBeInTheDocument();
+  expect(bridge.previewCodexConfiguration).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByTestId('codex-config-preview'));
+  await screen.findByTestId('codex-config-result');
+  expect(bridge.previewCodexConfiguration).toHaveBeenCalledTimes(2);
+});
+
+it('discards a pending plan after another activity while retaining its own owner until settlement', async () => {
+  const work = deferred(); vi.mocked(bridge.previewCodexConfiguration).mockReturnValue(work.promise);
+  render(<CodexConfigurationPlan busy={false} context="one" />);
+  fireEvent.click(screen.getByTestId('codex-config-preview'));
+  const own = useWorkspaceActivityStore.getState().owners.agents[0];
+  const other = Symbol('other-agent-operation');
+  act(() => useWorkspaceActivityStore.getState().setActivity('agents', other, true));
+  act(() => useWorkspaceActivityStore.getState().setActivity('agents', other, false));
+  expect(useWorkspaceActivityStore.getState().owners.agents).toEqual([own]);
+  expect(screen.getByTestId('codex-config-preview')).toBeDisabled();
+  fireEvent.click(screen.getByTestId('codex-config-preview'));
+  await act(async () => work.resolve());
+  expect(screen.queryByTestId('codex-config-result')).not.toBeInTheDocument();
+  expect(useWorkspaceActivityStore.getState().busy.agents).toBe(false);
+  expect(bridge.previewCodexConfiguration).toHaveBeenCalledTimes(1);
+});
+
+it('does not miss another activity that starts and finishes within one render batch', async () => {
+  render(<CodexConfigurationPlan busy={false} context="one" />);
+  fireEvent.click(screen.getByTestId('codex-config-preview'));
+  await screen.findByTestId('codex-config-result');
+  const other = Symbol('short-agent-operation');
+  act(() => {
+    useWorkspaceActivityStore.getState().setActivity('agents', other, true);
+    useWorkspaceActivityStore.getState().setActivity('agents', other, false);
+  });
+  expect(screen.queryByTestId('codex-config-result')).not.toBeInTheDocument();
+  expect(bridge.previewCodexConfiguration).toHaveBeenCalledTimes(1);
+});
+
+it('does not invalidate a plan for activity in an unrelated workspace', async () => {
+  render(<CodexConfigurationPlan busy={false} context="one" />);
+  fireEvent.click(screen.getByTestId('codex-config-preview'));
+  await screen.findByTestId('codex-config-result');
+  const other = Symbol('memory-operation');
+  try {
+    act(() => useWorkspaceActivityStore.getState().setActivity('memory', other, true));
+    expect(screen.getByTestId('codex-config-result')).toBeInTheDocument();
+    expect(screen.getByTestId('codex-config-preview')).toBeEnabled();
+  } finally {
+    act(() => useWorkspaceActivityStore.getState().setActivity('memory', other, false));
+  }
+});
+
+it('suppresses late errors after invalidation and never releases another operation owner', async () => {
+  let reject!: (reason: Error) => void;
+  vi.mocked(bridge.previewCodexConfiguration).mockReturnValue(new Promise((_, fail) => { reject = fail; }));
+  render(<CodexConfigurationPlan busy={false} context="one" />);
+  fireEvent.click(screen.getByTestId('codex-config-preview'));
+  const other = Symbol('other-agent-operation');
+  act(() => useWorkspaceActivityStore.getState().setActivity('agents', other, true));
+  await act(async () => reject(new Error('old request failed')));
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(useWorkspaceActivityStore.getState().owners.agents).toEqual([other]);
+  expect(screen.getByTestId('codex-config-preview')).toBeDisabled();
+  act(() => useWorkspaceActivityStore.getState().setActivity('agents', other, false));
+  expect(screen.getByTestId('codex-config-preview')).toBeEnabled();
+  expect(bridge.previewCodexConfiguration).toHaveBeenCalledTimes(1);
+});
+
+it.each(['apply', 'restore'] as const)('invalidates the same-card plan before animation %s and leaves refresh explicit', async operation => {
+  vi.spyOn(bridge, 'getCodexAnimationsCapability').mockResolvedValue('linux_managed');
+  vi.spyOn(bridge, 'previewCodexAnimations').mockResolvedValue({ field: 'tui.animations', before: true, after: false, changes: true, token: 'a'.repeat(64) });
+  vi.spyOn(bridge, 'inspectCodexAnimationsRecovery').mockResolvedValue({ state: 'restore_original', token: 'b'.repeat(64) });
+  let finish!: (value: boolean) => void;
+  const work = new Promise<boolean>(resolve => { finish = resolve; });
+  const apply = vi.spyOn(bridge, 'applyCodexAnimations').mockReturnValue(work);
+  const restore = vi.spyOn(bridge, 'restoreCodexAnimations').mockReturnValue(work);
+  render(<AgentCard agent={{ ...notDetectedAgent, id: 'codex', name: 'Codex' }} selected={false} dataStale={false} onPrepareInstall={vi.fn()} onInstall={vi.fn()} onUninstall={vi.fn()} onConfigure={vi.fn()} onSelect={vi.fn()} />);
+  fireEvent.click(screen.getByTestId('codex-config-preview'));
+  await screen.findByTestId('codex-config-result');
+  fireEvent.click(screen.getByTestId(`codex-animations-${operation === 'apply' ? 'preview' : 'inspect'}`));
+  await screen.findByTestId(`codex-animations-confirm-${operation}`);
+  expect(screen.queryByTestId('codex-config-result')).not.toBeInTheDocument();
+  expect(apply).not.toHaveBeenCalled(); expect(restore).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByTestId(`codex-animations-confirm-${operation}`));
+  expect(operation === 'apply' ? apply : restore).toHaveBeenCalledTimes(1);
+  expect(operation === 'apply' ? restore : apply).not.toHaveBeenCalled();
+  expect(screen.getByTestId('codex-config-preview')).toBeDisabled();
+  await act(async () => finish(true));
+  expect(screen.queryByTestId('codex-config-result')).not.toBeInTheDocument();
+  expect(bridge.previewCodexConfiguration).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByTestId('codex-config-preview'));
+  await screen.findByTestId('codex-config-result');
+  expect(bridge.previewCodexConfiguration).toHaveBeenCalledTimes(2);
+});

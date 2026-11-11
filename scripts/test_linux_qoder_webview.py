@@ -9,6 +9,106 @@ from unittest.mock import Mock, patch
 import linux_qoder_webview as subject
 
 class Tests(unittest.TestCase):
+    def stale_lookup_driver(self, replies):
+        driver = subject.Driver(); driver.session = 'session'; driver.connection = Mock()
+        responses = []
+        for status, body in replies:
+            response = Mock(); response.status = status; response.chunked = False; response.length = 0
+            response.read.return_value = json.dumps({'value': body}).encode()
+            responses.append(response)
+        driver.connection.getresponse.side_effect = responses
+        return driver
+
+    def test_stale_lookup_reacquires_elements_before_one_click(self):
+        stale = {'error': 'stale element reference', 'message': 'private diagnostics'}
+        driver = self.stale_lookup_driver([(404, stale), (200, [{subject.ELEMENT: 'fresh'}]), (200, None)])
+        with patch.object(subject.time, 'sleep'):
+            driver.click('//button')
+        calls = driver.connection.request.call_args_list
+        self.assertEqual([call.args[:2] for call in calls], [
+            ('POST', '/session/session/elements'), ('POST', '/session/session/elements'),
+            ('POST', '/session/session/element/fresh/click')])
+        self.assertEqual(calls[0].kwargs['body'], calls[1].kwargs['body'])
+        driver.connection.close.assert_called_once()
+
+    def test_stale_lookup_attempts_are_bounded(self):
+        stale = {'error': 'stale element reference'}
+        driver = self.stale_lookup_driver([(404, stale)] * 4)
+        with patch.object(subject.time, 'sleep') as sleep, self.assertRaisesRegex(subject.Failure, 'driver_http_error'):
+            driver.elements('//button')
+        self.assertEqual(driver.connection.request.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertEqual(driver.last_response['webdriver_error'], 'stale element reference')
+
+    def test_other_lookup_failures_and_stale_mutations_are_never_replayed(self):
+        for status, error in [(404, 'no such element'), (500, 'stale element reference'),
+                              (200, 'stale element reference'), (404, 'unknown error')]:
+            with self.subTest(status=status, error=error):
+                driver = self.stale_lookup_driver([(status, {'error': error})])
+                with self.assertRaises(subject.Failure): driver.elements('//button')
+                driver.connection.request.assert_called_once()
+        for endpoint in ('click', 'clear', 'value'):
+            with self.subTest(endpoint=endpoint):
+                driver = self.stale_lookup_driver([(404, {'error': 'stale element reference'})])
+                with self.assertRaises(subject.Failure):
+                    driver.command('POST', '/element/old/' + endpoint, {})
+                driver.connection.request.assert_called_once()
+
+    def test_uncertain_or_incomplete_stale_lookup_response_is_not_replayed(self):
+        driver = self.stale_lookup_driver([(404, {'error': 'stale element reference'})])
+        response = Mock(); response.status = 404; response.chunked = False; response.length = 10
+        response.read.return_value = b'{"value":{"error":"stale element reference"}}'
+        driver.connection.getresponse.side_effect = [response]
+        with self.assertRaisesRegex(subject.Failure, 'driver_incomplete_response'):
+            driver.elements('//button')
+        driver.connection.request.assert_called_once()
+        driver = self.stale_lookup_driver([])
+        driver.connection.getresponse.side_effect = subject.http.client.RemoteDisconnected('unknown outcome')
+        with self.assertRaises(subject.http.client.RemoteDisconnected): driver.elements('//button')
+        driver.connection.request.assert_called_once()
+
+    def test_malformed_lookup_error_or_private_message_never_enables_retry(self):
+        for raw in (b'not JSON', b'{"value":{"message":"stale element reference"}}',
+                    b'{"value":{"error":["stale element reference"]}}',
+                    b'{"value":{"error":"unknown error","message":"stale element reference"}}'):
+            with self.subTest(raw=raw):
+                driver = self.stale_lookup_driver([])
+                response = Mock(); response.status = 404; response.chunked = False; response.length = 0
+                response.read.return_value = raw
+                driver.connection.getresponse.side_effect = [response]
+                with self.assertRaises(subject.Failure): driver.elements('//button')
+                driver.connection.request.assert_called_once()
+
+    def test_real_http_stale_lookup_reconnects_then_clicks_only_once(self):
+        from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+        import threading
+        observed = []
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+            def do_POST(self):
+                observed.append((self.path, self.rfile.read(int(self.headers['Content-Length']))))
+                if len(observed) == 1:
+                    status, value = 404, {'error': 'stale element reference'}
+                else:
+                    status, value = 200, ([{subject.ELEMENT: 'fresh'}] if self.path.endswith('/elements') else None)
+                raw = json.dumps({'value': value}).encode()
+                self.send_response(status); self.send_header('Content-Length', str(len(raw))); self.end_headers()
+                self.wfile.write(raw); self.wfile.flush()
+            def log_message(self, *args): pass
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        real = subject.http.client.HTTPConnection
+        try:
+            with patch.object(subject.http.client, 'HTTPConnection', side_effect=lambda host, port, timeout: real(host, server.server_port, timeout=timeout)), patch.object(subject.time, 'sleep'):
+                driver = subject.Driver(); driver.session = 'session'
+                try: driver.click('//button')
+                finally: driver.close()
+            self.assertEqual([path for path, _ in observed], ['/session/session/elements',
+                '/session/session/elements', '/session/session/element/fresh/click'])
+            self.assertEqual(observed[0][1], observed[1][1])
+        finally:
+            server.shutdown(); server.server_close(); thread.join(timeout=2)
+
     def test_private_fixtures_and_no_write_snapshots(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); paths = subject.fixtures(root)

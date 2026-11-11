@@ -9,16 +9,23 @@ export function CodexConfigurationPlan({ busy, context }: { busy: boolean; conte
   const [pending, setPending] = useState(false);
   const [error, setError] = useState(false);
   const mounted = useRef(false); const running = useRef(false); const generation = useRef(0);
+  const activityOwner = useRef(Symbol('codex-configuration-plan'));
   const workspaceBusy = useWorkspaceActivityStore(s => s.busy.agents);
   const mode = bridge.runtimeMode();
   const clear = () => { generation.current++; setResult(null); setError(false); };
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; generation.current++; }; }, []);
   useEffect(clear, [context, busy]);
+  useEffect(() => useWorkspaceActivityStore.subscribe((state, previous) => {
+    // Observe owner transitions synchronously, including overlapping operations
+    // and activity that starts and finishes within one React render batch.
+    if (state.owners.agents !== previous.owners.agents
+      && state.owners.agents.some(owner => owner !== activityOwner.current)) clear();
+  }), []);
   const preview = async () => {
     if (running.current || busy || useWorkspaceActivityStore.getState().busy.agents || mode === 'unavailable') return;
-    const owner = Symbol('codex-configuration-plan'); const current = ++generation.current;
-    useWorkspaceActivityStore.getState().setActivity('agents', owner, true);
+    const owner = activityOwner.current; const current = ++generation.current;
     running.current = true; setPending(true); setResult(null); setError(false);
+    useWorkspaceActivityStore.getState().setActivity('agents', owner, true);
     try { const next = await bridge.previewCodexConfiguration(); if (mounted.current && current === generation.current) setResult(next); }
     catch { if (mounted.current && current === generation.current) setError(true); }
     finally { running.current = false; useWorkspaceActivityStore.getState().setActivity('agents', owner, false); if (mounted.current) setPending(false); }
