@@ -74,14 +74,68 @@ pub fn search_memory(query: String) -> Result<Vec<MemoryEntry>, String> {
 
 /// 注入记忆到指定 agent
 #[tauri::command]
-pub fn inject_memory(agent_id: String, memory_ids: Vec<String>) -> Result<(), String> {
-    memory::inject(&agent_id, &memory_ids).map_err(|e| e.to_string())
+pub async fn inject_memory(agent_id: String, memory_ids: Vec<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        memory::inject(&agent_id, &memory_ids).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("Memory export worker failed: {e}"))?
+}
+
+/// Existing-DB-only snapshot for the reviewed manual export editor.
+#[tauri::command]
+pub async fn read_memory_export(
+    agent_id: String,
+) -> memory::export::ExportResult<memory::export::ExportSnapshot> {
+    tauri::async_runtime::spawn_blocking(move || memory::export::read(&agent_id))
+        .await
+        .map_err(export_worker_error)?
+}
+
+#[tauri::command]
+pub async fn preview_memory_export(
+    agent_id: String,
+    expected_state_token: String,
+    memory_ids: Vec<String>,
+) -> memory::export::ExportResult<memory::export::ExportPreview> {
+    tauri::async_runtime::spawn_blocking(move || {
+        memory::export::preview(&agent_id, &expected_state_token, &memory_ids)
+    })
+    .await
+    .map_err(export_worker_error)?
+}
+
+#[tauri::command]
+pub async fn replace_memory_export(
+    agent_id: String,
+    preview_token: String,
+    memory_ids: Vec<String>,
+) -> memory::export::ExportResult<memory::export::ExportReceipt> {
+    tauri::async_runtime::spawn_blocking(move || {
+        memory::export::replace(&agent_id, &preview_token, &memory_ids)
+    })
+    .await
+    .map_err(export_worker_error)?
+}
+
+fn export_worker_error(error: impl std::fmt::Display) -> memory::export::ExportError {
+    memory::export::ExportError {
+        code: "write_failed_uncertain",
+        message: format!(
+            "Memory export worker failed: {error}; refresh and review before retrying"
+        ),
+        refresh_required: true,
+    }
 }
 
 /// 切换记忆自动注入标签
 #[tauri::command]
-pub fn toggle_auto_inject(memory_id: String, enabled: bool) -> Result<(), String> {
-    memory::toggle_auto_inject(&memory_id, enabled).map_err(|e| e.to_string())
+pub async fn toggle_auto_inject(memory_id: String, enabled: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        memory::toggle_auto_inject(&memory_id, enabled).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("Memory export worker failed: {e}"))?
 }
 
 /// 最近记忆列表

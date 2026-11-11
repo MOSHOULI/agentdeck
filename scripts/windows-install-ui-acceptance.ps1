@@ -321,8 +321,8 @@ function Send-InstallWorkspaceEnter($tab, [IntPtr]$handle) {
     }
     Send-InstallWorkspaceEnterKey
 }
-function Activate-InstallWorkspace([ValidateSet('Qwen 配置检查','Agent 管理')][string]$name) {
-    $workspaceId = if ($name -eq 'Qwen 配置检查') { 'qwen' } else { 'agents' }
+function Activate-InstallWorkspace([ValidateSet('Qwen 配置检查','Agent 管理','记忆管理')][string]$name) {
+    $workspaceId = if ($name -eq 'Qwen 配置检查') { 'qwen' } elseif ($name -eq '记忆管理') { 'memory' } else { 'agents' }
     $route = 'unavailable'
     $focusConfirmed = $false
     $foregroundConfirmed = $false
@@ -352,8 +352,8 @@ function Activate-InstallWorkspace([ValidateSet('Qwen 配置检查','Agent 管�
         throw $activationFailure
     }
 }
-function Wait-InstallWorkspaceSelected([ValidateSet('Qwen 配置检查','Agent 管理')][string]$name) {
-    $workspaceId = if ($name -eq 'Qwen 配置检查') { 'qwen' } else { 'agents' }
+function Wait-InstallWorkspaceSelected([ValidateSet('Qwen 配置检查','Agent 管理','记忆管理')][string]$name) {
+    $workspaceId = if ($name -eq 'Qwen 配置检查') { 'qwen' } elseif ($name -eq '记忆管理') { 'memory' } else { 'agents' }
     $deadline = [DateTime]::UtcNow.AddSeconds(10)
     $revealAttempted = $false
     do {
@@ -362,6 +362,8 @@ function Wait-InstallWorkspaceSelected([ValidateSet('Qwen 配置检查','Agent �
         $selected = $tabPresent -and ([Windows.Automation.SelectionItemPattern]$tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)).Current.IsSelected
         $control = if ($name -eq 'Qwen 配置检查') {
             Find-QwenControl 'settings.json 绝对路径' ([Windows.Automation.ControlType]::Edit)
+        } elseif ($name -eq '记忆管理') {
+            Find-QwenControl '读取已保存选择' ([Windows.Automation.ControlType]::Button)
         } else {
             Find-QwenControl '刷新列表' ([Windows.Automation.ControlType]::Button)
         }

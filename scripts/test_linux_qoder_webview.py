@@ -41,6 +41,28 @@ class Tests(unittest.TestCase):
         self.assertEqual(calls[2],('POST','/session/session/element/control/value',{'text':'text','value':list('text')}))
         self.assertFalse(any('execute' in c[1] for c in calls))
 
+    def test_empty_input_is_native_clear_only_and_transport_is_never_replayed(self):
+        driver = subject.Driver(); driver.one = Mock(return_value='control')
+        calls = []
+        def strict_command(method, path, body=None):
+            calls.append((method, path, body))
+            if path.endswith('/value') and not body['value']:
+                raise subject.Failure('invalid_empty_send_keys')
+        driver.command = strict_command
+        driver.type('//input', '')
+        self.assertEqual(calls, [('POST', '/element/control/clear', {})])
+        self.assertEqual(driver.expected_input, '')
+        self.assertEqual(driver.input_stage, 'empty_input_cleared')
+        calls.clear()
+        driver.type('//input', 'Harbor')
+        self.assertEqual(calls, [('POST', '/element/control/clear', {}),
+            ('POST', '/element/control/value', {'text': 'Harbor', 'value': list('Harbor')})])
+        driver.command = Mock(side_effect=subject.Failure('uncertain_clear'))
+        with self.assertRaisesRegex(subject.Failure, 'uncertain_clear'):
+            driver.type('//input', '')
+        driver.command.assert_called_once_with('POST', '/element/control/clear', {})
+        self.assertEqual(driver.input_stage, 'clear_input')
+
     def test_ambiguous_control_or_script_fails(self):
         driver=subject.Driver(); driver.elements=Mock(return_value=[])
         with self.assertRaises(subject.Failure):driver.one('//button')

@@ -507,3 +507,10 @@
 .mcp-preview-details dd { margin: 0; overflow-wrap: anywhere; }
 .mcp-preview-details code { white-space: pre-wrap; }
 .mcp-preview-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+.memory-export-editor { min-width: 0; }
+.memory-export-editor .toolbar { flex-wrap: wrap; }
+.memory-export-editor select { width: auto; min-width: 140px; }
+.memory-export-editor .memory-entries { max-height: 420px; overflow-y: auto; margin: 12px 0; }
+.memory-export-editor .memory-entry-content { white-space: pre-wrap; overflow-wrap: anywhere; }
+.memory-export-preview { margin-top: 18px; padding: 16px; border: 1px solid var(--border); border-radius: 10px; }

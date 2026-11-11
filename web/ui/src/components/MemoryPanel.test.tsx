@@ -14,6 +14,9 @@ vi.mock('../bridge', () => ({
   collectMemory: vi.fn(),
   searchMemory: vi.fn(),
   injectMemory: vi.fn(),
+  readMemoryExport: vi.fn(),
+  previewMemoryExport: vi.fn(),
+  replaceMemoryExport: vi.fn(),
   toggleAutoInject: vi.fn(),
 }));
 
@@ -38,31 +41,11 @@ beforeEach(() => {
   vi.mocked(bridge.collectMemory).mockResolvedValue([entry]);
   vi.mocked(bridge.injectMemory).mockResolvedValue();
   vi.mocked(bridge.toggleAutoInject).mockResolvedValue();
+  vi.mocked(bridge.readMemoryExport).mockResolvedValue({ agentId: 'codex', databaseExists: true, stateToken: 'a'.repeat(64), manualEntries: [], automaticEntries: [] });
 });
 
 describe('MemoryPanel', () => {
 
-
-  it('搜索后展示结果并支持注入', async () => {
-    vi.mocked(bridge.searchMemory).mockResolvedValue([entry]);
-    render(<MemoryPanel />);
-
-    fireEvent.change(screen.getByPlaceholderText('全文搜索记忆（FTS5）'), {
-      target: { value: 'rust' },
-    });
-    fireEvent.click(screen.getByText('搜索'));
-
-    await waitFor(() =>
-      expect(screen.getByText('rust memory engine FTS5 测试记忆')).toBeInTheDocument()
-    );
-    expect(bridge.searchMemory).toHaveBeenCalledWith('rust');
-
-    fireEvent.click(screen.getByRole('button', { name: '导出 Codex 记忆 42' }));
-    await waitFor(() =>
-      expect(bridge.injectMemory).toHaveBeenCalledWith('codex', ['42'])
-    );
-    await screen.findByText(/不代表 Agent 已读取/);
-  });
 
   it('点击采集按钮触发 collectMemory', async () => {
     vi.mocked(bridge.searchMemory).mockResolvedValue([]);
@@ -199,7 +182,7 @@ it('retries failed collection settings without pretending an unread setting is d
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
 
-it('rolls back automatic export on failure and blocks repeated mutation while pending', async () => {
+it('restores only the displayed automatic flag on failure without claiming backend rollback', async () => {
   const pending = deferred<void>();
   vi.mocked(bridge.toggleAutoInject).mockReturnValue(pending.promise);
   render(<MemoryPanel />);
@@ -209,14 +192,15 @@ it('rolls back automatic export on failure and blocks repeated mutation while pe
   fireEvent.click(toggle);
   expect(toggle).toBeChecked();
   expect(toggle).toBeDisabled();
-  expect(screen.getByRole('button', { name: '导出 Codex 记忆 42' })).toBeDisabled();
+  expect(screen.getByRole('checkbox', { name: '选择手动记忆 42' })).toBeDisabled();
   expect(bridge.toggleAutoInject).toHaveBeenCalledTimes(1);
   expect(bridge.toggleAutoInject).toHaveBeenCalledWith('42', true);
   await act(async () => pending.reject(new Error('export write denied')));
   expect(toggle).not.toBeChecked();
   expect(toggle).toBeEnabled();
   expect(screen.getByRole('alert')).toHaveClass('notice-error');
-  expect(screen.getByRole('alert')).toHaveTextContent('已恢复原设置');
+  expect(screen.getByRole('alert')).toHaveTextContent('更新自动导出失败，请重新读取确认状态');
+  expect(screen.getByRole('alert')).not.toHaveTextContent('已恢复原设置');
 });
 
 it('explains that automatic revocation preserves manually selected memory', async () => {
@@ -228,22 +212,6 @@ it('explains that automatic revocation preserves manually selected memory', asyn
   expect(bridge.toggleAutoInject).toHaveBeenCalledWith('42', false);
   expect(notice).toHaveClass('notice-warning');
   expect(notice).toHaveTextContent('若此前已手动选择导出，此条仍会保留');
-});
-
-it('prevents duplicate exports, reports errors as errors, and unlocks retry', async () => {
-  const pending = deferred<void>();
-  vi.mocked(bridge.injectMemory).mockReturnValue(pending.promise);
-  render(<MemoryPanel />);
-  await searchForEntry();
-  const button = screen.getByRole('button', { name: '导出 Codex 记忆 42' });
-  fireEvent.click(button);
-  fireEvent.click(button);
-  expect(bridge.injectMemory).toHaveBeenCalledTimes(1);
-  expect(button).toBeDisabled();
-  await act(async () => pending.reject(new Error('file locked')));
-  expect(screen.getByRole('alert')).toHaveTextContent('导出失败');
-  expect(screen.getByRole('alert')).toHaveClass('notice-error');
-  expect(button).toBeEnabled();
 });
 
 it('distinguishes collection failure from successful collection followed by refresh failure', async () => {
@@ -266,7 +234,7 @@ it('keeps demo searches available while disabling all collection and export writ
   expect(screen.getByRole('button', { name: '采集 Codex' })).toBeDisabled();
   expect(screen.getByRole('checkbox', { name: /允许每小时自动采集/ })).toBeDisabled();
   expect(screen.getByRole('checkbox', { name: 'Codex 记忆 42 的自动导出' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: '导出 Codex 记忆 42' })).toBeDisabled();
+  expect(screen.getByRole('checkbox', { name: '选择手动记忆 42' })).toBeDisabled();
   expect(bridge.collectMemory).not.toHaveBeenCalled();
   expect(bridge.injectMemory).not.toHaveBeenCalled();
   expect(bridge.toggleAutoInject).not.toHaveBeenCalled();
@@ -375,4 +343,234 @@ it('does not claim enabling failed or current status is confirmed when only the 
   expect(toggle).toBeChecked();
   expect(screen.getByText('自动采集已开启')).toBeInTheDocument();
   expect(bridge.setMemoryCollectionEnabled).toHaveBeenCalledTimes(1);
+});
+
+const exportRow = { ...entry, contentHash: 'b'.repeat(64) };
+const snapshot = { agentId: 'codex' as const, databaseExists: true, stateToken: 'a'.repeat(64), manualEntries: [exportRow], automaticEntries: [] };
+const preview = { agentId: 'codex' as const, stateToken: snapshot.stateToken, previewToken: 'c'.repeat(64), manualEntries: [exportRow], automaticEntries: [], outputEntries: [exportRow] };
+async function loadSelection() {
+  fireEvent.click(screen.getByTestId('memory-export-load'));
+  await screen.findByTestId('memory-export-saved');
+}
+
+it('loads saved entries outside latest results and retains cross-search mixed-source selection', async () => {
+  vi.mocked(bridge.readMemoryExport).mockResolvedValue(snapshot);
+  const second = { ...entry, id: '99', agentId: 'claude-code', content: 'different search' };
+  vi.mocked(bridge.searchMemory).mockResolvedValueOnce([second]).mockResolvedValueOnce([]);
+  render(<MemoryPanel />);
+  await loadSelection();
+  expect(bridge.searchMemory).not.toHaveBeenCalled();
+  expect(screen.getByTestId('memory-export-draft')).toHaveTextContent(entry.content);
+  fireEvent.click(screen.getByRole('button', { name: '搜索' }));
+  await screen.findByTestId('memory-select-99');
+  fireEvent.click(screen.getByTestId('memory-select-99'));
+  fireEvent.click(screen.getByRole('button', { name: '搜索' }));
+  await screen.findByText('记忆库暂无内容');
+  expect(screen.getByTestId('memory-export-draft')).toHaveTextContent(second.content);
+  expect(screen.getByTestId('memory-export-draft')).toHaveTextContent(entry.content);
+  expect(bridge.replaceMemoryExport).not.toHaveBeenCalled();
+});
+
+it('requires preview then single confirmation, retains operation ownership until settlement', async () => {
+  vi.mocked(bridge.readMemoryExport).mockResolvedValue(snapshot);
+  vi.mocked(bridge.previewMemoryExport).mockResolvedValue(preview);
+  const pending = deferred<{agentId: 'codex'; manualIds: string[]; exportedCount: number}>();
+  vi.mocked(bridge.replaceMemoryExport).mockReturnValue(pending.promise);
+  render(<MemoryPanel />);
+  await loadSelection();
+  fireEvent.click(screen.getByTestId('memory-export-preview'));
+  await screen.findByTestId('memory-export-confirm');
+  expect(bridge.replaceMemoryExport).not.toHaveBeenCalled();
+  const confirm = screen.getByTestId('memory-export-confirm');
+  fireEvent.click(confirm); fireEvent.click(confirm);
+  expect(bridge.replaceMemoryExport).toHaveBeenCalledTimes(1);
+  expect(bridge.replaceMemoryExport).toHaveBeenCalledWith('codex', preview.previewToken, ['42']);
+  expect(screen.getByLabelText('导出目标')).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('导出目标'), { target: { value: 'opencode' } });
+  expect(screen.getByLabelText('导出目标')).toHaveValue('codex');
+  expect(screen.getByTestId('memory-export-cancel')).toBeDisabled();
+  await act(async () => pending.resolve({agentId: 'codex', manualIds: ['42'], exportedCount: 1}));
+  expect(screen.getByTestId('memory-export-status')).toHaveTextContent('已更新 Codex');
+  expect(screen.getByTestId('memory-export-preview')).toBeDisabled();
+});
+
+it('invalidates preview on edits and target changes; reset/cancel/clear do not write', async () => {
+  vi.mocked(bridge.readMemoryExport).mockResolvedValue(snapshot);
+  vi.mocked(bridge.previewMemoryExport).mockResolvedValue(preview);
+  render(<MemoryPanel />);
+  await loadSelection();
+  fireEvent.click(screen.getByTestId('memory-export-preview'));
+  await screen.findByTestId('memory-export-confirm');
+  fireEvent.click(screen.getByTestId('memory-export-preview-cancel'));
+  expect(screen.queryByTestId('memory-export-confirm')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByTestId('memory-export-clear'));
+  expect(screen.getByTestId('memory-export-draft')).not.toHaveTextContent(entry.content);
+  fireEvent.click(screen.getByTestId('memory-export-reset'));
+  expect(screen.getByTestId('memory-export-draft')).toHaveTextContent(entry.content);
+  fireEvent.click(screen.getByTestId('memory-export-preview'));
+  await screen.findByTestId('memory-export-confirm');
+  fireEvent.click(screen.getByRole('button', { name: '移除手动记忆 42' }));
+  expect(screen.queryByTestId('memory-export-confirm')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByTestId('memory-export-reset'));
+  fireEvent.click(screen.getByTestId('memory-export-preview'));
+  await screen.findByTestId('memory-export-confirm');
+  fireEvent.change(screen.getByLabelText('导出目标'), { target: { value: 'claude-code' } });
+  expect(screen.queryByTestId('memory-export-confirm')).not.toBeInTheDocument();
+  expect(screen.getByTestId('memory-export-preview')).toBeDisabled();
+  fireEvent.click(screen.getByTestId('memory-export-cancel'));
+  expect(bridge.replaceMemoryExport).not.toHaveBeenCalled();
+});
+
+it.each(['stale', 'write_failed_rolled_back', 'write_failed_uncertain'])('requires fresh read and preview after %s write failure', async code => {
+  vi.mocked(bridge.readMemoryExport).mockResolvedValue(snapshot);
+  vi.mocked(bridge.previewMemoryExport).mockResolvedValue(preview);
+  vi.mocked(bridge.replaceMemoryExport).mockRejectedValue({code, message: 'Changed or uncertain', refreshRequired: true});
+  render(<MemoryPanel />);
+  await loadSelection();
+  fireEvent.click(screen.getByTestId('memory-export-preview'));
+  fireEvent.click(await screen.findByTestId('memory-export-confirm'));
+  expect(await screen.findByTestId('memory-export-error')).toHaveTextContent('重新读取并预览');
+  expect(screen.getByTestId('memory-export-preview')).toBeDisabled();
+  expect(screen.queryByTestId('memory-export-confirm')).not.toBeInTheDocument();
+  expect(screen.queryByTestId('memory-export-status')).not.toBeInTheDocument();
+  expect(bridge.replaceMemoryExport).toHaveBeenCalledTimes(1);
+  await loadSelection();
+  expect(screen.getByTestId('memory-export-preview')).toBeEnabled();
+});
+
+it('fails closed after read/preview failure and never writes automatically', async () => {
+  vi.mocked(bridge.readMemoryExport).mockRejectedValueOnce(new Error('read failed')).mockResolvedValue(snapshot);
+  vi.mocked(bridge.previewMemoryExport).mockRejectedValue(new Error('stale content'));
+  render(<MemoryPanel />);
+  fireEvent.click(screen.getByTestId('memory-export-load'));
+  await screen.findByTestId('memory-export-error');
+  expect(screen.getByTestId('memory-export-preview')).toBeDisabled();
+  await loadSelection();
+  fireEvent.click(screen.getByTestId('memory-export-preview'));
+  expect(await screen.findByTestId('memory-export-error')).toHaveTextContent('stale content');
+  expect(screen.getByTestId('memory-export-preview')).toBeDisabled();
+  expect(bridge.replaceMemoryExport).not.toHaveBeenCalled();
+});
+
+it('clear proposal preserves automatic output in preview and needs explicit confirmation', async () => {
+  const automatic = { ...exportRow, id: '7', autoInject: true };
+  vi.mocked(bridge.readMemoryExport).mockResolvedValue({...snapshot, automaticEntries: [automatic]});
+  vi.mocked(bridge.previewMemoryExport).mockResolvedValue({...preview, manualEntries: [], automaticEntries: [automatic], outputEntries: [automatic]});
+  vi.mocked(bridge.replaceMemoryExport).mockResolvedValue({agentId: 'codex', manualIds: [], exportedCount: 1});
+  render(<MemoryPanel />);
+  await loadSelection();
+  fireEvent.click(screen.getByTestId('memory-export-clear'));
+  fireEvent.click(screen.getByTestId('memory-export-preview'));
+  await screen.findByTestId('memory-export-confirm');
+  expect(bridge.previewMemoryExport).toHaveBeenCalledWith('codex', snapshot.stateToken, []);
+  expect(screen.getByTestId('memory-export-preview-result')).toHaveTextContent('去重后 1 条');
+  expect(bridge.replaceMemoryExport).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByTestId('memory-export-confirm'));
+  await screen.findByTestId('memory-export-status');
+  expect(bridge.replaceMemoryExport).toHaveBeenCalledWith('codex', preview.previewToken, []);
+});
+
+it('blocks target changes and duplicate reads until the selected target read settles', async () => {
+  const pending = deferred<typeof snapshot>();
+  vi.mocked(bridge.readMemoryExport).mockReturnValue(pending.promise);
+  render(<MemoryPanel />);
+  const load = screen.getByTestId('memory-export-load');
+  fireEvent.click(load); fireEvent.click(load);
+  fireEvent.change(screen.getByLabelText('导出目标'), {target:{value:'opencode'}});
+  expect(bridge.readMemoryExport).toHaveBeenCalledTimes(1);
+  expect(screen.getByLabelText('导出目标')).toHaveValue('codex');
+  await act(async()=>pending.resolve(snapshot));
+  expect(screen.getByTestId('memory-export-draft')).toHaveTextContent(entry.content);
+  fireEvent.change(screen.getByLabelText('导出目标'), {target:{value:'opencode'}});
+  expect(screen.getByTestId('memory-export-draft')).not.toHaveTextContent(entry.content);
+  expect(screen.getByTestId('memory-export-preview')).toBeDisabled();
+});
+
+it('invalidates the editor snapshot after automatic export changes', async () => {
+  vi.mocked(bridge.readMemoryExport).mockResolvedValue(snapshot);
+  vi.mocked(bridge.previewMemoryExport).mockResolvedValue(preview);
+  render(<MemoryPanel />);
+  await searchForEntry();
+  await loadSelection();
+  fireEvent.click(screen.getByTestId('memory-export-preview'));
+  await screen.findByTestId('memory-export-confirm');
+  fireEvent.click(screen.getByRole('checkbox', {name:'Codex 记忆 42 的自动导出'}));
+  await waitFor(()=>expect(screen.getByRole('checkbox', {name:'Codex 记忆 42 的自动导出'})).toBeEnabled());
+  expect(screen.queryByTestId('memory-export-confirm')).not.toBeInTheDocument();
+  expect(screen.getByTestId('memory-export-preview')).toBeDisabled();
+  expect(bridge.replaceMemoryExport).not.toHaveBeenCalled();
+});
+
+it('does not show success for a receipt count different from the reviewed output', async () => {
+  vi.mocked(bridge.readMemoryExport).mockResolvedValue(snapshot);
+  vi.mocked(bridge.previewMemoryExport).mockResolvedValue(preview);
+  vi.mocked(bridge.replaceMemoryExport).mockResolvedValue({agentId:'codex',manualIds:['42'],exportedCount:2});
+  render(<MemoryPanel />);
+  await loadSelection();
+  fireEvent.click(screen.getByTestId('memory-export-preview'));
+  fireEvent.click(await screen.findByTestId('memory-export-confirm'));
+  expect(await screen.findByTestId('memory-export-error')).toHaveTextContent('写入回执与预览不一致');
+  expect(screen.queryByTestId('memory-export-status')).not.toBeInTheDocument();
+  expect(screen.getByTestId('memory-export-preview')).toBeDisabled();
+});
+
+
+it('reports uncertain automatic-export rollback honestly and requires an export reread', async () => {
+  vi.mocked(bridge.readMemoryExport).mockResolvedValue(snapshot);
+  vi.mocked(bridge.toggleAutoInject).mockRejectedValue(new Error('flag rollback failed; state uncertain'));
+  render(<MemoryPanel />);
+  await searchForEntry();
+  await loadSelection();
+  fireEvent.click(screen.getByRole('checkbox', {name:'Codex 记忆 42 的自动导出'}));
+  expect(await screen.findByRole('alert')).toHaveTextContent('请重新读取确认状态');
+  expect(screen.getByRole('alert')).toHaveTextContent('flag rollback failed; state uncertain');
+  expect(screen.getByRole('alert')).not.toHaveTextContent('已恢复原设置');
+  expect(screen.getByTestId('memory-export-preview')).toBeDisabled();
+  expect(bridge.replaceMemoryExport).not.toHaveBeenCalled();
+});
+
+
+function expectSingleTextNode(element: HTMLElement, text: string) {
+  expect(element.textContent).toBe(text);
+  expect(element.childNodes).toHaveLength(1);
+  expect(element.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+  expect(element.firstChild?.textContent).toBe(text);
+}
+
+it.each([
+  {target: 'codex', label: 'Codex'},
+  {target: 'claude-code', label: 'Claude'},
+  {target: 'opencode', label: 'OpenCode'},
+])('keeps the $target target summary as one unchanged native-accessibility text node', async ({target, label}) => {
+  render(<MemoryPanel />);
+  fireEvent.change(screen.getByLabelText('导出目标'), {target: {value: target}});
+  const text = `当前导出目标：${label} · ~/.agentdeck/memory/${target}.md · 手动最多 200 条，最终最多 500 条；超限会报错，不会截断。读取不会采集会话。`;
+  expectSingleTextNode(screen.getByText(text), text);
+  await waitFor(() => expect(screen.getByRole('checkbox', {name: /允许每小时自动采集/})).toBeEnabled());
+});
+
+it.each([false, true])('keeps saved/preview counts as single text nodes when databaseExists=%s', async databaseExists => {
+  const automatic = {...exportRow, autoInject: true};
+  const selected = {...exportRow, id: '99'};
+  const manualEntries = databaseExists ? [automatic, selected] : [];
+  const automaticEntries = databaseExists ? [automatic] : [];
+  vi.mocked(bridge.readMemoryExport).mockResolvedValue({...snapshot, databaseExists, manualEntries, automaticEntries});
+  vi.mocked(bridge.previewMemoryExport).mockResolvedValue({...preview, manualEntries, automaticEntries, outputEntries: manualEntries});
+  render(<MemoryPanel />);
+  await loadSelection();
+  expectSingleTextNode(screen.getByTestId('memory-export-saved'), databaseExists
+    ? '已保存手动 2 条；目标自动导出 1 条。'
+    : '已保存手动 0 条；目标自动导出 0 条。本地记忆库尚不存在。');
+  fireEvent.click(screen.getByTestId('memory-export-preview'));
+  await screen.findByTestId('memory-export-confirm');
+  const text = databaseExists ? '手动 2 条 + 自动 1 条，去重后 2 条。' : '手动 0 条 + 自动 0 条，去重后 0 条。';
+  expectSingleTextNode(screen.getByText(text), text);
+});
+
+it.each([0, 50])('keeps the query count %s as one native-accessibility text node', async count => {
+  vi.mocked(bridge.searchMemory).mockResolvedValue(Array.from({length: count}, (_, index) => ({...entry, id: String(index + 1)})));
+  render(<MemoryPanel />);
+  fireEvent.click(screen.getByRole('button', {name: '搜索'}));
+  const text = `本次查询 ${count} 条`;
+  expectSingleTextNode(await screen.findByText(text), text);
 });
