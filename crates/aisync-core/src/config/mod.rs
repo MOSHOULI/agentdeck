@@ -392,9 +392,10 @@ fn inject_with_backup(
         Format::YamlSection => merge_yaml(target_path, content),
     };
 
-    // Each writer stages bytes beside the destination and atomically replaces it.
-    // A failed write therefore leaves the original intact; never perform an
-    // unchecked, truncating restore and falsely report successful rollback.
+    // Each writer stages bytes beside the destination, then replaces it as its
+    // final fallible step. Do not speculatively rewrite a failed destination:
+    // pre-replacement failures leave it untouched, while uncertain filesystem
+    // replacement outcomes must be inspected rather than called rolled back.
     result
 }
 
@@ -536,10 +537,32 @@ pub fn supports_personalization(agent: &AgentDefinition) -> bool {
         })
 }
 
+// Only called after adapter, source and destination eligibility checks. Each
+// writer performs one replacement and has no fallible steps after it succeeds.
+// Keep that contract when adding writers: errors with uncertain commit outcomes
+// require explicit recovery handling, not an assumption that nothing was written.
+fn inject_journaled(
+    format: Format,
+    target: &Path,
+    content: &str,
+    target_home: Option<&Path>,
+    committed: &mut Vec<(PathBuf, Option<Vec<u8>>)>,
+) -> crate::Result<()> {
+    let before = match fs::read(target) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e.into()),
+    };
+    inject_target(format, target, content, target_home)?;
+    committed.push((target.to_path_buf(), before));
+    Ok(())
+}
+
 fn inject_for_agent_apply(
     agent: &AgentDefinition,
     source_dir: &Path,
     target_home: Option<&Path>,
+    committed: &mut Vec<(PathBuf, Option<Vec<u8>>)>,
 ) -> crate::Result<InjectReport> {
     let mut personalization = None;
     let mut model_config = None;
@@ -555,7 +578,7 @@ fn inject_for_agent_apply(
         } else if let Some(content) = template_agents_md(source_dir, &p.template) {
             let target = target_path(&p.target, target_home);
             let content = managed_instructions(&target, &content)?;
-            match inject_target(Format::PlainText, &target, &content, target_home) {
+            match inject_journaled(Format::PlainText, &target, &content, target_home, committed) {
                 Ok(()) => personalization = Some(InjectStatus::Ok),
                 Err(e) => return Err(e),
             }
@@ -592,7 +615,7 @@ fn inject_for_agent_apply(
             };
             if let Some(format) = format {
                 let target = target_path(&mc.file, target_home);
-                match inject_target(format, &target, &content, target_home) {
+                match inject_journaled(format, &target, &content, target_home, committed) {
                     Ok(()) => model_config = Some(InjectStatus::Ok),
                     Err(e) => return Err(e),
                 }
@@ -609,49 +632,19 @@ fn inject_for_agent_apply(
     })
 }
 
-/// Snapshot every eligible target before applying any writes. On failure restore
-/// earlier targets as well, including removing files that did not exist before.
+/// Journal only completed replacements. Validation failures and skipped adapters
+/// must not cause an untouched destination to be rewritten during rollback.
 fn inject_for_agent_with_home(
     agent: &AgentDefinition,
     source_dir: &Path,
     target_home: Option<&Path>,
 ) -> crate::Result<InjectReport> {
     let _guard = write_lock();
-    let mut snapshots: Vec<(PathBuf, Option<Vec<u8>>)> = Vec::new();
-    let targets = agent
-        .config_inject
-        .personalization
-        .as_ref()
-        .map(|p| p.target.as_str())
-        .into_iter()
-        .chain(
-            agent
-                .config_inject
-                .model_config
-                .as_ref()
-                // A retired adapter must not even read its destination for rollback.
-                .filter(|_| agent.id != "opencode")
-                .map(|m| m.file.as_str()),
-        );
-    for raw in targets {
-        if raw.contains("://") || !(raw.starts_with("~/") || raw.starts_with("~\\")) {
-            continue;
-        }
-        let path = target_path(raw, target_home);
-        if snapshots.iter().any(|(p, _)| *p == path) {
-            continue;
-        }
-        let before = match fs::read(&path) {
-            Ok(bytes) => Some(bytes),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(e.into()),
-        };
-        snapshots.push((path, before));
-    }
-    let result = inject_for_agent_apply(agent, source_dir, target_home);
+    let mut committed = Vec::new();
+    let result = inject_for_agent_apply(agent, source_dir, target_home, &mut committed);
     if let Err(error) = result {
         let mut failures = Vec::new();
-        for (path, before) in snapshots.into_iter().rev() {
+        for (path, before) in committed.into_iter().rev() {
             let restore = match before {
                 Some(bytes) => write_bytes(&path, &bytes),
                 None if path.is_file() => fs::remove_file(&path).map_err(crate::Error::from),
@@ -1054,6 +1047,225 @@ mod tests {
             report.model_config,
             Some(InjectStatus::Skipped("缺少配置内容源".into()))
         );
+    }
+
+    fn assert_untouched(path: &Path, before: &fs::Metadata, bytes: &[u8]) {
+        let after = fs::symlink_metadata(path).unwrap();
+        assert_eq!(fs::read(path).unwrap(), bytes);
+        assert_eq!(after.modified().unwrap(), before.modified().unwrap());
+        assert_eq!(
+            after.permissions().readonly(),
+            before.permissions().readonly()
+        );
+        assert_eq!(after.file_type(), before.file_type());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(after.ino(), before.ino());
+            assert_eq!(after.dev(), before.dev());
+            assert_eq!(after.mode(), before.mode());
+        }
+    }
+
+    #[test]
+    fn transaction_validation_errors_leave_claude_and_gemini_files_untouched() {
+        let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        for id in ["claude-code", "gemini-cli"] {
+            for (existing, template) in [
+                (INSTRUCTIONS_START.to_owned(), "replacement".to_owned()),
+                (
+                    format!("{INSTRUCTIONS_END}{INSTRUCTIONS_START}"),
+                    "replacement".into(),
+                ),
+                (
+                    format!(
+                        "{INSTRUCTIONS_START}{INSTRUCTIONS_END}{INSTRUCTIONS_START}{INSTRUCTIONS_END}"
+                    ),
+                    "replacement".into(),
+                ),
+                ("user instructions".into(), INSTRUCTIONS_START.into()),
+                ("user instructions".into(), INSTRUCTIONS_END.into()),
+            ] {
+                let home = temp_dir("transaction-validation");
+                let source = profile_source_dir_in(&home).unwrap();
+                let agent = doc.agents.get(id).unwrap();
+                let p = agent.config_inject.personalization.as_ref().unwrap();
+                let target = expand_home_in(&p.target, &home);
+                fs::create_dir_all(target.parent().unwrap()).unwrap();
+                fs::write(&target, &existing).unwrap();
+                fs::File::options()
+                    .write(true)
+                    .open(&target)
+                    .unwrap()
+                    .set_times(fs::FileTimes::new().set_modified(
+                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000),
+                    ))
+                    .unwrap();
+                let settings = target.parent().unwrap().join("settings.json");
+                fs::write(&settings, "{\"untouched\": true}\n").unwrap();
+                fs::File::options()
+                    .write(true)
+                    .open(&settings)
+                    .unwrap()
+                    .set_times(fs::FileTimes::new().set_modified(
+                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000),
+                    ))
+                    .unwrap();
+                let before = fs::symlink_metadata(&target).unwrap();
+                let settings_before = fs::symlink_metadata(&settings).unwrap();
+                fs::write(
+                    source
+                        .join("personalization")
+                        .join(&p.template)
+                        .join("AGENTS.md"),
+                    template,
+                )
+                .unwrap();
+                let error = inject_for_agent_in_home(agent, &source, &home).unwrap_err();
+                assert!(error.to_string().contains("markers"), "{error}");
+                assert_untouched(&target, &before, existing.as_bytes());
+                assert_untouched(&settings, &settings_before, b"{\"untouched\": true}\n");
+                assert!(!home.join(".agentdeck/backups").exists());
+                fs::remove_dir_all(home).unwrap();
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn transaction_validation_error_preserves_instruction_and_inactive_model_symlinks() {
+        use std::os::unix::fs::symlink;
+        let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        for id in ["claude-code", "gemini-cli"] {
+            for reserved_template in [false, true] {
+                let home = temp_dir("transaction-symlinks");
+                let source = profile_source_dir_in(&home).unwrap();
+                let agent = doc.agents.get(id).unwrap();
+                let p = agent.config_inject.personalization.as_ref().unwrap();
+                let target = expand_home_in(&p.target, &home);
+                fs::create_dir_all(target.parent().unwrap()).unwrap();
+                let original = if reserved_template {
+                    "user instructions"
+                } else {
+                    INSTRUCTIONS_START
+                };
+                let referent = home.join("instructions-original");
+                fs::write(&referent, original).unwrap();
+                symlink(&referent, &target).unwrap();
+                let settings = target.parent().unwrap().join("settings.json");
+                let settings_referent = home.join("settings-original");
+                fs::write(&settings_referent, "{}").unwrap();
+                symlink(&settings_referent, &settings).unwrap();
+                if reserved_template {
+                    fs::write(
+                        source
+                            .join("personalization")
+                            .join(&p.template)
+                            .join("AGENTS.md"),
+                        INSTRUCTIONS_END,
+                    )
+                    .unwrap();
+                }
+                let before = fs::symlink_metadata(&target).unwrap();
+                let settings_before = fs::symlink_metadata(&settings).unwrap();
+                assert!(inject_for_agent_in_home(agent, &source, &home).is_err());
+                assert_untouched(&target, &before, original.as_bytes());
+                assert_untouched(&settings, &settings_before, b"{}");
+                assert_eq!(fs::read_link(&target).unwrap(), referent);
+                assert_eq!(fs::read_link(&settings).unwrap(), settings_referent);
+                fs::remove_dir_all(home).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn transaction_skipped_adapters_do_not_read_destinations() {
+        let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        for id in ["claude-code", "gemini-cli", "codex", "opencode"] {
+            for missing_template in [false, true] {
+                let home = temp_dir("transaction-skipped");
+                let source = profile_source_dir_in(&home).unwrap();
+                let mut agent = doc.agents.get(id).unwrap().clone();
+                let p = agent.config_inject.personalization.as_mut().unwrap();
+                let target = expand_home_in(&p.target, &home);
+                if missing_template {
+                    fs::remove_file(
+                        source
+                            .join("personalization")
+                            .join(&p.template)
+                            .join("AGENTS.md"),
+                    )
+                    .unwrap();
+                    fs::create_dir_all(&target).unwrap();
+                }
+                agent.config_inject.model_config = Some(crate::registry::ModelConfigInject {
+                    file: "~/inactive-model".into(),
+                    format: "toml_section".into(),
+                });
+                // Directories reliably fail fs::read even under elevated privileges.
+                fs::create_dir_all(home.join("inactive-model")).unwrap();
+                if id == "codex" {
+                    fs::remove_file(source.join("personalization/codex.json")).unwrap();
+                }
+                let report = inject_for_agent_in_home(&agent, &source, &home).unwrap();
+                assert!(matches!(
+                    report.model_config,
+                    Some(InjectStatus::Skipped(_))
+                ));
+                assert_eq!(
+                    report.personalization == Some(InjectStatus::Ok),
+                    !missing_template
+                );
+                assert!(home.join("inactive-model").is_dir());
+                fs::remove_dir_all(home).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn transaction_unknown_format_does_not_read_destination() {
+        let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        let mut agent = doc.agents.get("codex").unwrap().clone();
+        let home = temp_dir("transaction-format");
+        let source = profile_source_dir_in(&home).unwrap();
+        let mc = agent.config_inject.model_config.as_mut().unwrap();
+        mc.format = "unknown".into();
+        let target = expand_home_in(&mc.file, &home);
+        fs::create_dir_all(&target).unwrap();
+        let report = inject_for_agent_in_home(&agent, &source, &home).unwrap();
+        assert_eq!(report.personalization, Some(InjectStatus::Ok));
+        assert!(matches!(
+            report.model_config,
+            Some(InjectStatus::Skipped(_))
+        ));
+        assert!(target.is_dir());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn transaction_later_snapshot_failure_rolls_back_committed_first_write() {
+        let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        let agent = doc.agents.get("codex").unwrap();
+        for existing in [false, true] {
+            let home = temp_dir("transaction-later-snapshot");
+            let source = profile_source_dir_in(&home).unwrap();
+            let first = home.join(".codex/AGENTS.md");
+            let second = home.join(".codex/config.toml");
+            fs::create_dir_all(&second).unwrap();
+            if existing {
+                fs::write(&first, "user instructions").unwrap();
+            }
+            assert!(inject_for_agent_in_home(agent, &source, &home).is_err());
+            if existing {
+                assert_eq!(fs::read_to_string(&first).unwrap(), "user instructions");
+                // The first write was actually attempted before the later read failed.
+                assert_temp_backup_exists(&home, "AGENTS.md");
+            } else {
+                assert!(!first.exists());
+            }
+            assert!(second.is_dir());
+            fs::remove_dir_all(home).unwrap();
+        }
     }
 
     #[test]

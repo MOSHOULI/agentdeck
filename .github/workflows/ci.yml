@@ -152,6 +152,8 @@ jobs:
         run: python -B scripts/test_windows_install_fixture.py
       - name: Windows reviewed install UI wiring (offline)
         run: python -B scripts/test_windows_install_ui_acceptance.py
+      - name: Windows rejected configuration preserves untouched targets (offline)
+        run: python -B scripts/test_windows_config_failure_ui_acceptance.py
       - name: Windows official Codex installation harness (offline safety regressions)
         run: python -B scripts/test_codex_official_install_windows.py
       - name: Install pinned official Codex package layout (never execute agent)
@@ -357,6 +359,8 @@ jobs:
         run: python -B scripts/test_windows_install_fixture.py
       - name: Windows reviewed install UI wiring (offline)
         run: python -B scripts/test_windows_install_ui_acceptance.py
+      - name: Windows rejected configuration preserves untouched targets (offline)
+        run: python -B scripts/test_windows_config_failure_ui_acceptance.py
       - uses: actions/download-artifact@v4
         with:
           name: AgentDeck-windows-${{ env.BUILD_SHA }}
@@ -393,7 +397,7 @@ jobs:
       - name: Parse Windows installed UI acceptance scripts
         shell: pwsh
         run: |
-          foreach ($file in @('windows-installer-acceptance.ps1', 'windows-codex-ui-acceptance.ps1', 'windows-install-ui-acceptance.ps1', 'windows-memory-ui-acceptance.ps1')) {
+          foreach ($file in @('windows-installer-acceptance.ps1', 'windows-codex-ui-acceptance.ps1', 'windows-install-ui-acceptance.ps1', 'windows-memory-ui-acceptance.ps1', 'windows-config-failure-ui-acceptance.ps1')) {
             $tokens = $null; $errors = $null
             $null = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD "scripts/$file"), [ref]$tokens, [ref]$errors)
             if ($errors.Count -gt 0) { throw "Acceptance script syntax invalid: $file" }

@@ -26,6 +26,7 @@ $events = [Collections.Generic.List[object]]::new()
 $running = $null
 $passed = $false
 $script:acceptanceNode = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
+$script:acceptanceGit = (Get-Command git.exe -CommandType Application | Select-Object -First 1).Source
 $script:acceptancePython = (Get-Command python.exe -CommandType Application | Select-Object -First 1).Source
 $originalEnv = @{}
 $names = @('HOME','USERPROFILE','APPDATA','LOCALAPPDATA','AGENTDECK_TEST_HOME','PATH','WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS')
@@ -134,6 +135,7 @@ try {
     . (Join-Path $PSScriptRoot 'windows-codex-ui-acceptance.ps1')
     . (Join-Path $PSScriptRoot 'windows-install-ui-acceptance.ps1')
     . (Join-Path $PSScriptRoot 'windows-memory-ui-acceptance.ps1')
+    . (Join-Path $PSScriptRoot 'windows-config-failure-ui-acceptance.ps1')
     $sentinel = Join-Path $homeDir '.agentdeck\acceptance-user-data.txt'
     $sentinelValue = 'Synthetic data, must survive installation, upgrade and uninstall.'
     New-Item -ItemType Directory -Force -Path (Split-Path $sentinel) | Out-Null
@@ -151,6 +153,7 @@ try {
     Check-FailedReviewedInstall
     Check-CodexReadonly
     Check-MemoryExport
+    Check-ConfigurationFailurePreservation
     Run-Installer $Installer
     Assert-Version
     Assert-Sentinel
@@ -176,7 +179,7 @@ try {
 } finally {
     if ($null -ne $running -and -not $running.HasExited) { Stop-Process -Id $running.Id -Force -ErrorAction SilentlyContinue }
     # Preserve runner-local evidence on failure; never delete a real user's data.
-    @{ passed = $passed; buildCommit = $ExpectedCommit; events = $events; limitations = @('Synthetic settings plus a pinned official Linux archive (read only)', 'Authored memory SQLite and local Markdown UI acceptance only; no real sessions, collection or agent consumption verified', 'Qoder UI hashes a Linux archive on Windows; no Qoder execution or Windows runtime validation', 'Authored npm and authored Codex version fixture execute through the actual install adapter; no official Agent execution or authentication', 'Synthetic Codex Windows read-only UI observation only; no Windows writer or actual Codex runtime verification', 'Synthetic Qwen single-field UI lifecycle only; not real Qwen execution or complete GUI coverage', 'Published baseline is verified against its published checksum, not an independent signature') } |
+    @{ passed = $passed; buildCommit = $ExpectedCommit; events = $events; limitations = @('Authored Claude/Gemini version-only fixture; configuration rejection tested, no official runtime or successful configuration acceptance', 'Synthetic settings plus a pinned official Linux archive (read only)', 'Authored memory SQLite and local Markdown UI acceptance only; no real sessions, collection or agent consumption verified', 'Qoder UI hashes a Linux archive on Windows; no Qoder execution or Windows runtime validation', 'Authored npm and authored Codex version fixture execute through the actual install adapter; no official Agent execution or authentication', 'Synthetic Codex Windows read-only UI observation only; no Windows writer or actual Codex runtime verification', 'Synthetic Qwen single-field UI lifecycle only; not real Qwen execution or complete GUI coverage', 'Published baseline is verified against its published checksum, not an independent signature') } |
         ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'result.json') -Encoding utf8
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $originalEnv[$name]) }
 }
