@@ -584,7 +584,7 @@ fn create_private(path: &Path, bytes: &[u8]) -> Result<()> {
         .and_then(|_| file.sync_all())
         .map_err(|_| EditError::Io)
 }
-fn lock(settings: &Path) -> Result<fs::File> {
+fn lock(settings: &Path) -> Result<crate::file_lock::FileLock> {
     let path = sibling(settings, LOCK)?;
     if absent(&path)? {
         // Concurrent creation is fine; the checked read below determines safety.
@@ -605,7 +605,7 @@ fn lock(settings: &Path) -> Result<fs::File> {
     }
     let file = options.open(&path).map_err(|_| EditError::Io)?;
     file.try_lock().map_err(|_| EditError::Busy)?;
-    Ok(file)
+    Ok(crate::file_lock::FileLock::acquired(file))
 }
 fn replace_receipt(path: &Path, bytes: &[u8]) -> Result<()> {
     replace_named(path, bytes, RECEIPT)
