@@ -238,3 +238,49 @@ reader against synthetic files, not the Qwen agent.
 离线 archive-directory 模式不会联网复核 reader 源码，会明确报告对应标记为 false；
 CI download 模式才复核发布提交的官方原文。离线 harness 单测不冒充当次官方包验收。
 Node 测试运行 AgentDeck CLI 与小型官方 reader 处理合成文件，不运行 Qwen Agent。
+
+## Desktop restore confirmation binding (unreleased)
+
+The desktop restore button first calls the separate read-only
+`preview_qwen_vim_restore` IPC. Confirmation shows the selected paths, current
+Vim boolean/absence, first original boolean/absence and either restoration or
+receipt-only cleanup. Missing, malformed and conflicting receipts produce no
+confirmation token. The existing recovery inspection remains observation-only.
+
+`restore_qwen_vim` requires the captured restore token; there is no tokenless
+fallback or automatic re-preview/retry. A domain-separated digest binds the
+selected paths and exact settings, manifest and receipt bytes (including receipt
+phase, original value and recovery intent). It is checked before lock creation
+and again under the existing cooperative operation lock before any receipt
+cleanup or settings/receipt write. After recording the restoring phase, restore
+also checks the expected settings, original manifest and exact pending receipt
+before settings replacement, then checks the output settings, manifest and pending
+receipt before deletion. Detected drift leaves the receipt for inspection;
+settings may already be restored if drift is detected after replacement.
+Unrelated edits made **before** preview are
+preserved semantically; any byte change after preview requires another preview,
+including whitespace-only changes and changes to receipt state. Applying or
+updating tokens cannot authorize restore. Legacy core/CLI restore remains
+available with its existing reread/recovery checks and does not promise this
+additional confirmation binding.
+
+These checks bind bytes, **not filesystem identity or a unique ownership cycle**.
+An identical-byte state, including an exactly recreated receipt, can reuse a
+token. They do not provide an atomic snapshot, filesystem compare-and-swap,
+write-readiness guarantee or protection from hostile/concurrent external writers.
+Stop other editors first. Metadata/ACL restrictions and interrupted recovery
+rules remain in force; no new configuration field or executable invocation is
+introduced. The UI invalidates confirmation on input/context changes, another
+operation, cancellation, clear or unmount. Cancellation discards a result, not
+an in-flight operation; busy ownership lasts until actual settlement. Late
+results cannot reopen or submit an obsolete confirmation.
+
+桌面撤销现在先只读预览，再展示当前值、首次原值（含缺失）及恢复或仅清理记录的
+具体动作。确认只提交该次撤销令牌，不能使用应用/更新令牌，也不会自动重新预览并
+写入。所选路径与 settings、manifest、receipt 原始字节（含阶段和恢复意图）在锁前
+及操作锁内重验；预览后的无关修改或空白变化同样会使旧确认失效。预览前已有的无关
+字段仍保留。恢复诊断仍仅为观察；旧 CLI 撤销保持兼容。
+
+此绑定不是文件身份或唯一管理周期：完全相同的字节重建后仍可能复用令牌，不承诺
+原子快照、CAS 或抵抗外部并发/恶意修改。输入、上下文、其他操作、取消、清除和
+卸载均作废旧确认，实际操作结束前继续保持忙碌；迟到结果不会恢复旧确认。

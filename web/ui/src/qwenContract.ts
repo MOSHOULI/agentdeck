@@ -75,3 +75,23 @@ export function validateQwenRecovery(value: unknown): QwenRecovery {
     || typeof report.changes_settings !== 'boolean' || report.changes_settings !== (report.state === 'restore_field')) throw invalid();
   return { field: 'general.vimMode', state: report.state as QwenRecoveryState, changesSettings: report.changes_settings };
 }
+
+export interface QwenVimRestorePreview {
+  field: 'general.vimMode'; state: 'restore_field' | 'cleanup_receipt';
+  current: boolean | null; initial: boolean | null; changesSettings: boolean; token: string;
+}
+/** Retain only the selected action and booleans; never render backend strings. */
+export function validateQwenVimRestorePreview(value: unknown): QwenVimRestorePreview {
+  const preview = object(value);
+  if (preview.field !== 'general.vimMode'
+    || !['restore_field', 'cleanup_receipt'].includes(preview.state as string)
+    || !(preview.current === null || typeof preview.current === 'boolean')
+    || !(preview.initial === null || typeof preview.initial === 'boolean')
+    || typeof preview.changes_settings !== 'boolean'
+    || preview.changes_settings !== (preview.state === 'restore_field')
+    || (preview.state === 'restore_field' && typeof preview.current !== 'boolean')
+    || (preview.state === 'cleanup_receipt' && preview.current !== preview.initial)
+    || typeof preview.token !== 'string' || !/^[a-f0-9]{64}$/.test(preview.token)) throw invalid();
+  return { field: 'general.vimMode', state: preview.state as QwenVimRestorePreview['state'],
+    current: preview.current, initial: preview.initial, changesSettings: preview.changes_settings, token: preview.token };
+}

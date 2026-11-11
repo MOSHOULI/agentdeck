@@ -80,7 +80,7 @@ class Tests(unittest.TestCase):
             self.assertIn("Assert-FailedInstallObservation $fixture $manifest $baseline $residual '" + stage + "'", UI)
 
     def test_session_panel_is_native_readonly_and_not_persistent_recovery(self):
-        method = UI[UI.index('function Observe-FailedInstallSession'):UI.index('function Check-FailedReviewedInstall')]
+        method = UI[UI.index('function Observe-FailedInstallSession'):UI.index('function Initialize-InstallWindowActivation')]
         self.assertIn('本会话安装记录：安装完成状态未确认', method)
         self.assertIn('TryGetCurrentPattern([Windows.Automation.ExpandCollapsePattern]::Pattern', method)
         self.assertIn('关闭或重启应用后记录丢失。', method)
@@ -141,12 +141,31 @@ class Tests(unittest.TestCase):
         self.assertIn('ScrollItemPattern]$scroll).ScrollIntoView()', helper)
         self.assertIn('$control.SetFocus()', helper)
         activation = UI[UI.index('function Activate-InstallWorkspace'):UI.index('function Wait-InstallWorkspaceSelected')]
-        self.assertEqual(activation.count("[Windows.Forms.SendKeys]::SendWait('{ENTER}')"), 1)
-        self.assertLess(activation.index('$tab.SetFocus()'), activation.index('$tab.Current.HasKeyboardFocus'))
-        self.assertLess(activation.index('$tab.Current.HasKeyboardFocus'), activation.index("[Windows.Forms.SendKeys]::SendWait"))
+        self.assertEqual(activation.count('$invoke.Invoke()'), 1)
+        self.assertEqual(activation.count('Send-InstallWorkspaceEnter $tab $handle'), 1)
+        self.assertIn('if ($null -ne $invoke)', activation)
+        self.assertIn('} else {', activation)
         self.assertIn('Wait-InstallWorkspaceSelected $name', activation)
         self.assertNotIn('.Select()', activation)
-        self.assertNotIn('catch', activation)
+        self.assertIn("Save-QwenEvidence 'failed-reviewed-install-navigation'", activation)
+        self.assertIn('throw $activationFailure', activation)
+        keyboard = UI[UI.index('function Prepare-InstallWorkspaceKeyboard'):UI.index('function Activate-InstallWorkspace')]
+        self.assertEqual(keyboard.count('SetForegroundWindow($handle)'), 1)
+        self.assertEqual(keyboard.count('$tab.SetFocus()'), 1)
+        self.assertEqual(keyboard.count("[Windows.Forms.SendKeys]::SendWait('{ENTER}')"), 1)
+        self.assertIn('(Get-InstallForegroundWindow) -eq $handle -and $tab.Current.HasKeyboardFocus', keyboard)
+        guard = keyboard[keyboard.index('function Send-InstallWorkspaceEnter('):]
+        self.assertIn('(Get-InstallForegroundWindow) -ne $handle -or -not $tab.Current.HasKeyboardFocus', guard)
+        self.assertLess(guard.index('throw '), guard.index('    Send-InstallWorkspaceEnterKey'))
+        modeled = (ROOT / 'scripts/test_windows_workspace_activation.ps1').read_text(encoding='utf-8')
+        self.assertIn('Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes', modeled)
+        self.assertIn('case=$caseIndex route=$($script:case.route) fault=$($script:case.fault)', modeled)
+        self.assertIn('$failure.Exception.ToString()', modeled)
+        self.assertIn('Unexpected activation result ($caseLabel): $original', modeled)
+        for fault in ('invoke', 'prepare', 'foreground', 'focus', 'zero-handle', 'send', 'settle'):
+            self.assertIn("fault = '" + fault + "'", modeled)
+        self.assertIn("Activate-InstallWorkspace 'Qwen 配置检查'", modeled)
+        self.assertIn('./scripts/test_windows_workspace_activation.ps1', (ROOT / '.github/workflows/ci.yml').read_text())
         self.assertIn("Find-QwenControl 'settings.json 绝对路径'", helper)
         flow = UI[UI.index('function Check-FailedReviewedInstall'):]
         self.assertLess(flow.index("Activate-InstallWorkspace 'Qwen 配置检查'"), flow.index("Activate-InstallWorkspace 'Agent 管理'"))

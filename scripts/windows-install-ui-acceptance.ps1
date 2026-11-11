@@ -269,19 +269,88 @@ function Observe-FailedInstallSession($fixture, [string]$manifest, [string]$base
         if ($before.$key -ne $after.$key) { throw 'Read-only session inspection executed a fixture operation' }
     }
 }
-function Activate-InstallWorkspace([ValidateSet('Qwen 配置检查','Agent 管理')][string]$name) {
-    # WebView2 ARIA tabs are HTML buttons with React onClick. Use one native
-    # keyboard activation, not SelectionItem.Select followed by a blind retry.
-    Add-Type -AssemblyName System.Windows.Forms
-    $tab = Wait-QwenControl $name ([Windows.Automation.ControlType]::TabItem)
+function Initialize-InstallWindowActivation {
+    if (-not ('AgentDeckAcceptanceForeground' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class AgentDeckAcceptanceForeground {
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetForegroundWindow(IntPtr window);
+}
+'@
+    }
+}
+function Get-InstallForegroundWindow {
+    return [AgentDeckAcceptanceForeground]::GetForegroundWindow()
+}
+function Get-InstallWorkspaceInvoke($tab) {
+    $pattern = $null
+    if ($tab.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
+        return [Windows.Automation.InvokePattern]$pattern
+    }
+    return $null
+}
+function Prepare-InstallWorkspaceKeyboard($tab) {
+    Initialize-InstallWindowActivation
+    $script:running.Refresh()
+    if ($script:running.HasExited) { throw 'Installed app stopped before navigation' }
+    $handle = $script:running.MainWindowHandle
+    if ($handle -eq [IntPtr]::Zero) { throw 'Installed app has no main window' }
+    # One foreground request and one focus request, not an activation retry.
+    $null = [AgentDeckAcceptanceForeground]::SetForegroundWindow($handle)
     $tab.SetFocus()
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
-    while (-not $tab.Current.HasKeyboardFocus) {
-        if ([DateTime]::UtcNow -ge $deadline) { throw 'Installed workspace focus was not confirmed' }
+    do {
+        if ((Get-InstallForegroundWindow) -eq $handle -and $tab.Current.HasKeyboardFocus) { return $handle }
         Start-Sleep -Milliseconds 100
-    }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw 'Installed workspace keyboard target was not confirmed'
+}
+function Send-InstallWorkspaceEnterKey {
     [Windows.Forms.SendKeys]::SendWait('{ENTER}')
-    Wait-InstallWorkspaceSelected $name
+}
+function Send-InstallWorkspaceEnter($tab, [IntPtr]$handle) {
+    # Recheck immediately before global keyboard input. UIA focus alone does not
+    # establish the OS foreground recipient of SendKeys.
+    if ($handle -eq [IntPtr]::Zero -or (Get-InstallForegroundWindow) -ne $handle -or -not $tab.Current.HasKeyboardFocus) {
+        throw 'Installed workspace keyboard target changed before activation'
+    }
+    Send-InstallWorkspaceEnterKey
+}
+function Activate-InstallWorkspace([ValidateSet('Qwen 配置检查','Agent 管理')][string]$name) {
+    $workspaceId = if ($name -eq 'Qwen 配置检查') { 'qwen' } else { 'agents' }
+    $route = 'unavailable'
+    $focusConfirmed = $false
+    $foregroundConfirmed = $false
+    try {
+        $tab = Wait-QwenControl $name ([Windows.Automation.ControlType]::TabItem)
+        $invoke = Get-InstallWorkspaceInvoke $tab
+        if ($null -ne $invoke) {
+            $route = 'invoke'
+            Record 'installed-workspace-activation' @{ workspace = $workspaceId; route = $route }
+            $invoke.Invoke()
+        } else {
+            $route = 'keyboard'
+            Add-Type -AssemblyName System.Windows.Forms
+            $handle = Prepare-InstallWorkspaceKeyboard $tab
+            $focusConfirmed = $tab.Current.HasKeyboardFocus
+            $foregroundConfirmed = (Get-InstallForegroundWindow) -eq $handle
+            Record 'installed-workspace-activation' @{ workspace = $workspaceId; route = $route; focusConfirmed = $focusConfirmed; foregroundConfirmed = $foregroundConfirmed }
+            Send-InstallWorkspaceEnter $tab $handle
+        }
+        # An uncertain outcome is never replayed through another route.
+        Wait-InstallWorkspaceSelected $name
+    } catch {
+        $activationFailure = $_
+        Record 'installed-workspace-activation-failed' @{ workspace = $workspaceId; route = $route; focusConfirmed = $focusConfirmed; foregroundConfirmed = $foregroundConfirmed }
+        try { Save-QwenEvidence 'failed-reviewed-install-navigation' }
+        catch { Record 'installed-workspace-evidence-unavailable' @{ captured = $false } }
+        throw $activationFailure
+    }
 }
 function Wait-InstallWorkspaceSelected([ValidateSet('Qwen 配置检查','Agent 管理')][string]$name) {
     $workspaceId = if ($name -eq 'Qwen 配置检查') { 'qwen' } else { 'agents' }

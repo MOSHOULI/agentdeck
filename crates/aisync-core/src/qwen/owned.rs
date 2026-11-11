@@ -500,12 +500,111 @@ pub fn recovery_preview(settings: &Path, manifest: &Path) -> Result<RecoveryPrev
     })
 }
 
+/// Read-only confirmation context for one restorable receipt. Unlike recovery
+/// observation, this token authorizes exactly these bytes and selected paths.
+#[derive(Clone, Debug, Serialize)]
+pub struct RestorePreview {
+    pub field: &'static str,
+    pub state: RecoveryState,
+    pub current: Option<bool>,
+    pub initial: Option<bool>,
+    pub changes_settings: bool,
+    pub token: String,
+    pub limitations: &'static str,
+}
+
+fn restore_token(selected: &Selection, receipt_bytes: &[u8]) -> String {
+    let mut hash = Sha256::new();
+    hash.update(b"agentdeck/qwen-vim/restore/1\0");
+    hash.update(&selected.binding);
+    hash.update(digest(&selected.bytes));
+    hash.update(digest(&selected.manifest));
+    // Includes phase, first original value, managed value and recovery digests.
+    hash.update(digest(receipt_bytes));
+    format!("{:x}", hash.finalize())
+}
+
+fn restore_selection(
+    settings: &Path,
+    manifest: &Path,
+) -> Result<(Selection, Vec<u8>, Receipt, RecoveryAction)> {
+    let selected = selection(settings, manifest)?;
+    let receipt_bytes = read(&sibling(settings, RECEIPT)?, RECEIPT)?;
+    let receipt = parse_receipt(&receipt_bytes)?;
+    let action = recovery_action(&selected, &receipt)?;
+    Ok((selected, receipt_bytes, receipt, action))
+}
+
+fn restore_coherence(
+    settings: &Path,
+    manifest: &Path,
+    selected: &Selection,
+    receipt_bytes: &[u8],
+) -> Result<()> {
+    if read(settings, "settings.json")? != selected.bytes
+        || read(manifest, "package.json")? != selected.manifest
+        || read(&sibling(settings, RECEIPT)?, RECEIPT)? != receipt_bytes
+    {
+        return Err(EditError::Changed);
+    }
+    Ok(())
+}
+
+/// Does not create a lock, receipt or settings file. No token for missing,
+/// malformed or conflicting ownership. Reads are not an atomic snapshot.
+pub fn restore_preview(settings: &Path, manifest: &Path) -> Result<RestorePreview> {
+    let (selected, receipt_bytes, receipt, action) = restore_selection(settings, manifest)?;
+    restore_coherence(settings, manifest, &selected, &receipt_bytes)?;
+    Ok(RestorePreview {
+        field: "general.vimMode",
+        state: if action == RecoveryAction::RestoreField {
+            RecoveryState::RestoreField
+        } else {
+            RecoveryState::CleanupReceipt
+        },
+        current: selected.before,
+        initial: receipt.before,
+        changes_settings: action == RecoveryAction::RestoreField,
+        token: restore_token(&selected, &receipt_bytes),
+        limitations: "Binds selected paths and exact settings, manifest and receipt bytes, not filesystem identity or a unique ownership cycle. Identical bytes can reuse a token. Read-only preview is not an atomic snapshot or write-readiness guarantee. Stop Qwen and other editors first. Not a cross-process transaction or hostile-race protection.",
+    })
+}
+
+/// Desktop restore: never generate a replacement confirmation on stale input.
+/// Validate before lock creation and again under the existing operation lock,
+/// before receipt cleanup or any configuration/receipt write.
+pub fn restore_checked(settings: &Path, manifest: &Path, expected_token: &str) -> Result<bool> {
+    if expected_token.len() != 64
+        || !expected_token
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(EditError::Changed);
+    }
+    restore_impl(
+        settings,
+        manifest,
+        Some(expected_token),
+        #[cfg(test)]
+        &|| Ok(()),
+        #[cfg(test)]
+        &|| Ok(()),
+        #[cfg(test)]
+        &|| Ok(()),
+    )
+}
+
 /// Restore only the backed-up field. Unrelated external edits are preserved.
 /// The receipt remains on any error; successful restoration removes it.
 pub fn restore(settings: &Path, manifest: &Path) -> Result<bool> {
     restore_impl(
         settings,
         manifest,
+        None,
+        #[cfg(test)]
+        &|| Ok(()),
+        #[cfg(test)]
+        &|| Ok(()),
         #[cfg(test)]
         &|| Ok(()),
     )
@@ -514,15 +613,33 @@ pub fn restore(settings: &Path, manifest: &Path) -> Result<bool> {
 fn restore_impl(
     settings: &Path,
     manifest: &Path,
+    expected_token: Option<&str>,
+    #[cfg(test)] after_lock: &dyn Fn() -> Result<()>,
     #[cfg(test)] before_settings_write: &dyn Fn() -> Result<()>,
+    #[cfg(test)] after_settings_write: &dyn Fn() -> Result<()>,
 ) -> Result<bool> {
-    let _initial = selection(settings, manifest)?;
+    if let Some(expected) = expected_token {
+        let (initial, bytes, _, _) = restore_selection(settings, manifest)?;
+        if restore_token(&initial, &bytes) != expected {
+            return Err(EditError::Changed);
+        }
+        restore_coherence(settings, manifest, &initial, &bytes)?;
+    } else {
+        selection(settings, manifest)?;
+    }
     let _lock = lock(settings)?;
-    let selected = selection(settings, manifest)?;
+    #[cfg(test)]
+    after_lock()?;
+    let (selected, receipt_bytes, mut receipt, action) = restore_selection(settings, manifest)?;
+    if let Some(expected) = expected_token
+        && restore_token(&selected, &receipt_bytes) != expected
+    {
+        return Err(EditError::Changed);
+    }
+    // Includes the cleanup-only branch: never consume a changed receipt.
+    restore_coherence(settings, manifest, &selected, &receipt_bytes)?;
     let receipt_path = sibling(settings, RECEIPT)?;
-    let receipt_bytes = read(&receipt_path, RECEIPT)?;
-    let mut receipt = parse_receipt(&receipt_bytes)?;
-    if recovery_action(&selected, &receipt)? == RecoveryAction::CleanupReceipt {
+    if action == RecoveryAction::CleanupReceipt {
         fs::remove_file(receipt_path).map_err(|_| EditError::Io)?;
         return Ok(false);
     }
@@ -543,19 +660,27 @@ fn restore_impl(
     receipt.after = selected.before.ok_or(EditError::Unsupported)?;
     receipt.after_digest = digest(&selected.bytes);
     receipt.restore_digest = Some(digest(&output));
-    replace_receipt(
-        &receipt_path,
-        &serde_json::to_vec(&receipt).map_err(|_| EditError::Io)?,
-    )?;
+    let pending_receipt = serde_json::to_vec(&receipt).map_err(|_| EditError::Io)?;
+    replace_receipt(&receipt_path, &pending_receipt)?;
     // Test-only, per-call fault injection after the real receipt replacement.
     // No runtime switch or hook is present in production builds.
     #[cfg(test)]
     before_settings_write()?;
-    if read(settings, "settings.json")? != selected.bytes {
+    if read(settings, "settings.json")? != selected.bytes
+        || read(manifest, "package.json")? != selected.manifest
+        || read(&receipt_path, RECEIPT)? != pending_receipt
+    {
         return Err(EditError::Changed);
     }
     replace(settings, &output)?;
-    if read(settings, "settings.json")? != output {
+    #[cfg(test)]
+    after_settings_write()?;
+    // Recheck all selected bytes before consuming the pending receipt. These
+    // are best-effort checks, not atomic compare-and-swap against other writers.
+    if read(settings, "settings.json")? != output
+        || read(manifest, "package.json")? != selected.manifest
+        || read(&receipt_path, RECEIPT)? != pending_receipt
+    {
         return Err(EditError::Changed);
     }
     fs::remove_file(receipt_path).map_err(|_| EditError::Io)?;

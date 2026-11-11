@@ -18,7 +18,7 @@ BASE = {'settings.json', 'package.json'}
 STAGES = ('recovery_no_receipt', 'preview_cancel_clear', 'stale_preview', 'apply',
           'manifest_boundary', 'update_cancel', 'update_stale', 'update_false', 'update_true',
           'recovery_restore_field', 'restore_cancel', 'restore_conflict',
-          'recovery_conflict', 'recovery_cleanup_receipt', 'restore', 'clear')
+          'recovery_conflict', 'recovery_cleanup_receipt', 'restore_clear', 'restore_stale', 'restore', 'clear')
 MANIFEST = b'{"name":"@qwen-code/qwen-code","version":"0.27.0"}'
 CURRENT_MANIFEST = b'{"name":"@qwen-code/qwen-code","version":"0.27.2"}'
 CURRENT_STAGES = ('apply', 'update_false', 'update_true', 'restore', 'clear')
@@ -26,6 +26,9 @@ PANEL = "//section[@aria-label='Qwen Vim 模式管理']"
 SETTINGS = "//*[@id='qwen-settings']"
 RUNTIME = "//*[@id='qwen-manifest']"
 DIALOG = PANEL + "//*[@role='dialog']"
+PREVIEW_ERROR = '无法生成兼容预览。请检查所选文件、版本与受管记录。'
+RESTORE_INTENT = '当前值：启用；首次原值：关闭。'
+RESTORE_ACTION = '动作：恢复首次原值并清理所有权记录。'
 ERROR = '未能确认操作完成。请检查文件与所有权记录；不要假定配置未改变或重复提交。重新预览或处理冲突后再试。'
 
 
@@ -90,9 +93,10 @@ def rewrite_settings(root, data, members):
     audit(root, members)
 
 
-def assert_document(root, enabled, members, manifest=MANIFEST):
+def assert_document(root, enabled, members, manifest=MANIFEST, other="preserve-me"):
     data = read_checked(root, 'settings.json', members, manifest)
     expected = document(enabled)
+    expected["general"]["other"] = other
     actual = json.loads(data)
     # bool is an int subclass in Python: require an actual boolean as well.
     if actual != expected or type(actual['general']['vimMode']) is not bool:
@@ -233,10 +237,9 @@ def exercise(driver, root, records, write_private, phase=lambda _: None):
     for action, expected in (
         ('只读检查 Vim 恢复状态', '恢复诊断未完成。请检查所选文件与所有权记录；未获得有效观察结果。'),
         ('预览更新受管 Vim 值', '无法生成兼容预览。请检查所选文件、版本与受管记录。'),
-        ('撤销受管 Vim 设置', ERROR),
+        ('撤销受管 Vim 设置', PREVIEW_ERROR),
     ):
         click(action)
-        if action == '撤销受管 Vim 设置': click('确认撤销 Vim 设置')
         message(expected); clean_dom()
         if audit(root, members, CURRENT_MANIFEST) != changed:
             raise QwenFailure('manifest_boundary_write')
@@ -283,13 +286,21 @@ def exercise(driver, root, records, write_private, phase=lambda _: None):
         finish(stage)
     recovery('restore_field', '观察到可撤销的受管字段；尚未执行撤销。')
 
+    def restore_preview():
+        before = audit(root, members)
+        click('撤销受管 Vim 设置')
+        driver.wait(lambda: len(driver.elements(PANEL + "//*[@role='dialog' and @aria-label='确认撤销 Vim 设置']")) == 1)
+        if RESTORE_INTENT not in driver.text(DIALOG) or RESTORE_ACTION not in driver.text(DIALOG):
+            raise QwenFailure('restore_preview_mismatch')
+        unchanged(before); clean_dom()
+
     phase('qwen_restore_cancel')
     before = audit(root, members)
-    click('撤销受管 Vim 设置'); click('取消撤销')
+    restore_preview(); click('取消撤销')
     cleared_results(); unchanged(before); finish('restore_cancel')
 
     phase('qwen_restore_conflict')
-    click('撤销受管 Vim 设置')
+    restore_preview()
     wait_button('确认撤销 Vim 设置')
     rewrite_settings(root, original() + b'\n', members)
     before = audit(root, members)
@@ -303,10 +314,26 @@ def exercise(driver, root, records, write_private, phase=lambda _: None):
     rewrite_settings(root, applied, members)
     if read_checked(root, RECEIPT, members) != receipt:
         raise QwenFailure('receipt_changed')
-    click('撤销受管 Vim 设置'); click('确认撤销 Vim 设置')
+    phase('qwen_restore_clear')
+    restore_preview(); before = audit(root, members)
+    click('清除路径与结果')
+    driver.wait(lambda: driver.value(SETTINGS) == '' and driver.value(RUNTIME) == '')
+    cleared_results(); unchanged(before); finish('restore_clear')
+    fill()
+    phase('qwen_restore_stale')
+    restore_preview()
+    external = document(True)
+    external['general']['other'] = 'external-edit-preserved'
+    rewrite_settings(root, json.dumps(external).encode(), members)
+    before = audit(root, members)
+    click('确认撤销 Vim 设置'); message(ERROR)
+    unchanged(before); finish('restore_stale')
+    # Explicit fresh UI preview, never an automatic replay of the stale write.
+    phase('qwen_restore')
+    restore_preview(); click('确认撤销 Vim 设置')
     message('受管字段已撤销。尚未验证 Qwen 实际运行效果。')
     members -= {RECEIPT}
-    assert_document(root, False, members); finish('restore')
+    assert_document(root, False, members, other='external-edit-preserved'); finish('restore')
     phase('qwen_clear')
     before = audit(root, members)
     click('清除路径与结果')
@@ -355,7 +382,13 @@ def exercise_current(driver, root, records, write_private, phase=lambda _: None)
         assert_receipt(root, read_checked(root, RECEIPT, members, CURRENT_MANIFEST), applied,
                        updated=True, enabled=enabled, manifest=CURRENT_MANIFEST)
         finish('update_true' if enabled else 'update_false')
-    click('撤销受管 Vim 设置'); click('确认撤销 Vim 设置')
+    before = audit(root, members, CURRENT_MANIFEST)
+    click('撤销受管 Vim 设置')
+    driver.wait(lambda: len(driver.elements(DIALOG)) == 1)
+    if RESTORE_INTENT not in driver.text(DIALOG) or RESTORE_ACTION not in driver.text(DIALOG):
+        raise QwenFailure('restore_preview_mismatch')
+    if audit(root, members, CURRENT_MANIFEST) != before: raise QwenFailure('unexpected_write')
+    click('确认撤销 Vim 设置')
     message('受管字段已撤销。尚未验证 Qwen 实际运行效果。')
     members -= {RECEIPT}
     assert_document(root, False, members, CURRENT_MANIFEST); finish('restore')
