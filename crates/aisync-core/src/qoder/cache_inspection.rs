@@ -14,6 +14,7 @@ pub enum CacheState {
 }
 #[derive(Debug, Serialize)]
 pub struct CacheObservation {
+    pub version: &'static str,
     pub state: CacheState,
     pub recovery_plan: &'static str,
     pub deletion_authorized: bool,
@@ -29,10 +30,20 @@ pub enum InspectError {
     Unavailable,
 }
 pub fn inspect_cache(path: &Path) -> Result<CacheObservation, InspectError> {
+    inspect_cache_for_release(crate::qoder::distribution::VERSION, path)
+}
+pub fn inspect_cache_for_release(
+    release: &str,
+    path: &Path,
+) -> Result<CacheObservation, InspectError> {
+    let reviewed = crate::qoder::distribution::reviewed_release(release)
+        .map_err(|_| InspectError::Unsupported)?;
+
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        let state = linux::inspect(path)?;
+        let state = linux::inspect(reviewed, path)?;
         Ok(CacheObservation {
+            version: reviewed.version,
             state,
             recovery_plan: match state {
                 CacheState::StagedArchiveVerified | CacheState::UnpackedPayloadVerified => {
@@ -48,12 +59,14 @@ pub fn inspect_cache(path: &Path) -> Result<CacheObservation, InspectError> {
     }
     #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
     {
-        let _ = path;
+        let _ = (reviewed, path);
         Err(InspectError::Unsupported)
     }
 }
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod linux {
+    #[cfg(test)]
+    const ARCHIVE_BYTES: u64 = 78_587_775;
     use super::*;
     use crate::qoder::{
         distribution,
@@ -69,7 +82,7 @@ mod linux {
         io::Read,
         os::unix::fs::MetadataExt,
     };
-    const ARCHIVE_BYTES: u64 = 78_587_775;
+
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Intent {
@@ -199,7 +212,11 @@ mod linux {
         }
         Ok(())
     }
-    fn observe(dir: &File, names: &BTreeSet<String>) -> Result<CacheState, ()> {
+    fn observe(
+        reviewed: distribution::ReviewedRelease,
+        dir: &File,
+        names: &BTreeSet<String>,
+    ) -> Result<CacheState, ()> {
         if !names.contains("incomplete.json") {
             return Ok(CacheState::UnknownOwnership);
         }
@@ -209,7 +226,7 @@ mod linux {
         };
         if intent.format != 1
             || intent.owner != "agentdeck"
-            || intent.version != distribution::VERSION
+            || intent.version != reviewed.version
             || intent.target != staging::TARGET
             || intent.installed
         {
@@ -235,8 +252,8 @@ mod linux {
         }
         for name in names {
             let max = match name.as_str() {
-                "archive.tar.gz" => ARCHIVE_BYTES,
-                "qodercli" => unpacking::PAYLOAD_BYTES,
+                "archive.tar.gz" => reviewed.archive_bytes,
+                "qodercli" => reviewed.payload_bytes,
                 _ => 65536,
             };
             file(dir, name, max)?;
@@ -247,18 +264,19 @@ mod linux {
         if names.len() != allowed.len() {
             return Err(());
         }
-        let plan = distribution::plan(staging::TARGET).map_err(|_| ())?;
+        let plan =
+            distribution::plan_for_release(reviewed.version, staging::TARGET).map_err(|_| ())?;
         let completed = if unpack {
             let (c, bytes) =
                 recordio::read_record::<Unpacked>(dir, "complete.json").map_err(|_| ())?;
             if c.format != 1
                 || c.owner != "agentdeck"
                 || c.state != "verified_payload_unpacked_not_installed"
-                || c.version != distribution::VERSION
+                || c.version != reviewed.version
                 || c.target != staging::TARGET
                 || c.archive_sha256 != plan.sha256
-                || c.payload_sha256 != unpacking::PAYLOAD_SHA256
-                || c.payload_bytes != unpacking::PAYLOAD_BYTES
+                || c.payload_sha256 != reviewed.payload_sha256
+                || c.payload_bytes != reviewed.payload_bytes
                 || c.installed
                 || c.executable
                 || c.limitations != unpacking::LIMITATIONS
@@ -268,14 +286,16 @@ mod linux {
             digest(
                 dir,
                 "qodercli",
-                unpacking::PAYLOAD_BYTES,
-                unpacking::PAYLOAD_SHA256,
+                reviewed.payload_bytes,
+                reviewed.payload_sha256,
             )?;
             bytes
         } else {
-            recordio::validate_records(dir).map_err(|_| ())?.0
+            recordio::validate_records_for_release(reviewed, dir)
+                .map_err(|_| ())?
+                .0
         };
-        digest(dir, "archive.tar.gz", ARCHIVE_BYTES, plan.sha256)?;
+        digest(dir, "archive.tar.gz", reviewed.archive_bytes, plan.sha256)?;
         let (_, now) = recordio::read_record::<Intent>(dir, "incomplete.json").map_err(|_| ())?;
         if now != original {
             return Err(());
@@ -285,7 +305,9 @@ mod linux {
                 .map_err(|_| ())?
                 .1
         } else {
-            recordio::validate_records(dir).map_err(|_| ())?.0
+            recordio::validate_records_for_release(reviewed, dir)
+                .map_err(|_| ())?
+                .0
         };
         if now != completed {
             return Err(());
@@ -296,7 +318,10 @@ mod linux {
             CacheState::StagedArchiveVerified
         })
     }
-    pub(super) fn inspect(path: &Path) -> Result<CacheState, InspectError> {
+    pub(super) fn inspect(
+        reviewed: distribution::ReviewedRelease,
+        path: &Path,
+    ) -> Result<CacheState, InspectError> {
         let leaf = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -316,8 +341,8 @@ mod linux {
         for name in &names {
             let max = match name.as_str() {
                 "incomplete.json" | "complete.json" => 65536,
-                "archive.tar.gz" => ARCHIVE_BYTES,
-                "qodercli" => unpacking::PAYLOAD_BYTES,
+                "archive.tar.gz" => reviewed.archive_bytes,
+                "qodercli" => reviewed.payload_bytes,
                 _ => continue, // Unknown entries are never opened or disclosed.
             };
             let f = match file(&dir, name, max) {
@@ -327,7 +352,7 @@ mod linux {
             let metadata = f.metadata().map_err(|_| InspectError::Unavailable)?;
             observed_files.push((name, max, f, metadata));
         }
-        let state = observe(&dir, &names).unwrap_or(CacheState::Conflict);
+        let state = observe(reviewed, &dir, &names).unwrap_or(CacheState::Conflict);
         let named = fsio::directory(path).map_err(|_| InspectError::Unavailable)?;
         if snapshot(&before) != snapshot(&private_dir(&dir).map_err(|_| InspectError::Unavailable)?)
             || snapshot(&before)

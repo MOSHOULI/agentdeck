@@ -22,11 +22,11 @@ it('requires a real preview and explicit confirmation preserving exact paths', a
   expect(bridge.previewQoderDeployment).not.toHaveBeenCalled();
   expect(bridge.deployQoderPrivate).not.toHaveBeenCalled();
   preview(); await screen.findByRole('dialog');
-  expect(bridge.previewQoderDeployment).toHaveBeenCalledWith('/cache with space', '/private/new');
+  expect(bridge.previewQoderDeployment).toHaveBeenCalledWith('/cache with space', '/private/new', '1.1.85');
   expect(screen.getByText('已审核部署来源：/cache with space')).toBeInTheDocument();
   expect(screen.getByText('载荷字节：182543840；新文件权限：0700')).toBeInTheDocument();
   confirm(); await screen.findByText('Qoder 私有可执行文件部署已完成；未激活、未运行。');
-  expect(bridge.deployQoderPrivate).toHaveBeenCalledExactlyOnceWith('/cache with space', '/private/new', token, true);
+  expect(bridge.deployQoderPrivate).toHaveBeenCalledExactlyOnceWith('/cache with space', '/private/new', token, true, '1.1.85');
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 it('cancel and edited inputs invalidate confirmation with no write', async () => {
@@ -91,4 +91,23 @@ it('preview lock survives unmount until underlying read settles', async () => {
   const view = render(<QoderPrivateDeployment />); fill(); preview(); view.unmount();
   expect(useWorkspaceActivityStore.getState().busy.qoder).toBe(true);
   await act(async () => p.resolve({ token })); expect(useWorkspaceActivityStore.getState().busy.qoder).toBe(false);
+});
+it('release changes discard completed previews and new confirmation is bound to selected release', async () => {
+  const { rerender } = render(<QoderPrivateDeployment />); fill(); preview(); await screen.findByRole('dialog');
+  rerender(<QoderPrivateDeployment release="1.1.86" />);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); expect(bridge.deployQoderPrivate).not.toHaveBeenCalled();
+  preview(); await screen.findByRole('dialog');
+  expect(bridge.previewQoderDeployment).toHaveBeenLastCalledWith('/cache with space', '/private/new', '1.1.86');
+  expect(screen.getByText('载荷字节：182412768；新文件权限：0700')).toBeInTheDocument();
+  confirm(); await screen.findByText('Qoder 私有可执行文件部署已完成；未激活、未运行。');
+  expect(bridge.deployQoderPrivate).toHaveBeenCalledExactlyOnceWith('/cache with space', '/private/new', token, true, '1.1.86');
+  expect(screen.getByText('实际提交版本：1.1.86')).toBeInTheDocument();
+});
+it('late old-release preview cannot restore confirmation after release changes', async () => {
+  const deferred = pending<{ token: string }>(); vi.mocked(bridge.previewQoderDeployment).mockReturnValueOnce(deferred.promise);
+  const { rerender } = render(<QoderPrivateDeployment />); fill(); preview();
+  rerender(<QoderPrivateDeployment release="1.1.86" />);
+  await act(async () => { deferred.resolve({ token }); await deferred.promise; });
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); expect(bridge.deployQoderPrivate).not.toHaveBeenCalled();
+  preview(); await screen.findByRole('dialog'); expect(screen.getByText('固定版本：1.1.86；目标：linux-amd64-baseline')).toBeInTheDocument();
 });

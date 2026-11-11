@@ -120,7 +120,9 @@ class Tests(unittest.TestCase):
         for fault in (None, 'source', 'config', 'repeat'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp); archive=root/'archive'; h.private_file(archive,b'archive sentinel')
-                def prepare(cli, archive, caches, env):
+                def prepare(cli, archive, caches, env, *, runner):
+                    runner([str(cli), 'qoder', 'stage-package'], env)
+                    runner([str(cli), 'qoder', 'unpack-cache'], env)
                     unpacked=caches/'unpacked'; unpacked.mkdir(mode=0o700)
                     h.private_file(unpacked/'qodercli',b'cache sentinel')
                     return {'unpacked':unpacked}, {}
@@ -133,7 +135,7 @@ class Tests(unittest.TestCase):
                     elif fault == 'repeat': (destination/'qodercli').write_bytes(b'changed')
                     return {**h.OUTCOME,'limitations':'reviewed'}
                 with patch.dict(os.environ,{'RUNNER_TEMP':tmp}), patch.object(h,'guard'), \
-                     patch.object(h.complete,'file_digest',return_value='fixed'), patch.object(h.complete,'prepare',side_effect=prepare), \
+                     patch.object(h.complete,'run_cli',return_value={}), patch.object(h,'check_trace'), patch.object(h.complete,'file_digest',return_value='fixed'), patch.object(h.complete,'prepare',side_effect=prepare), \
                      patch.object(h,'run_preview',return_value='a'*64), patch.object(h,'run_deploy',side_effect=deploy), patch.object(h,'validate_destination'):
                     self.assertEqual(h.run(Path('/built/aisync'),archive,root/'evidence'), fault is None)
                 result=json.loads((root/'evidence'/'result.json').read_text())

@@ -11,6 +11,8 @@
 
 新增 Cursor、GitHub Copilot CLI、Kimi Code 与 Qoder CLI 的六个[官方手动指引条目](docs/MAINSTREAM-CATALOG.zh-CN.md)，CLI 和桌面分别列出。目录共 17 条，不代表 17 款可自动管理；新条目不执行探针、不读写配置，尚未随正式安装包发布。
 
+Qoder 原生分发与私有部署支持显式选择已审阅的 1.1.85 / 1.1.86，默认仍为 1.1.85。CLI 对相关子命令使用 `--release 1.1.86`；桌面使用“Qoder 已审阅版本”选择器。版本间不迁移、不混用缓存与确认令牌；仅 Linux x64 baseline 的受控私有文件部署，不运行、不登录、不激活 PATH。详见 [部署边界](docs/QODER-PRIVATE-DEPLOYMENT.md)。
+
 在一个桌面界面中管理本机 AI Agent：发现与安装、配置、可选择的对话记忆导出、加密密钥、MCP 和配置备份。
 
 **当前支持的完整桌面平台是 Windows 10/11 x64。** React + Tauri 2 + Rust 架构；Linux 可运行非密钥相关的核心/CLI，尚不提供 Linux/macOS 的受保护密钥库或完整安装包。

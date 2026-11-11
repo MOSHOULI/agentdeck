@@ -1,5 +1,14 @@
 # Qoder cache inspection / Qoder 缓存只读诊断
 
+> **Release selection / 版本选择:** 1.1.85 remains the default. Explicit
+> 1.1.86 is additionally reviewed; CLI accepts `--release 1.1.86` on Qoder
+> distribution/cache/deployment subcommands, and the desktop has a reviewed-release
+> selector. Caches, receipts and previews are version-bound; no migration,
+> implicit latest selection or reuse of another release's confirmation.
+> 旧版仍可显式选择；不同版本的归档、收据与载荷不能混用。下文历史 1.1.85
+> 证据仍仅适用于该版本，新版来源见 `upstream/qoder/PROVENANCE.md`。
+
+
 ```sh
 aisync qoder inspect-cache --cache /absolute/explicit/cache
 ```

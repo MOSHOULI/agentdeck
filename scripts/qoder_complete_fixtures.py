@@ -12,6 +12,15 @@ import fetch_qoder_ui_archive as pinned
 PAYLOAD_BYTES = 182_543_840
 PAYLOAD_SHA256 = '8af52502ae32eabd8eac922e6dc5769840d710bcf0374f50f23339779f19b06b'
 
+def select_release(release):
+    global PAYLOAD_BYTES, PAYLOAD_SHA256
+    pinned.select_release(release)
+    _, _, PAYLOAD_BYTES, PAYLOAD_SHA256 = pinned.releases.contract(release)
+
+
+def release_args():
+    return ['--release', pinned.VERSION]
+
 class PreparationFailure(Exception):
     pass
 
@@ -79,15 +88,16 @@ def run_cli(command, env):
 
 
 def validate_report(report, unpack):
-    expected = ({'state':'verified_payload_unpacked_not_installed','installed':False,'executable':False,'payload_bytes':PAYLOAD_BYTES,'payload_sha256':PAYLOAD_SHA256} if unpack else
-                {'state':'verified_archive_staged_not_installed','version':'1.1.85','target':'linux-amd64-baseline','bytes':pinned.SIZE,'installed':False,'extracted':False})
+    expected = ({'state':'verified_payload_unpacked_not_installed','version':pinned.VERSION,'installed':False,'executable':False,'payload_bytes':PAYLOAD_BYTES,'payload_sha256':PAYLOAD_SHA256} if unpack else
+                {'state':'verified_archive_staged_not_installed','version':pinned.VERSION,'target':'linux-amd64-baseline','bytes':pinned.SIZE,'installed':False,'extracted':False})
     if not isinstance(report,dict) or set(report)!=set(expected)|{'limitations'} or not isinstance(report['limitations'],str):
         raise PreparationFailure('fixture_cli_report_invalid')
     for key,value in expected.items():
         if type(report[key]) is not type(value) or report[key]!=value:raise PreparationFailure('fixture_cli_report_invalid')
 
 
-def prepare(cli, archive, root, env):
+def prepare(cli, archive, root, env, *, runner=None):
+    runner = runner or run_cli
     if archive.name != pinned.NAME:
         raise PreparationFailure('wrong_archive_name')
     pinned._guard_destination(archive.parent)
@@ -98,9 +108,9 @@ def prepare(cli, archive, root, env):
     staged=root/'staged';unpacked=root/'unpacked'
     if staged.exists() or staged.is_symlink() or unpacked.exists() or unpacked.is_symlink():
         raise PreparationFailure('fixture_destination_exists')
-    first=run_cli([str(cli),'qoder','stage-package','--target','linux-amd64-baseline','--archive',str(archive),'--destination',str(staged),'--yes'],env)
+    first=runner([str(cli),'qoder','stage-package','--target','linux-amd64-baseline','--archive',str(archive),'--destination',str(staged),'--yes'] + release_args(),env)
     validate_report(first,False)
-    second=run_cli([str(cli),'qoder','unpack-cache','--cache',str(staged),'--destination',str(unpacked),'--yes'],env)
+    second=runner([str(cli),'qoder','unpack-cache','--cache',str(staged),'--destination',str(unpacked),'--yes'] + release_args(),env)
     validate_report(second,True)
     exact={staged/'archive.tar.gz':(pinned.SIZE,pinned.SHA256),unpacked/'archive.tar.gz':(pinned.SIZE,pinned.SHA256),unpacked/'qodercli':(PAYLOAD_BYTES,PAYLOAD_SHA256)}
     for directory, members in [(staged,{'incomplete.json','complete.json','archive.tar.gz'}),(unpacked,{'incomplete.json','complete.json','archive.tar.gz','qodercli'})]:

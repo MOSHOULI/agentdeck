@@ -204,3 +204,39 @@ offline harness regressions are not substitutes for this real GUI gate.
 缓存本身仍是0600数据，部署不是激活或运行，也不授予自动清理、升级或所有权认领权限。
 独立CLI验收保留强制exec跟踪，但不把该跟踪范围说成GUI进程树；没有执行Qoder或关闭
 WebKit沙箱。任何失败不重放写操作，也不以离线合成回归冒充真实GUI通过。
+
+## Explicit Qoder release matrix / 显式版本矩阵
+
+The Linux job now runs independently for fixed 1.1.85 (unchanged default) and
+explicit 1.1.86. Each has its own artifact names, exact archive/payload contract,
+CLI deployment trace and the full real WebView suite including the seven private
+deployment stages. The newer lane selects `Qoder 已审阅版本` through native
+WebDriver before testing. No JavaScript or IPC injection, retry-click fallback,
+URL/hash override or sandbox bypass is introduced. Windows remains on 1.1.85.
+
+The 1.1.86 job additionally prepares both real releases and rejects six mixed
+unpacked caches: foreign completion receipt, foreign archive and foreign payload
+in each direction. Each is changed by the harness after obtaining a valid preview;
+rejected deployment must leave its target absent and the mixed cache, original
+caches and synthetic HOME unchanged. Each preview/rejection requires exactly one
+successful CLI exec in strace and no child exec. Preparation is not covered by
+that trace; GUI execution likewise remains untraced. No Qoder binary is invoked.
+
+新版矩阵不能复用旧版通过记录。实际 CI 通过后才可声明新版对应验收通过；
+合成/offline tests 只检查测试器，不代表真实包或 GUI 验收。两版均仅私有文件
+部署，不激活 PATH、不运行、不登录、不调用在线服务，也不发布安装包。
+
+Cross-release coverage also requires a fresh preview of every already-mixed cache
+to be rejected and a fresh inspection to report `conflict`, independently of the
+old preview token. Complete, otherwise valid 1.1.85 caches selected as 1.1.86 and
+the reverse must also reject fresh previews. Selecting 1.1.85 for an intact
+1.1.86 cache inspects as `unknown_ownership` (foreign intent version); selecting
+1.1.86 for an intact 1.1.85 cache inspects as `conflict` (larger files exceed the
+selected contract's bounds). Neither state is verified or deletion-authorizing. Matching
+release caches must still inspect as `unpacked_payload_verified` and preview
+successfully (successful deployments remain required in both matrix lanes).
+All checks preserve source snapshots and leave proposed targets absent.
+
+缓存诊断与解包 JSON 新增 `version` 字段。这是 additive 字段扩展；仅保证旧版
+默认选择及有效旧版收据继续兼容，不保证新旧 CLI 输出逐字节/字段集合不变。
+严格校验消费者需要接受并核对该字段。

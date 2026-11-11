@@ -1,12 +1,24 @@
 //! Fixed Qoder distribution checks and explicitly confirmed private cache writes.
 use aisync_core::qoder::distribution::{self, DistributionPlan, VerifiedPackage};
+fn selected_release(release: Option<String>) -> Result<&'static str, String> {
+    match release.as_deref().unwrap_or("1.1.85") {
+        "1.1.85" => Ok("1.1.85"),
+        "1.1.86" => Ok("1.1.86"),
+        _ => Err("QODER_UNREVIEWED_RELEASE".into()),
+    }
+}
 #[tauri::command]
-pub async fn qoder_distribution_plan(target: String) -> Result<DistributionPlan, String> {
+pub async fn qoder_distribution_plan(
+    target: String,
+    release: Option<String>,
+) -> Result<DistributionPlan, String> {
+    let release = selected_release(release)?;
     if target.len() > 64 {
         return Err("请选择已审阅的 Qoder 分发目标。".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        distribution::plan(&target).map_err(|_| "请选择已审阅的 Qoder 分发目标。".to_string())
+        distribution::plan_for_release(release, &target)
+            .map_err(|_| "请选择已审阅的 Qoder 分发目标。".to_string())
     })
     .await
     .map_err(|_| "Qoder 分发计划未完成。".to_string())?
@@ -15,7 +27,9 @@ pub async fn qoder_distribution_plan(target: String) -> Result<DistributionPlan,
 pub async fn verify_qoder_package(
     target: String,
     archive_path: String,
+    release: Option<String>,
 ) -> Result<VerifiedPackage, String> {
+    let release = selected_release(release)?;
     if target.len() > 64
         || archive_path.is_empty()
         || archive_path.len() > 4096
@@ -23,14 +37,16 @@ pub async fn verify_qoder_package(
     {
         return Err("请选择有效且长度受限的 Qoder 归档路径与目标。".into());
     }
-    tauri::async_runtime::spawn_blocking(move || distribution::verify_package(&target,std::path::Path::new(&archive_path)).map_err(|_| "未能确认包与固定官方摘要一致。请选择正确目标和官方文件名；不受支持或不安全的文件也会被拒绝。".to_string()))
+    tauri::async_runtime::spawn_blocking(move || distribution::verify_package_for_release(release, &target,std::path::Path::new(&archive_path)).map_err(|_| "未能确认包与固定官方摘要一致。请选择正确目标和官方文件名；不受支持或不安全的文件也会被拒绝。".to_string()))
         .await.map_err(|_| "Qoder 包校验未完成。".to_string())?
 }
 /// Only the core's audited Linux x86_64 observer can return a report.
 #[tauri::command]
 pub async fn inspect_qoder_cache(
     cache_path: String,
+    release: Option<String>,
 ) -> Result<aisync_core::qoder::cache_inspection::CacheObservation, String> {
+    let release = selected_release(release)?;
     if cache_path.trim().is_empty()
         || cache_path.len() > 4096
         || cache_path.chars().any(char::is_control)
@@ -38,13 +54,16 @@ pub async fn inspect_qoder_cache(
         return Err("请选择有效且长度受限的 Qoder 缓存路径。".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        aisync_core::qoder::cache_inspection::inspect_cache(std::path::Path::new(&cache_path))
-            .map_err(|error| match error {
-                aisync_core::qoder::cache_inspection::InspectError::Unsupported => {
-                    "QODER_CACHE_UNSUPPORTED_HOST".to_string()
-                }
-                _ => "QODER_CACHE_UNAVAILABLE".to_string(),
-            })
+        aisync_core::qoder::cache_inspection::inspect_cache_for_release(
+            release,
+            std::path::Path::new(&cache_path),
+        )
+        .map_err(|error| match error {
+            aisync_core::qoder::cache_inspection::InspectError::Unsupported => {
+                "QODER_CACHE_UNSUPPORTED_HOST".to_string()
+            }
+            _ => "QODER_CACHE_UNAVAILABLE".to_string(),
+        })
     })
     .await
     .map_err(|_| "Qoder 缓存诊断未完成。".to_string())?
@@ -91,7 +110,9 @@ pub async fn write_qoder_cache(
     source: String,
     destination: String,
     confirmed: bool,
+    release: Option<String>,
 ) -> Result<CacheWriteResult, String> {
+    let release = selected_release(release)?;
     validate_write(&operation, &target, &source, &destination, confirmed)?;
     tauri::async_runtime::spawn_blocking(move || {
         // Acquire INSIDE the blocking task: dropping its async caller cannot
@@ -100,7 +121,8 @@ pub async fn write_qoder_cache(
             .try_lock()
             .map_err(|_| "QODER_WRITE_BUSY".to_string())?;
         let state = if operation == "stage" {
-            aisync_core::qoder::staging::stage_package(
+            aisync_core::qoder::staging::stage_package_for_release(
+                release,
                 &target,
                 std::path::Path::new(&source),
                 std::path::Path::new(&destination),
@@ -108,7 +130,8 @@ pub async fn write_qoder_cache(
             .map_err(|_| "QODER_WRITE_UNCONFIRMED_PARTIAL_POSSIBLE".to_string())?;
             "staged_archive_verified"
         } else {
-            aisync_core::qoder::unpacking::unpack_cache(
+            aisync_core::qoder::unpacking::unpack_cache_for_release(
+                release,
                 std::path::Path::new(&source),
                 std::path::Path::new(&destination),
             )
@@ -119,7 +142,7 @@ pub async fn write_qoder_cache(
             operation,
             state,
             target: "linux-amd64-baseline",
-            version: "1.1.85",
+            version: release,
             installed: false,
             executable: false,
         })
@@ -157,13 +180,16 @@ fn validate_deployment_confirmation(token: &str, confirmed: bool) -> Result<(), 
 pub async fn preview_qoder_deployment(
     source: String,
     destination: String,
+    release: Option<String>,
 ) -> Result<aisync_core::qoder::deployment::DeploymentPreview, String> {
+    let release = selected_release(release)?;
     validate_deployment_paths(&source, &destination)?;
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = CACHE_WRITE
             .try_lock()
             .map_err(|_| "QODER_DEPLOY_BUSY".to_string())?;
-        aisync_core::qoder::deployment::preview(
+        aisync_core::qoder::deployment::preview_for_release(
+            release,
             std::path::Path::new(&source),
             std::path::Path::new(&destination),
         )
@@ -178,7 +204,9 @@ pub async fn deploy_qoder_private(
     destination: String,
     token: String,
     confirmed: bool,
+    release: Option<String>,
 ) -> Result<aisync_core::qoder::deployment::DeploymentOutcome, String> {
+    let release = selected_release(release)?;
     validate_deployment_confirmation(&token, confirmed)?;
     validate_deployment_paths(&source, &destination)?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -186,7 +214,8 @@ pub async fn deploy_qoder_private(
         let _guard = CACHE_WRITE
             .try_lock()
             .map_err(|_| "QODER_DEPLOY_BUSY".to_string())?;
-        aisync_core::qoder::deployment::deploy(
+        aisync_core::qoder::deployment::deploy_for_release(
+            release,
             std::path::Path::new(&source),
             std::path::Path::new(&destination),
             &token,
@@ -199,6 +228,82 @@ pub async fn deploy_qoder_private(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn explicit_release_selection_defaults_old_and_rejects_unknown_before_io() {
+        assert_eq!(selected_release(None).unwrap(), "1.1.85");
+        for release in ["1.1.85", "1.1.86"] {
+            assert_eq!(selected_release(Some(release.into())).unwrap(), release);
+        }
+        tauri::async_runtime::block_on(async {
+            for release in ["latest", "", "1.1.87", "SECRET"] {
+                let r = Some(release.to_string());
+                assert_eq!(
+                    selected_release(r.clone()).unwrap_err(),
+                    "QODER_UNREVIEWED_RELEASE"
+                );
+                assert_eq!(
+                    qoder_distribution_plan("linux-amd64-baseline".into(), r.clone())
+                        .await
+                        .unwrap_err(),
+                    "QODER_UNREVIEWED_RELEASE"
+                );
+                assert_eq!(
+                    verify_qoder_package(
+                        "linux-amd64-baseline".into(),
+                        "/not-read".into(),
+                        r.clone()
+                    )
+                    .await
+                    .unwrap_err(),
+                    "QODER_UNREVIEWED_RELEASE"
+                );
+                assert_eq!(
+                    inspect_qoder_cache("/not-read".into(), r.clone())
+                        .await
+                        .unwrap_err(),
+                    "QODER_UNREVIEWED_RELEASE"
+                );
+                assert_eq!(
+                    write_qoder_cache(
+                        "stage".into(),
+                        "linux-amd64-baseline".into(),
+                        "/not-read".into(),
+                        "/not-created".into(),
+                        true,
+                        r.clone()
+                    )
+                    .await
+                    .unwrap_err(),
+                    "QODER_UNREVIEWED_RELEASE"
+                );
+                assert_eq!(
+                    preview_qoder_deployment("/not-read".into(), "/not-created".into(), r.clone())
+                        .await
+                        .unwrap_err(),
+                    "QODER_UNREVIEWED_RELEASE"
+                );
+                assert_eq!(
+                    deploy_qoder_private(
+                        "/not-read".into(),
+                        "/not-created".into(),
+                        "a".repeat(64),
+                        true,
+                        r
+                    )
+                    .await
+                    .unwrap_err(),
+                    "QODER_UNREVIEWED_RELEASE"
+                );
+            }
+            for target in distribution::TARGETS {
+                let plan = qoder_distribution_plan(target.to_string(), Some("1.1.86".into()))
+                    .await
+                    .unwrap();
+                assert_eq!(plan.version, "1.1.86");
+                assert!(!plan.install_supported && !plan.execution_verified);
+            }
+        });
+    }
     #[test]
     fn cache_writes_require_confirmation_and_fixed_bounded_request() {
         for (operation, target, source, destination, confirmed) in [
@@ -251,6 +356,7 @@ mod tests {
                 .into_owned(),
             destination.to_string_lossy().into_owned(),
             false,
+            None,
         ));
         assert_eq!(result.unwrap_err(), "QODER_WRITE_INVALID_REQUEST");
         assert!(!destination.exists());
@@ -263,7 +369,8 @@ mod tests {
             assert_eq!(
                 tauri::async_runtime::block_on(preview_qoder_deployment(
                     "/not-read".into(),
-                    "/not-created".into()
+                    "/not-created".into(),
+                    None
                 ))
                 .unwrap_err(),
                 "QODER_DEPLOY_BUSY"
@@ -273,7 +380,8 @@ mod tests {
                     "/not-read".into(),
                     "/not-created".into(),
                     "a".repeat(64),
-                    true
+                    true,
+                    None
                 ))
                 .unwrap_err(),
                 "QODER_DEPLOY_BUSY"
@@ -288,6 +396,7 @@ mod tests {
                 "/not-read".into(),
                 "/not-created".into(),
                 true,
+                None,
             ));
             assert_eq!(result.unwrap_err(), "QODER_WRITE_BUSY");
         }
@@ -321,7 +430,7 @@ mod tests {
                 "x".repeat(4097),
             ] {
                 assert!(
-                    !inspect_qoder_cache(path)
+                    !inspect_qoder_cache(path, None)
                         .await
                         .unwrap_err()
                         .contains("SECRET")
@@ -346,8 +455,10 @@ mod tests {
             std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
         let before = std::fs::metadata(&dir).unwrap().modified().unwrap();
-        let result =
-            tauri::async_runtime::block_on(inspect_qoder_cache(dir.to_string_lossy().into_owned()));
+        let result = tauri::async_runtime::block_on(inspect_qoder_cache(
+            dir.to_string_lossy().into_owned(),
+            None,
+        ));
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         {
             let report = result.unwrap();
@@ -371,13 +482,15 @@ mod tests {
     fn every_plan_remains_fixed_and_non_executable() {
         tauri::async_runtime::block_on(async {
             for target in distribution::TARGETS {
-                let p = qoder_distribution_plan(target.to_string()).await.unwrap();
+                let p = qoder_distribution_plan(target.to_string(), None)
+                    .await
+                    .unwrap();
                 assert_eq!(p.target, *target);
                 assert_eq!(p.version, "1.1.85");
                 assert!(!p.install_supported && !p.execution_verified && !p.signature_verified);
             }
             assert!(
-                !qoder_distribution_plan("SECRET".into())
+                !qoder_distribution_plan("SECRET".into(), None)
                     .await
                     .unwrap_err()
                     .contains("SECRET")
@@ -401,6 +514,7 @@ mod tests {
         let e = tauri::async_runtime::block_on(verify_qoder_package(
             "linux-amd64-baseline".into(),
             p.to_string_lossy().into_owned(),
+            None,
         ))
         .unwrap_err();
         assert!(!e.contains("SECRET"));
@@ -418,12 +532,12 @@ mod tests {
                 "SECRET\narchive".to_string(),
                 "x".repeat(4097),
             ] {
-                let e = verify_qoder_package("linux-amd64-baseline".into(), path)
+                let e = verify_qoder_package("linux-amd64-baseline".into(), path, None)
                     .await
                     .unwrap_err();
                 assert!(!e.contains("SECRET"));
             }
-            assert!(qoder_distribution_plan("x".repeat(65)).await.is_err());
+            assert!(qoder_distribution_plan("x".repeat(65), None).await.is_err());
         });
     }
     #[test]
@@ -465,6 +579,7 @@ mod tests {
             target.to_string_lossy().into_owned(),
             "a".repeat(64),
             false,
+            None,
         ));
         assert_eq!(result.unwrap_err(), "QODER_DEPLOY_INVALID_REQUEST");
         assert!(!target.exists());

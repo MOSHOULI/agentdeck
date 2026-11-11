@@ -111,3 +111,49 @@ fn unpack_requires_confirmation_without_creating_any_output() {
     assert!(output.stdout.is_empty());
     assert!(!dir.exists());
 }
+
+#[test]
+fn release_selection_is_explicit_bounded_and_defaults_to_legacy() {
+    for release in ["1.1.85", "1.1.86"] {
+        for target in aisync_core::qoder::distribution::TARGETS {
+            let output = Command::new(env!("CARGO_BIN_EXE_aisync"))
+                .args([
+                    "qoder",
+                    "distribution-plan",
+                    "--release",
+                    release,
+                    "--target",
+                    target,
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(plan["version"], release);
+            assert_eq!(plan["target"], *target);
+        }
+    }
+    for action in [
+        "distribution-plan",
+        "verify-package",
+        "stage-package",
+        "unpack-cache",
+        "inspect-cache",
+        "deploy-preview",
+        "deploy-private",
+    ] {
+        for release in ["latest", "1.1.87", " 1.1.86"] {
+            let output = Command::new(env!("CARGO_BIN_EXE_aisync"))
+                .args(["qoder", action, "--release", release])
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(output.stdout.is_empty());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("invalid value"));
+        }
+    }
+}

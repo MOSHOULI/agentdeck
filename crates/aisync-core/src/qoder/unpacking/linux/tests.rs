@@ -182,7 +182,11 @@ fn existing_destination_never_reused_even_with_valid_cache_record() {
     std::fs::create_dir(&dest).unwrap();
     std::fs::write(dest.join("keep"), b"sentinel").unwrap();
     assert!(matches!(
-        unpack(&f.root, &dest),
+        unpack(
+            distribution::reviewed_release(distribution::VERSION).unwrap(),
+            &f.root,
+            &dest
+        ),
         Err(UnpackError::Destination)
     ));
     assert_eq!(std::fs::read_dir(&dest).unwrap().count(), 1);
@@ -192,8 +196,81 @@ fn existing_destination_never_reused_even_with_valid_cache_record() {
 fn forged_complete_record_does_not_authorize_wrong_archive() {
     let f = CacheFixture::new();
     let dest = f.root.join("unpacked");
-    assert!(unpack(&f.root, &dest).is_err());
+    assert!(
+        unpack(
+            distribution::reviewed_release(distribution::VERSION).unwrap(),
+            &f.root,
+            &dest
+        )
+        .is_err()
+    );
     assert!(!dest.join("complete.json").exists());
     assert!(!dest.join("qodercli").exists());
     assert!(dest.join("incomplete.json").is_file());
+}
+
+#[test]
+fn release_contracts_reject_mixed_receipts_before_destination_creation() {
+    use std::fs;
+    let f = CacheFixture::new();
+    let d = fsio::directory(&f.root).unwrap();
+    for version in distribution::RELEASES {
+        let r = distribution::reviewed_release(version).unwrap();
+        let p = distribution::plan_for_release(version, staging::TARGET).unwrap();
+        let intent = serde_json::json!({"format":1,"owner":"agentdeck","state":"incomplete_archive_staging","version":version,"target":staging::TARGET,"installed":false});
+        let complete = serde_json::json!({"format":1,"owner":"agentdeck","state":"verified_archive_staged_not_installed","version":version,"target":staging::TARGET,"archive_sha256":p.sha256,"bytes":r.archive_bytes,"installed":false,"extracted":false,"limitations":staging::LIMITATIONS});
+        fs::write(
+            f.root.join("incomplete.json"),
+            serde_json::to_vec(&intent).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            f.root.join("complete.json"),
+            serde_json::to_vec(&complete).unwrap(),
+        )
+        .unwrap();
+        assert!(validate_records_for_release(r, &d).is_ok()); // receipt contract only, not byte verification
+        let other = if *version == "1.1.85" {
+            "1.1.86"
+        } else {
+            "1.1.85"
+        };
+        let other_r = distribution::reviewed_release(other).unwrap();
+        let destination = f.root.join("must-not-exist");
+        assert!(unpack(other_r, &f.root, &destination).is_err());
+        assert!(!destination.exists());
+        for field in ["version", "archive_sha256", "bytes"] {
+            let mut mixed = complete.clone();
+            mixed[field] = match field {
+                "version" => serde_json::json!(other),
+                "archive_sha256" => serde_json::json!(
+                    distribution::plan_for_release(other, staging::TARGET)
+                        .unwrap()
+                        .sha256
+                ),
+                _ => serde_json::json!(other_r.archive_bytes),
+            };
+            fs::write(
+                f.root.join("complete.json"),
+                serde_json::to_vec(&mixed).unwrap(),
+            )
+            .unwrap();
+            assert!(unpack(r, &f.root, &destination).is_err());
+            assert!(!destination.exists());
+        }
+        fs::write(
+            f.root.join("complete.json"),
+            serde_json::to_vec(&complete).unwrap(),
+        )
+        .unwrap();
+        let mut mixed_intent = intent.clone();
+        mixed_intent["version"] = serde_json::json!(other);
+        fs::write(
+            f.root.join("incomplete.json"),
+            serde_json::to_vec(&mixed_intent).unwrap(),
+        )
+        .unwrap();
+        assert!(unpack(r, &f.root, &destination).is_err());
+        assert!(!destination.exists());
+    }
 }
