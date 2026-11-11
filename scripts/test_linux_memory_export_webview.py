@@ -36,7 +36,9 @@ class Driver:
         return selector
     def wait(self, predicate, **_):
         if not predicate(): raise harness.Failure('ui_wait_expired')
-    def type(self, selector, text): self.query = text
+    def type(self, selector, text):
+        # Exercise the real command builder, including the empty-query path.
+        return harness.Driver.type(self, selector, text)
     def value(self, selector): return self.target if 'export-target' in selector else self.query
     def click(self, selector):
         self.target = re.search("@value='([^']+)'", selector)[1]
@@ -59,6 +61,15 @@ class Driver:
             return int(match[1]) in self.draft if match else self.fault == 'collection'
         self.calls.append(selector)
         if self.fault == 'transport': raise harness.Failure('webdriver_command_failed')
+        if selector == "//*[@id='memory-search-input']":
+            if path.endswith('/clear'):
+                self.query = 'uncleared' if self.fault == 'uncleared_query' else ''
+            elif path.endswith('/value'):
+                if not data['value'] or not data['text']:
+                    raise harness.Failure('invalid_empty_send_keys')
+                self.query = data['text']
+            else: raise harness.Failure('unexpected_input_operation')
+            return
         if selector == subject.control('load'):
             with f.connect_readonly(self.home) as c:
                 self.saved = [r[0] for r in c.execute('SELECT memory_id FROM manual_injections WHERE agent_id=?',(self.target,))]
@@ -100,7 +111,7 @@ class Driver:
 
 class Tests(unittest.TestCase):
     def test_full_model_and_faults(self):
-        for fault in (None, 'canary', 'collection', 'unrelated', 'cancel', 'preview_write', 'wrong_error', 'stale_write', 'other_target', 'auto_flag', 'union', 'clear', 'selection_lost'):
+        for fault in (None, 'canary', 'collection', 'unrelated', 'cancel', 'preview_write', 'wrong_error', 'stale_write', 'other_target', 'auto_flag', 'union', 'clear', 'selection_lost', 'uncleared_query'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temp:
                 home = Path(temp); records = []; driver = Driver(home, fault)
                 if fault is None:

@@ -159,6 +159,12 @@ class Driver:
         element = self.one(xpath)
         self.input_stage = 'clear_input'
         self.command('POST', '/element/' + element + '/clear', {})
+        if text == '':
+            # Native clear is the complete empty-input action. WebKit rejects
+            # an empty Send Keys array; callers still verify the observed value
+            # before submitting. Never retry a failed or uncertain clear.
+            self.input_stage = 'empty_input_cleared'
+            return
         self.input_stage = 'send_keys'
         self.command('POST', '/element/' + element + '/value', {'text': text, 'value': list(text)})
         self.input_stage = 'send_keys_returned'
