@@ -25,6 +25,16 @@ def exited_worker_with_live_child(sender, pid_file):
     os._exit(1)
 
 
+def child_has_exited(child):
+    # The process can disappear at any time after cleanup. Read once instead of
+    # checking existence before a second, racy filesystem operation.
+    try:
+        status = Path(f'/proc/{child}/stat').read_text()
+    except FileNotFoundError:
+        return True
+    return status.split()[2] == 'Z'
+
+
 class Response(io.BytesIO):
     status=200
     def __init__(self,data,url):
@@ -131,8 +141,7 @@ class Tests(unittest.TestCase):
                 with self.assertRaises(subject.Failure):subject.supervise(process,receiver)
                 deadline=time.monotonic()+3
                 while time.monotonic()<deadline:
-                    stat_file=Path(f'/proc/{child}/stat')
-                    if not stat_file.exists() or stat_file.read_text().split()[2]=='Z':
+                    if child_has_exited(child):
                         confirmed_dead=True;break
                     time.sleep(0.01)
                 else:self.fail('group child remained live after failed-worker cleanup')
@@ -142,6 +151,15 @@ class Tests(unittest.TestCase):
                     try:os.kill(child,subject.signal.SIGKILL)
                     except ProcessLookupError:pass
                 process.join(5);process.close()
+
+    def test_child_exit_observation_handles_disappearance_but_not_read_errors(self):
+        with patch.object(Path, 'read_text', side_effect=FileNotFoundError):
+            self.assertTrue(child_has_exited(12345))
+        for state in ('Z', 'S', 'R'):
+            with patch.object(Path, 'read_text', return_value=f'12345 (python) {state} 1'):
+                self.assertEqual(child_has_exited(12345), state == 'Z')
+        with patch.object(Path, 'read_text', side_effect=PermissionError), self.assertRaises(PermissionError):
+            child_has_exited(12345)
 
     def test_ci_gate_preserves_root_lane(self):
         workflow=(Path(__file__).resolve().parents[1]/'.github/workflows/ci.yml').read_text()

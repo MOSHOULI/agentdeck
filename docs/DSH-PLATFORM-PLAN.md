@@ -32,7 +32,8 @@ query registries, inspect the host, write output, extract archives or run script
 The caller is responsible for bounded JSON parsing before invoking it.
 
 The subset is deliberately narrow: at most 2,048 unique package identities and
-16,384 declarations, bounded strings and platform lists. Identity versions must
+16,384 declarations and separately at most 16,384 peer-metadata hints, bounded
+strings and platform lists. Identity versions must
 be exact semver. Duplicate identities and malformed relevant fields fail without
 a partial report, including malformed nodes outside the root's reachable graph.
 A package identity is **not** an installed location or peer context.
@@ -89,6 +90,10 @@ Peer declarations are retained separately and always marked
 `peer_context_unresolved`, including optional peers and exact versions with
 matching metadata present. Peers do not become ordinary production paths. The
 planner does not perform peer placement or claim an optional peer must be installed.
+`peerDependenciesMeta` may legally contain a hint without a corresponding peer
+declaration (for example, the checked-in UI lock records debug/supports-color).
+These hints are retained in normalized `peer_metadata` and listed in
+`unbound_peer_metadata`; no edge or version is invented from a hint.
 `unreachable_metadata` means not reached by the supported exact production edges;
 it may include peer-only packages or packages whose incoming ranges are unresolved.
 
@@ -130,3 +135,7 @@ os/cpu/libc 声明，保留完整输入节点和原始依赖边，区分必须�
 合成测试及已有 koffi 元数据只验证这些边界。完整闭包、安装就绪、运行验证、归档
 核验、签名验证与锁文件验证始终为 false。后续真实候选必须保留清理前图和 npm
 版本，另行完成锁图、原始平台元数据、归档一致性及隔离运行审查。
+
+The next developer-only [npm v3 location audit](DSH-LOCK-GRAPH.md) compares
+source declarations with candidate lock entries and checks nested/hoisted locations.
+It remains a partial evidence gate, not full lock approval.
