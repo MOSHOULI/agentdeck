@@ -90,6 +90,127 @@ fn lock_is_exclusive_and_not_removed() {
     assert!(p.parent().unwrap().join(LOCK).exists());
 }
 
+// Keep a child between fork and exec: CLOEXEC has not closed the inherited
+// descriptors yet. After fork, use only async-signal-safe libc operations in
+// the child; the test harness is multithreaded. The pipe replaces timing sleeps.
+struct BeforeExecChild {
+    pid: libc::pid_t,
+    release: File,
+}
+impl BeforeExecChild {
+    fn fork() -> Self {
+        let mut pipe = [-1; 2];
+        assert_eq!(
+            unsafe { libc::pipe2(pipe.as_mut_ptr(), libc::O_CLOEXEC) },
+            0
+        );
+        let read = unsafe { File::from_raw_fd(pipe[0]) };
+        let write = unsafe { File::from_raw_fd(pipe[1]) };
+        let pid = unsafe { libc::fork() };
+        if pid == 0 {
+            unsafe {
+                libc::close(write.as_raw_fd());
+                let mut byte = 0u8;
+                loop {
+                    let rc = libc::read(read.as_raw_fd(), (&mut byte as *mut u8).cast(), 1);
+                    if rc >= 0 {
+                        libc::_exit(0);
+                    }
+                    if *libc::__errno_location() != libc::EINTR {
+                        libc::_exit(1);
+                    }
+                }
+            }
+        }
+        assert!(pid > 0, "fork failed: {}", std::io::Error::last_os_error());
+        drop(read);
+        Self {
+            pid,
+            release: write,
+        }
+    }
+}
+impl Drop for BeforeExecChild {
+    fn drop(&mut self) {
+        // Also release and reap the child when a regression assertion panics.
+        let _ = self.release.write_all(b"x");
+        loop {
+            let rc = unsafe { libc::waitpid(self.pid, std::ptr::null_mut(), 0) };
+            if rc >= 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+                break;
+            }
+        }
+    }
+}
+
+#[test]
+fn apply_lock_release_does_not_wait_for_forked_child() {
+    let _serial = TEST_SERIAL.lock().unwrap();
+    if std::env::var_os("AGENTDECK_TEST_CODEX_FORK_DRIVER").is_none() {
+        // Do not keep unrelated parallel tests' descriptors alive in our gated
+        // child. Run the fork scenario alone in a fresh, exact-filtered process.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "config::codex_animations_fs::native::tests::apply_lock_release_does_not_wait_for_forked_child",
+                "--nocapture",
+            ])
+            .env("AGENTDECK_TEST_CODEX_FORK_DRIVER", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "fork regression failed: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    for exit in ["success", "error", "panic"] {
+        let prepared = exit != "success";
+        let (_dir, p) = setup();
+        let original = std::fs::read(&p).unwrap();
+        let token = preview(&p, false).unwrap().token;
+        let child = std::cell::RefCell::new(None);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            apply(&p, false, &token, &|point| {
+                if point == Point::ReceiptDirectorySynced {
+                    *child.borrow_mut() = Some(BeforeExecChild::fork());
+                    // Inheritance must not weaken exclusion while apply is active.
+                    assert!(matches!(Dir::open(&p).unwrap().lock(), Err(Error::Busy)));
+                    assert_ne!(exit, "panic", "injected apply unwind");
+                    if prepared {
+                        return Err(Error::Io);
+                    }
+                }
+                Ok(())
+            })
+        }));
+        if exit == "panic" {
+            assert!(result.is_err());
+        } else {
+            let result = result.unwrap();
+            assert_eq!(result.is_err(), prepared, "{result:?}");
+        }
+        assert!(child.borrow().is_some());
+        // The child still holds apply's open-file description, but performs no
+        // configuration operation. It must not keep the completed operation busy.
+        let stages = std::cell::RefCell::new(Vec::new());
+        let restored = restore(&p, &|point| {
+            stages.borrow_mut().push(point);
+            Ok(())
+        });
+        assert!(
+            matches!(restored, Ok(changed) if changed != prepared),
+            "prepared={prepared}, result={restored:?}, stages={stages:?}"
+        );
+        assert!(stages.borrow().contains(&Point::CleanupSynced));
+        assert_eq!(std::fs::read(&p).unwrap(), original);
+        assert!(!p.parent().unwrap().join(RECEIPT).exists());
+        assert!(p.parent().unwrap().join(LOCK).exists());
+    }
+}
+
 #[test]
 fn subprocess_fault_driver() {
     let _serial = TEST_SERIAL.lock().unwrap();
@@ -360,15 +481,21 @@ fn restore_cleanup_final_state_cannot_hide_foreign_changes() {
             } else {
                 p.clone()
             };
+            let stages = std::cell::RefCell::new(Vec::new());
             let result = restore(&p, &|point| {
+                stages.borrow_mut().push(point);
                 if point == Point::CleanupSynced {
                     std::fs::write(&dest, b"foreign").unwrap();
                 }
                 Ok(())
             });
             assert!(
-                result.is_err(),
-                "prepared={prepared},receipt={change_receipt}"
+                matches!(result, Err(Error::Conflict)),
+                "prepared={prepared},receipt={change_receipt}, result={result:?}, stages={stages:?}"
+            );
+            assert!(
+                stages.borrow().contains(&Point::CleanupSynced),
+                "prepared={prepared},receipt={change_receipt}, result={result:?}, stages={stages:?}"
             );
             assert_eq!(std::fs::read(dest).unwrap(), b"foreign");
         }

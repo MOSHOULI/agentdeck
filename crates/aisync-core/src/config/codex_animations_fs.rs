@@ -57,6 +57,16 @@ mod native {
         bytes: Vec<u8>,
         metadata: std::fs::Metadata,
     }
+    struct LockGuard(File);
+    impl Drop for LockGuard {
+        fn drop(&mut self) {
+            // flock is tied to the open-file description, which an unrelated
+            // concurrent fork can inherit until exec despite O_CLOEXEC. Closing
+            // only our descriptor can leave a finished operation spuriously busy.
+            // Unlock explicitly on every return/unwind; never unlink the lock.
+            let _ = self.0.unlock();
+        }
+    }
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(super) enum Point {
         ReceiptCreated,
@@ -242,7 +252,7 @@ mod native {
             self.check_parent()?;
             self.file.sync_all().map_err(|_| Error::Io)
         }
-        fn lock(&self) -> Result<File> {
+        fn lock(&self) -> Result<LockGuard> {
             if !self.exists(LOCK)? {
                 match self.open_file(LOCK, libc::O_RDWR | libc::O_CREAT | libc::O_EXCL) {
                     Ok(f) => {
@@ -263,12 +273,13 @@ mod native {
                 return Err(Error::Unsupported);
             }
             f.try_lock().map_err(|_| Error::Busy)?;
+            let guard = LockGuard(f);
             let named = self.open_file(LOCK, libc::O_RDONLY)?;
             if !identity(&m, &metadata(&named)?) {
                 return Err(Error::Conflict);
             }
             *self.held_lock.borrow_mut() = Some(m);
-            Ok(f)
+            Ok(guard)
         }
         fn create_receipt(&self, bytes: &[u8], hook: Hook<'_>) -> Result<Image> {
             self.check_parent()?;
