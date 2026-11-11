@@ -68,6 +68,7 @@ pub(super) fn check(path: &Path) -> crate::Result<()> {
             }
             #[cfg(windows)]
             check_windows_handle(&current)?;
+            super::metadata::check_path(&current)?;
         }
     }
     Ok(())
