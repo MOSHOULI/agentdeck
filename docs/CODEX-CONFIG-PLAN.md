@@ -14,6 +14,9 @@ The response contains fixed target categories, paths, planned action categories
 and conflict counts. It never returns template text, TOML values, arbitrary keys,
 credentials or raw parser errors. A revision identifies the observed snapshot;
 it is **not** a write token. Cancel simply discards the displayed result.
+Other Agent-workspace activity invalidates the plan, including a pending result;
+when that activity ends, a new read requires another explicit preview. This does
+not monitor external file edits.
 
 An existing instruction block may have been manually edited. Markers delimit a
 block but do not establish ownership or an untouched history. A different existing
@@ -36,6 +39,8 @@ Codex 卡片新增只读配置计划，不是确认后即可写入的预览。�
 
 界面只显示目标、动作类别及冲突数量，不显示模板正文、配置值、任意键名、凭据
 或原始解析错误。revision 仅标识本次观察，不是写入授权；取消只清除界面结果。
+其他 Agent 管理活动会使旧计划及尚未返回的结果失效；活动结束不会自动重新读取，
+需显式再次预览。这不监控外部文件编辑。
 现有 Markdown 标记不能证明其中内容没有被人工编辑；不同 TOML 值和类型冲突
 均不得当成自动覆盖许可。路径不安全、文件超限或标记损坏时拒绝处理，不能静默
 忽略显式为空或不同的 CODEX_HOME。计划不证明实际运行中的 Codex 已采用这些配置。
