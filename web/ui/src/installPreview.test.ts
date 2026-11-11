@@ -21,6 +21,24 @@ describe('reviewed npm bridge contract', () => {
   ])('rejects malformed or mismatched fields %j', patch => {
     expect(() => parseInstallPreview({ ...installPlan, ...patch }, 'opencode')).toThrow('安装预览无效');
   });
+  it.each([
+    undefined, null, 24, '', '24.9.0', 'v24.9', 'v24.9.0-beta.1', 'v24.9.0+build',
+    'v024.9.0', 'v24.09.0', 'v24.9.00', ' v24.9.0', 'v24.9.0\n', 'v24.9.0\nsecret',
+    'v4294967296.0.0', 'v24.4294967296.0', 'v24.0.4294967296', 'v17.99.99',
+  ])('rejects unknown, malformed, prerelease or insufficient installer Node %j', installerNodeVersion => {
+    expect(() => parseInstallPreview({ ...installPlan, installerNodeVersion }, 'opencode')).toThrow('安装预览无效');
+  });
+  it.each([undefined, null, '', '16.0.0', '20.0.0', '>=18', '18.0.0\n'])('rejects a missing or mismatched installer policy %j', installerNodeMinimum => {
+    expect(() => parseInstallPreview({ ...installPlan, installerNodeMinimum }, 'opencode')).toThrow('安装预览无效');
+  });
+  it.each(['v18.0.0', 'v18.0.1', 'v19.0.0', 'v4294967295.4294967295.4294967295'])('accepts the exact minimum or newer stable version %s', installerNodeVersion => {
+    expect(parseInstallPreview({ ...installPlan, installerNodeVersion }, 'opencode').installerNodeVersion).toBe(installerNodeVersion);
+  });
+  it.each(['v22.18.99', 'v22.19.0', 'v22.19.1', 'v23.0.0'])('applies the Pi minor-version boundary to %s', installerNodeVersion => {
+    const plan = { ...installPlan, agentId: 'pi', package: '@earendil-works/pi-coding-agent', executable: 'pi', scriptPolicy: 'disabled', installerNodeMinimum: '22.19.0', installerNodeVersion, packageRoot: `${installPlan.globalRoot}/@earendil-works/pi-coding-agent` };
+    if (installerNodeVersion === 'v22.18.99') expect(() => parseInstallPreview(plan, 'pi')).toThrow();
+    else expect(parseInstallPreview(plan, 'pi').installerNodeVersion).toBe(installerNodeVersion);
+  });
   it('accepts Windows canonical drive paths, including verbatim prefix', () => {
     expect(parseInstallPreview({ ...installPlan, nodePath: 'C:\\Program Files\\node.exe', managerPath: '\\\\?\\C:\\npm\\npm-cli.js' }, 'opencode').nodePath).toBe('C:\\Program Files\\node.exe');
   });
@@ -37,12 +55,12 @@ describe('reviewed npm bridge contract', () => {
     expect(() => parseInstallPreview({ ...plan, packageRoot: `${root}\\@openai/other` }, 'codex')).toThrow();
   });
   it.each([
-    ['codex', '@openai/codex', 'codex', 'disabled'],
-    ['gemini-cli', '@google/gemini-cli', 'gemini', 'npm_configured'],
-    ['pi', '@earendil-works/pi-coding-agent', 'pi', 'disabled'],
-  ])('validates exact supported package policy for %s', (id, pkg, executable, scriptPolicy) => {
-    expect(parseInstallPreview({ ...installPlan, agentId: id, package: pkg, executable, scriptPolicy, packageRoot: `${installPlan.globalRoot}/${pkg}` }, id).package).toBe(pkg);
-    expect(() => parseInstallPreview({ ...installPlan, agentId: id, package: pkg, executable, scriptPolicy: scriptPolicy === 'disabled' ? 'npm_configured' : 'disabled', packageRoot: `${installPlan.globalRoot}/${pkg}` }, id)).toThrow();
+    ['codex', '@openai/codex', 'codex', 'disabled', '18.0.0'],
+    ['gemini-cli', '@google/gemini-cli', 'gemini', 'npm_configured', '20.0.0'],
+    ['pi', '@earendil-works/pi-coding-agent', 'pi', 'disabled', '22.19.0'],
+  ])('validates exact supported package policy for %s', (id, pkg, executable, scriptPolicy, installerNodeMinimum) => {
+    expect(parseInstallPreview({ ...installPlan, agentId: id, package: pkg, executable, scriptPolicy, installerNodeMinimum, packageRoot: `${installPlan.globalRoot}/${pkg}` }, id).package).toBe(pkg);
+    expect(() => parseInstallPreview({ ...installPlan, agentId: id, package: pkg, executable, installerNodeMinimum, scriptPolicy: scriptPolicy === 'disabled' ? 'npm_configured' : 'disabled', packageRoot: `${installPlan.globalRoot}/${pkg}` }, id)).toThrow();
   });
   it.each(['', '?demo=1'])('never previews or installs without native IPC (%s)', async query => {
     window.history.replaceState({}, '', '/' + query);

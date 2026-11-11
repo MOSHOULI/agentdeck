@@ -69,6 +69,8 @@ pub struct InstallPreview {
     pub executable: String,
     pub manager_path: String,
     pub node_path: String,
+    pub installer_node_version: String,
+    pub installer_node_minimum: String,
     pub prefix: String,
     pub global_root: String,
     pub package_root: String,
@@ -128,6 +130,8 @@ struct InstallPlan {
     prefix: PathBuf,
     root: PathBuf,
     package: &'static str,
+    installer_node_version: NodeVersion,
+    installer_node_minimum: NodeVersion,
 }
 
 // Do not silently replace non-Unicode bytes/surrogates or display invisible
@@ -157,6 +161,8 @@ fn project_plan(
         executable: display_value(known.executable.as_ref())?,
         manager_path: display_value(plan.manager.cli.as_os_str())?,
         node_path: display_value(plan.manager.command.program.as_os_str())?,
+        installer_node_version: format!("v{}", plan.installer_node_version),
+        installer_node_minimum: plan.installer_node_minimum.to_string(),
         prefix: display_value(plan.prefix.as_os_str())?,
         global_root: display_value(plan.root.as_os_str())?,
         package_root: display_value(plan.root.join(plan.package).as_os_str())?,
@@ -257,6 +263,67 @@ fn require_native_unix_node(path: &Path) -> Result<(), String> {
         return Err("Node must be a supported native executable, not a script or wrapper".into());
     }
     Ok(())
+}
+
+// Fixed AgentDeck installer policy, not a registry-controlled command or a claim
+// about the selected package's complete engines/dependency/native requirements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct NodeVersion(u32, u32, u32);
+
+impl std::fmt::Display for NodeVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.0, self.1, self.2)
+    }
+}
+
+fn installer_node_minimum(package: &str) -> Result<NodeVersion, String> {
+    match package {
+        "@openai/codex" | "opencode-ai" => Ok(NodeVersion(18, 0, 0)),
+        "@google/gemini-cli" => Ok(NodeVersion(20, 0, 0)),
+        "@earendil-works/pi-coding-agent" => Ok(NodeVersion(22, 19, 0)),
+        _ => Err("No fixed installer Node policy for this package".into()),
+    }
+}
+
+fn parse_node_version(output: &[u8]) -> Option<NodeVersion> {
+    if output.len() > 64 {
+        return None;
+    }
+    let text = std::str::from_utf8(output).ok()?;
+    // Native Node emits one LF (CRLF on Windows); don't normalize other output.
+    let text = text
+        .strip_suffix("\r\n")
+        .or_else(|| text.strip_suffix('\n'))
+        .unwrap_or(text);
+    let mut parts = text.strip_prefix('v')?.split('.');
+    let mut component = || {
+        let token = parts.next()?;
+        if token.is_empty()
+            || (token.len() > 1 && token.starts_with('0'))
+            || !token.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return None;
+        }
+        token.parse::<u32>().ok()
+    };
+    let version = NodeVersion(component()?, component()?, component()?);
+    parts.next().is_none().then_some(version)
+}
+
+fn inspect_installer_node(
+    manager: &Manager,
+    runner: &mut impl Runner,
+) -> Result<NodeVersion, String> {
+    let command = ProbeCommand {
+        npm_metadata: false,
+        program: manager.command.program.clone(),
+        args: vec!["--version".into()],
+    };
+    let output = runner.run(&command).map_err(|_| {
+        "Installer Node version could not be measured; update Node and restart AgentDeck before installing"
+    })?;
+    parse_node_version(&output).ok_or_else(||
+        "Installer Node must report a stable vMAJOR.MINOR.PATCH version; update Node and restart AgentDeck before installing".into())
 }
 
 fn frozen_manager(search: &SearchPath, runner: &mut impl Runner) -> Result<Manager, String> {
@@ -391,7 +458,15 @@ fn build_plan(
             "Installation requires a complete PATH search with no existing candidates".into(),
         );
     }
+    let package = known.package.ok_or("No supported npm package")?;
+    let installer_node_minimum = installer_node_minimum(package)?;
     let manager = frozen_manager(search, runner)?;
+    let installer_node_version = inspect_installer_node(&manager, runner)?;
+    if installer_node_version < installer_node_minimum {
+        return Err(format!(
+            "AgentDeck installer policy requires Node >= {installer_node_minimum}; detected v{installer_node_version}. Update Node and restart AgentDeck before installing; no package installation was attempted"
+        ));
+    }
     let raw_prefix = query_raw_path(runner, &manager.command, &["prefix", "--global"])
         .map_err(|_| "npm global prefix could not be verified")?;
     let prefix = canonical_file_or_dir(&raw_prefix)
@@ -408,7 +483,6 @@ fn build_plan(
     }
     let root = prefix.join(relative_root);
     safe_directory_chain(&prefix, &root)?;
-    let package = known.package.ok_or("No supported npm package")?;
     require_absent(&prefix, &root.join(package))?;
     let bin = if search.platform == Platform::Windows {
         prefix.clone()
@@ -437,6 +511,8 @@ fn build_plan(
         prefix,
         root,
         package,
+        installer_node_version,
+        installer_node_minimum,
     })
 }
 
@@ -547,7 +623,7 @@ mod tests {
             let plan = build_plan(CODEX, &fixture.search, &mut fixture.runner()).unwrap();
             let preview = project_plan("codex", CODEX, platform, &plan).unwrap();
             let json = serde_json::to_value(&preview).unwrap();
-            assert_eq!(json.as_object().unwrap().len(), 13);
+            assert_eq!(json.as_object().unwrap().len(), 15);
             assert_eq!(json["schemaVersion"], 1);
             assert_eq!(json["agentId"], "codex");
             assert_eq!(json["package"], "@openai/codex");
@@ -909,6 +985,7 @@ mod tests {
                 calls: 0,
                 fail: false,
                 version: b"codex-cli 1.2.3\n".to_vec(),
+                node_version: b"v24.9.0\n".to_vec(),
                 mutate: None,
             }
         }
@@ -947,6 +1024,7 @@ mod tests {
         calls: usize,
         fail: bool,
         version: Vec<u8>,
+        node_version: Vec<u8>,
         mutate: Option<Box<dyn FnMut(usize)>>,
     }
 
@@ -967,6 +1045,14 @@ mod tests {
                     "synthetic query failure",
                 ));
             }
+            if command.args == [OsString::from("--version")]
+                && command
+                    .program
+                    .file_name()
+                    .is_some_and(|name| name == "node" || name == "node.exe")
+            {
+                return Ok(self.node_version.clone());
+            }
             if command.args.last().is_some_and(|arg| arg == "--version") {
                 return Ok(self.version.clone());
             }
@@ -982,6 +1068,179 @@ mod tests {
             };
             Ok(format!("{}\n", path.display()).into_bytes())
         }
+    }
+
+    /// Explicit prerequisite-only acceptance. Never executes npm or an Agent.
+    #[test]
+    #[ignore = "requires an explicitly supplied trusted native Node"]
+    fn trusted_installer_node_version_smoke() {
+        let supplied = PathBuf::from(
+            std::env::var_os("AGENTDECK_TEST_NODE")
+                .expect("Set AGENTDECK_TEST_NODE to an explicit trusted native Node path"),
+        );
+        assert!(supplied.is_absolute());
+        let program = canonical_file(&supplied).unwrap();
+        #[cfg(unix)]
+        require_native_unix_node(&program).unwrap();
+        #[cfg(windows)]
+        canonical_windows_program(&program).unwrap();
+        let manager = Manager {
+            program_digest: digest(&program).unwrap(),
+            cli_digest: Vec::new(),
+            command: ProbeCommand {
+                npm_metadata: false,
+                program,
+                args: Vec::new(),
+            },
+            // Unused: the measured invocation must not contain an npm entrypoint.
+            cli: PathBuf::from("not-an-npm-entrypoint"),
+        };
+        let version = inspect_installer_node(&manager, &mut ProcessRunner).unwrap();
+        assert!(version >= NodeVersion(18, 0, 0));
+        assert_eq!(
+            manager.program_digest,
+            digest(&manager.command.program).unwrap()
+        );
+        println!("Frozen installer Node measured directly: v{version}; no npm or Agent invoked");
+    }
+
+    #[test]
+    fn installer_node_parser_is_strict_and_bounded() {
+        for bytes in [b"v18.0.0".as_slice(), b"v18.0.0\n", b"v18.0.0\r\n"] {
+            assert_eq!(parse_node_version(bytes), Some(NodeVersion(18, 0, 0)));
+        }
+        for invalid in [
+            "",
+            "18.0.0",
+            " v18.0.0",
+            "v18.0.0 ",
+            "v18.0",
+            "v18.0.0.0",
+            "v18.0.0-pre",
+            "v18.0.0+build",
+            "v018.0.0",
+            "v18.00.0",
+            "v18.0.-1",
+            "v4294967296.0.0",
+            "v18.0.0\n\n",
+            "v18.0.0\r",
+            "v18.0.0\nsecret",
+            "node v18.0.0",
+        ] {
+            assert_eq!(parse_node_version(invalid.as_bytes()), None, "{invalid:?}");
+        }
+        assert_eq!(parse_node_version(&[0xff]), None);
+        assert_eq!(parse_node_version(&[b'1'; 65]), None);
+    }
+
+    #[test]
+    fn each_fixed_installer_node_minimum_is_enforced_before_npm_queries() {
+        for (package, executable, minimum, below) in [
+            ("@openai/codex", "codex", "v18.0.0", "v17.99.99"),
+            ("opencode-ai", "opencode", "v18.0.0", "v17.99.99"),
+            ("@google/gemini-cli", "gemini", "v20.0.0", "v19.99.99"),
+            (
+                "@earendil-works/pi-coding-agent",
+                "pi",
+                "v22.19.0",
+                "v22.18.99",
+            ),
+        ] {
+            let known = KnownAgent {
+                executable,
+                package: Some(package),
+            };
+            let fixture = Fixture::new(Platform::Windows);
+            let mut runner = fixture.runner();
+            runner.node_version = below.as_bytes().to_vec();
+            assert!(build_plan(known, &fixture.search, &mut runner).is_err());
+            assert_eq!(runner.calls, 1, "Only direct Node version may be queried");
+            for valid in [minimum, "v24.9.0", "v100.0.0"] {
+                runner.node_version = valid.as_bytes().to_vec();
+                let plan = build_plan(known, &fixture.search, &mut runner).unwrap();
+                assert_eq!(format!("v{}", plan.installer_node_version), valid);
+                assert_eq!(format!("v{}", plan.installer_node_minimum), minimum);
+            }
+        }
+        assert!(installer_node_minimum("@arbitrary/package").is_err());
+    }
+
+    #[test]
+    fn malformed_and_failed_installer_node_probes_fail_closed() {
+        let fixture = Fixture::new(Platform::Windows);
+        for invalid in [b"v24.9.0-rc.1".as_slice(), b"v24.9.0\nextra", b"", &[0xff]] {
+            let mut runner = fixture.runner();
+            runner.node_version = invalid.to_vec();
+            assert!(
+                install_with(CODEX, &fixture.search, &mut runner, |_| panic!(
+                    "must not install"
+                ))
+                .is_err()
+            );
+            assert_eq!(runner.calls, 1);
+        }
+        for kind in [
+            io::ErrorKind::TimedOut,
+            io::ErrorKind::Other,
+            io::ErrorKind::NotFound,
+        ] {
+            struct FailedRunner(io::ErrorKind);
+            impl Runner for FailedRunner {
+                fn run(&mut self, command: &ProbeCommand) -> io::Result<Vec<u8>> {
+                    assert_eq!(command.args, [OsString::from("--version")]);
+                    assert!(!command.npm_metadata);
+                    Err(io::Error::new(self.0, "private output"))
+                }
+            }
+            let error = install_with(CODEX, &fixture.search, &mut FailedRunner(kind), |_| {
+                panic!("must not install")
+            })
+            .unwrap_err();
+            assert!(!error.contains("private output"));
+        }
+    }
+
+    #[test]
+    fn changed_installer_node_measurement_invalidates_review_and_second_preflight() {
+        let fixture = Fixture::new(Platform::Windows);
+        let mut runner = fixture.runner();
+        let plan = build_plan(CODEX, &fixture.search, &mut runner).unwrap();
+        let preview = project_plan("codex", CODEX, Platform::Windows, &plan).unwrap();
+        assert_eq!(preview.installer_node_version, "v24.9.0");
+        assert_eq!(preview.installer_node_minimum, "18.0.0");
+        runner.node_version = b"v24.10.0".to_vec();
+        assert!(
+            install_reviewed_with(
+                "codex",
+                &preview.revision,
+                CODEX,
+                &fixture.search,
+                &mut runner,
+                |_| panic!("stale measurement must not install")
+            )
+            .is_err()
+        );
+        assert!(
+            execute_plan(plan, CODEX, &fixture.search, &mut runner, |_| panic!(
+                "changed preflight must not install"
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn old_installer_node_cannot_reach_package_mutation() {
+        let fixture = Fixture::new(Platform::Windows);
+        let mut runner = fixture.runner();
+        runner.node_version = b"v17.9.1\n".to_vec();
+        let mut installed = false;
+        let result = install_with(CODEX, &fixture.search, &mut runner, |_| {
+            installed = true;
+            fixture.populate();
+            Ok(())
+        });
+        assert!(!installed, "older installer Node reached package mutation");
+        assert!(result.is_err());
     }
 
     #[test]

@@ -141,6 +141,8 @@ mod tests {
             executable: "codex".into(),
             manager_path: "C:\\npm".into(),
             node_path: "C:\\node.exe".into(),
+            installer_node_version: "v24.9.0".into(),
+            installer_node_minimum: "18.0.0".into(),
             prefix: "C:\\prefix".into(),
             global_root: "C:\\prefix\\node_modules".into(),
             package_root: "C:\\prefix\\node_modules\\@openai\\codex".into(),

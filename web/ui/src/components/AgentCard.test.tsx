@@ -299,11 +299,13 @@ describe('AgentCard', () => {
     const dialog = await screen.findByRole('dialog', { name: 'OpenCode 安装计划' });
     for (const value of [installPlan.package, installPlan.executable, installPlan.prefix,
       installPlan.globalRoot, installPlan.packageRoot, installPlan.launcherDirectory,
-      installPlan.managerPath, installPlan.nodePath]) {
+      installPlan.managerPath, installPlan.nodePath, installPlan.installerNodeVersion, installPlan.installerNodeMinimum]) {
       expect(within(dialog).getByText(value)).toBeInTheDocument();
     }
     expect(dialog).toHaveTextContent('版本由当前 npm 配置选择，未固定或解析版本');
     expect(dialog).toHaveTextContent('安装器 Node 仅用于此次安装');
+    expect(dialog).toHaveTextContent('AgentDeck 安装器 Node 最低策略');
+    expect(dialog).toHaveTextContent('不代表包或依赖兼容');
     expect(dialog).toHaveTextContent('生命周期脚本：遵循当前 npm 配置');
     expect(dialog).toHaveTextContent('不创建配置备份');
     expect(dialog).toHaveTextContent('不自动回滚或卸载');
@@ -313,7 +315,7 @@ describe('AgentCard', () => {
   });
 
   it.each([['pi', 'Pi', '@earendil-works/pi-coding-agent'], ['codex', 'Codex', '@openai/codex']])('shows disabled lifecycle scripts for the reviewed %s plan', async (id, name, pkg) => {
-    const disabledPlan = { ...installPlan, agentId: id, package: pkg, executable: id, scriptPolicy: 'disabled' as const };
+    const disabledPlan = { ...installPlan, installerNodeMinimum: id === 'pi' ? '22.19.0' : '18.0.0', agentId: id, package: pkg, executable: id, scriptPolicy: 'disabled' as const };
     mountAgent({ agent: { ...agent, id, name }, onPrepareInstall: vi.fn().mockResolvedValue(disabledPlan) });
     fireEvent.click(screen.getByRole('button', { name: `安装 ${name}` }));
     const dialog = await screen.findByRole('dialog', { name: `${name} 安装计划` });

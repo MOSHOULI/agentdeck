@@ -15,7 +15,7 @@ Gemini CLI, OpenCode's `opencode-ai` **V1** route, and Pi. Claude Code's depreca
 npm channel remains disabled, even if a retained registry describes it. Manual
 entries, Qwen, Qoder and DSH do not become installable through this interface.
 
-The preview performs the existing bounded local npm prefix/root queries and
+The preview measures the frozen native installer Node version and performs bounded local npm prefix/root queries and
 filesystem inspection. It does not run an installer, download a package, prepare
 a profile/vault/Git backup, or change agent configuration. npm itself is local
 code: it may consult configuration and touch caches/logs. A preview is not a
@@ -72,6 +72,13 @@ upgrade, authentication or profile/model configuration is added.
 The CLI's existing `deploy --action install --yes` keeps its explicit-command
 semantics and the same installer guards. The reviewed revision is mandatory for
 the desktop IPC path; this increment does not silently change the CLI contract.
+
+## Installer Node prerequisite
+
+The review includes the measured frozen installer Node version and the fixed
+AgentDeck minimum policy. Both are bound into the revision and rechecked before
+package mutation. This is not a package engine/dependency or future runtime
+compatibility result. See [the policy and evidence boundaries](INSTALLER-NODE-POLICY.md).
 
 ## Verification boundary
 

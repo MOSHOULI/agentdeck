@@ -94,7 +94,9 @@ Before running the installer, the backend:
    uninspectable or ambiguous candidate blocks installation.
 2. Resolves a supported npm entrypoint and the specific Node executable, checks
    npm's package/bin mapping, and records their file digests. Unknown manager
-   wrappers are rejected.
+   wrappers are rejected. The installer Node version must satisfy the fixed
+   [AgentDeck minimum policy](INSTALLER-NODE-POLICY.md); this does not prove package,
+   dependency or future launcher/runtime compatibility.
 3. Queries that manager's global prefix and root, verifies the supported layout,
    and requires an existing inspectable prefix. Destination directories cannot
    redirect through links or unusable components.

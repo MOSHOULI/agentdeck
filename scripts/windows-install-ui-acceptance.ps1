@@ -63,7 +63,8 @@ function Open-ReviewedInstallPlan($fixture, [string]$manifest) {
     $null = Wait-QwenControl '确认安装软件' ([Windows.Automation.ControlType]::Button)
     $names = Get-InstallPlanNames
     foreach ($value in @('@openai/codex', 'codex', $fixture.prefix, $fixture.globalRoot, $fixture.package,
-                         $fixture.manager, $fixture.node)) {
+                         $fixture.manager, $fixture.node, $fixture.installerNodeVersion, $fixture.installerNodeMinimum,
+                         '安装器 Node 实测版本', 'AgentDeck 安装器 Node 最低策略')) {
         if ($names -cnotcontains $value) { throw 'Reviewed installation path/package mismatch' }
     }
     $text = $names -join "`n"

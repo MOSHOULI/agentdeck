@@ -14,6 +14,8 @@ import stat
 import struct
 import sys
 
+from installer_node_fixture import measured_version
+
 CANARY = 'AGENTDECK_SYNTHETIC_INSTALL_PRIVATE_CANARY'
 MARKER = b'synthetic-install-once\n'
 PARTIAL = ('authored incomplete installation; retain for inspection\n' + CANARY + '\n').encode()
@@ -107,6 +109,7 @@ def prepare(root,node,home,mode):
     if len(data)<64 or data[:2]!=b'MZ':raise Failure('trusted_node_not_pe')
     offset=struct.unpack_from('<I',data,0x3c)[0]
     if offset>len(data)-6 or data[offset:offset+4]!=b'PE\0\0' or struct.unpack_from('<H',data,offset+4)[0]!=0x8664:raise Failure('trusted_node_not_x64')
+    node_version=measured_version(node)
     root.mkdir(exist_ok=False)
     p=layout(namespaced(root),namespaced(home))
     for directory in (Path(p['manager']).parent,Path(p['globalRoot'])):directory.mkdir(parents=True)
@@ -117,6 +120,7 @@ def prepare(root,node,home,mode):
     write_new(Path(p['manager']),manager_program(p,mode).encode())
     write_new(Path(p['managerBin'])/'npm.cmd',shim('node_modules/npm/bin/npm-cli.js'))
     manifest={'schemaVersion':1,**p,'mode':mode,'path':p['managerBin']+';'+p['prefix'],
+              'installerNodeVersion':node_version,'installerNodeMinimum':'18.0.0',
               'display':{'managerPath':p['manager'],'nodePath':p['node'],'prefix':p['prefix'],'globalRoot':p['globalRoot'],'packageRoot':p['package'],'launcherDirectory':p['prefix']},
               'nodeSha256':hashlib.sha256(data).hexdigest(),'managerSha256':hashlib.sha256(Path(p['manager']).read_bytes()).hexdigest()}
     destination=root/'fixture.json';write_new(destination,json.dumps(manifest,indent=2).encode());return destination
