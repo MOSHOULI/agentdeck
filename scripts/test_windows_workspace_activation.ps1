@@ -2,7 +2,7 @@
 # No GUI input, app launch, filesystem mutation, or agent execution.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 . (Join-Path $PSScriptRoot 'windows-install-ui-acceptance.ps1')
 function Wait-QwenControl($name, $type) { return $script:tab }
 function Get-InstallWorkspaceInvoke($tab) {
@@ -48,7 +48,11 @@ $cases = @(
     @{ route = 'keyboard'; fault = 'send'; invokes = 0; keys = 1; preparations = 1; waits = 0 },
     @{ route = 'keyboard'; fault = 'settle'; invokes = 0; keys = 1; preparations = 1; waits = 1 }
 )
+$caseIndex = 0
 foreach ($script:case in $cases) {
+    $caseIndex++
+    $caseLabel = "case=$caseIndex route=$($script:case.route) fault=$($script:case.fault)"
+    Write-Output "Workspace activation model: $caseLabel"
     $script:invokes = 0; $script:keys = 0; $script:preparations = 0; $script:waits = 0
     $script:foregroundReads = 0; $script:captures = 0
     $script:records = [Collections.Generic.List[object]]::new()
@@ -60,15 +64,19 @@ foreach ($script:case in $cases) {
     }
     $failure = $null
     try { Activate-InstallWorkspace 'Qwen 配置检查' } catch { $failure = $_ }
-    if (($null -ne $failure) -ne ($script:case.fault -ne '')) { throw 'Unexpected activation result' }
-    foreach ($key in @('invokes','keys','preparations','waits')) {
-        if ((Get-Variable -Scope Script -Name $key -ValueOnly) -ne $script:case[$key]) { throw "Activation route count mismatch: $key" }
+    if (($null -ne $failure) -ne ($script:case.fault -ne '')) {
+        # Only authored model data and exceptions: no real UI/user content.
+        $original = if ($null -eq $failure) { 'No exception was raised' } else { $failure.Exception.ToString() }
+        throw "Unexpected activation result ($caseLabel): $original"
     }
-    if ($script:captures -ne [int]($script:case.fault -ne '')) { throw 'Failure evidence count mismatch' }
-    if ($script:case.fault -eq 'invoke' -and -not $failure.Exception.Message.Contains('modeled-invoke-failure')) { throw 'Evidence failure masked original activation failure' }
+    foreach ($key in @('invokes','keys','preparations','waits')) {
+        if ((Get-Variable -Scope Script -Name $key -ValueOnly) -ne $script:case[$key]) { throw "Activation route count mismatch ($caseLabel): $key" }
+    }
+    if ($script:captures -ne [int]($script:case.fault -ne '')) { throw "Failure evidence count mismatch ($caseLabel)" }
+    if ($script:case.fault -eq 'invoke' -and -not $failure.Exception.Message.Contains('modeled-invoke-failure')) { throw "Evidence failure masked original activation failure ($caseLabel): $($failure.Exception.ToString())" }
     if ($script:case.fault -eq '' -and $script:case.route -eq 'keyboard') {
         $activation = @($script:records | Where-Object { $_.stage -eq 'installed-workspace-activation' })
-        if ($activation.Count -ne 1 -or -not $activation[0].details.focusConfirmed -or -not $activation[0].details.foregroundConfirmed) { throw 'Keyboard evidence missing confirmed targets' }
+        if ($activation.Count -ne 1 -or -not $activation[0].details.focusConfirmed -or -not $activation[0].details.foregroundConfirmed) { throw "Keyboard evidence missing confirmed targets ($caseLabel)" }
     }
 }
 Write-Output 'Workspace activation route regressions passed (10 modeled cases; no native GUI input).'

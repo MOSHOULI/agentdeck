@@ -158,6 +158,10 @@ class Tests(unittest.TestCase):
         self.assertIn('(Get-InstallForegroundWindow) -ne $handle -or -not $tab.Current.HasKeyboardFocus', guard)
         self.assertLess(guard.index('throw '), guard.index('    Send-InstallWorkspaceEnterKey'))
         modeled = (ROOT / 'scripts/test_windows_workspace_activation.ps1').read_text(encoding='utf-8')
+        self.assertIn('Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes', modeled)
+        self.assertIn('case=$caseIndex route=$($script:case.route) fault=$($script:case.fault)', modeled)
+        self.assertIn('$failure.Exception.ToString()', modeled)
+        self.assertIn('Unexpected activation result ($caseLabel): $original', modeled)
         for fault in ('invoke', 'prepare', 'foreground', 'focus', 'zero-handle', 'send', 'settle'):
             self.assertIn("fault = '" + fault + "'", modeled)
         self.assertIn("Activate-InstallWorkspace 'Qwen 配置检查'", modeled)
