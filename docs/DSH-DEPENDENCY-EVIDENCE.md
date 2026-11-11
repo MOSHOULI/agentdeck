@@ -157,3 +157,10 @@ this report. See [native-chain evidence and limits](DSH-NATIVE-CHAIN.md).
 
 Schema 2 保留原有三份样本，新增 SDK 元数据和两条明确 dependencies 路径；
 不把元数据可达性称为已安装或完整闭包。报告本身不读取、核验本地依赖归档。
+
+## Offline platform planning boundary
+
+The developer-only [exact-metadata platform planner](DSH-PLATFORM-PLAN.md) tests
+explicit os/cpu/libc comparisons and mandatory/optional/peer path boundaries on
+small offline graphs. It is not a resolver or lock verifier and does not change
+this product report or its readiness claims.
