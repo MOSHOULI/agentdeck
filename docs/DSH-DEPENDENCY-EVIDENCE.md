@@ -143,3 +143,17 @@ python scripts/run-isolated.py cargo test --locked -p aisync-cli --test dsh_depe
 五份固定摘要 JSON（含既有根包核查记录）均使用 Git `-text` 属性保留原始字节，
 不接受 Windows 自动 CRLF 转换后的替代摘要，也不在运行时归一化。离线回归以真实
 Git checkout 验证 autocrlf 开启时摘要不变，并用无保护文件和移除属性的反例确认测试有效。
+
+## Schema 2: bounded production paths / 有界生产依赖路径
+
+Schema 2 retains the original three illustrative metadata records and adds the
+exact SDK-minimal metadata and two production-declaration paths through it to
+subprocess-local and node-pty / koffi. The earlier statement that the three
+samples alone do not prove root reachability describes the original evidence;
+the newly reviewed SDK edge now supplies that missing path. This does not resolve
+other branches, ranges, peers or optional platform choices. Static verification
+of a selected subprocess archive is a separate command, not implied by generating
+this report. See [native-chain evidence and limits](DSH-NATIVE-CHAIN.md).
+
+Schema 2 保留原有三份样本，新增 SDK 元数据和两条明确 dependencies 路径；
+不把元数据可达性称为已安装或完整闭包。报告本身不读取、核验本地依赖归档。

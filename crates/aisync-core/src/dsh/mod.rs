@@ -151,3 +151,5 @@ impl InspectionIssue {
 
 #[cfg(test)]
 mod tests;
+
+pub mod subprocess_archive;

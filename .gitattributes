@@ -9,3 +9,7 @@ docs/upstream/dsh/dependency-evidence/*.json -text
 
 # Exact npm-generated launcher fixture bytes; never execute these fixtures.
 scripts/fixtures/codex-windows-shims/*.txt -text
+
+# Static DSH lifecycle evidence is data, never executed.
+docs/upstream/dsh/dependency-evidence/*.mjs -text
+docs/upstream/dsh/subprocess-archive-layout-0.2.2-rc.1.json -text
