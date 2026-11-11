@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Offline contract tests. Never invokes sudo, apt, package downloads or installs."""
 from pathlib import Path
-import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -33,19 +32,20 @@ class UbuntuDependenciesTests(unittest.TestCase):
             with self.subTest(machine=machine, arch=arch), self.assertRaises(ValueError):
                 helper.check_context(ENV, RELEASE, machine, arch)
 
-    def test_sources_use_only_official_https_and_explicit_archive_keyring(self):
-        uris = [line for line in helper.SOURCES.splitlines() if line.startswith('URIs:')]
-        self.assertEqual(uris, ['URIs: https://archive.ubuntu.com/ubuntu',
-                                'URIs: https://security.ubuntu.com/ubuntu'])
-        self.assertEqual(helper.SOURCES.count('Signed-By: ' + helper.KEYRING), 2)
-        self.assertEqual(helper.SOURCES.count('Architectures: amd64'), 2)
-        self.assertIn('Suites: noble noble-updates noble-backports', helper.SOURCES)
-        self.assertIn('Suites: noble-security', helper.SOURCES)
-        self.assertNotIn('Trusted:', helper.SOURCES)
+    def test_commands_preserve_runner_sources_and_trust(self):
+        for group in helper.PACKAGES:
+            for command in helper.commands(group):
+                options = [command[i + 1] for i, arg in enumerate(command) if arg == '-o']
+                self.assertEqual(options, [
+                    'APT::Update::Error-Mode=any', 'Acquire::Retries=2',
+                    'Acquire::http::Timeout=20', 'Acquire::https::Timeout=20',
+                ])
+                self.assertFalse(any('Dir::' in option or 'Trusted' in option
+                                     or 'Proxy' in option for option in options))
 
     def test_commands_are_fixed_and_preserve_authentication(self):
         for group, packages in helper.PACKAGES.items():
-            commands = helper.commands(Path('/tmp/authored fixture'), group)
+            commands = helper.commands(group)
             self.assertEqual(len(commands), 2)
             for command, seconds in zip(commands, ['180s', '600s']):
                 self.assertEqual(command[:7], ['/usr/bin/sudo', '--non-interactive',
@@ -55,10 +55,6 @@ class UbuntuDependenciesTests(unittest.TestCase):
                 self.assertIn('Acquire::https::Timeout=20', command)
                 self.assertIn('Acquire::http::Timeout=20', command)
                 self.assertIn('APT::Update::Error-Mode=any', command)
-                self.assertIn('Dir::Etc::sourceparts=-', command)
-                self.assertIn('Dir::State::lists=/tmp/authored fixture/lists', command)
-                self.assertIn('Dir::Cache::pkgcache=', command)
-                self.assertIn('Dir::Cache::srcpkgcache=', command)
                 self.assertFalse(any(word in ' '.join(command).lower() for word in
                     ['allow-unauthenticated', 'allowinsecure', 'verify-peer=false',
                      'verify-host=false', 'fix-missing', 'force-yes']))
@@ -69,7 +65,7 @@ class UbuntuDependenciesTests(unittest.TestCase):
     def test_unknown_group_and_option_injection_rejected_before_commands(self):
         for group in ('', '--allow-unauthenticated', 'glib; touch /tmp/x', 'curl'):
             with self.subTest(group=group), self.assertRaises(KeyError):
-                helper.commands(Path('/tmp/test'), group)
+                helper.commands(group)
             with patch.object(helper.subprocess, 'check_output') as execute:
                 with self.assertRaises(ValueError):
                     helper.main([group])
@@ -79,17 +75,11 @@ class UbuntuDependenciesTests(unittest.TestCase):
 
     def invoke_install(self, returncodes):
         calls = []
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            def run(command, **kwargs):
-                calls.append(command)
-                self.assertEqual(kwargs, {'check': False})
-                return SimpleNamespace(returncode=returncodes[len(calls)-1])
-            result = helper.install(root, 'glib', run)
-            self.assertEqual((root / 'ubuntu.sources').read_text(), helper.SOURCES)
-            self.assertEqual(list((root / 'lists').iterdir()), [])
-            self.assertEqual(root.stat().st_mode & 0o777, 0o755)
-            self.assertEqual((root / 'ubuntu.sources').stat().st_mode & 0o777, 0o644)
+        def run(command, **kwargs):
+            calls.append(command)
+            self.assertEqual(kwargs, {'check': False})
+            return SimpleNamespace(returncode=returncodes[len(calls)-1])
+        result = helper.install('glib', run)
         return result, calls
 
     def test_success_requires_update_then_install(self):
@@ -113,17 +103,15 @@ class UbuntuDependenciesTests(unittest.TestCase):
                 self.assertEqual(result, code)
                 self.assertEqual(len(calls), 2)
 
-    def test_missing_keyring_fails_before_temp_directory_or_install(self):
+    def test_missing_keyring_fails_before_install(self):
         with patch.dict(helper.os.environ, ENV, clear=True), \
              patch.object(helper.platform, 'freedesktop_os_release', return_value=RELEASE), \
              patch.object(helper.platform, 'machine', return_value='x86_64'), \
              patch.object(helper.subprocess, 'check_output', return_value='amd64\n'), \
              patch.object(Path, 'is_file', return_value=False), \
-             patch.object(helper.tempfile, 'mkdtemp') as temporary, \
              patch.object(helper, 'install') as install:
             with self.assertRaises(ValueError):
                 helper.main(['glib'])
-            temporary.assert_not_called()
             install.assert_not_called()
 
     def test_workflow_keeps_fixed_groups_and_all_verification_gates(self):

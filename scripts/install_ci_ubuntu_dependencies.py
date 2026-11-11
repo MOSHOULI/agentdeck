@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install fixed hosted-CI dependencies using signed, canonical Ubuntu sources.
+"""Install fixed hosted-CI dependencies using the hosted runner's configured sources.
 
 Never edits system sources. Network retries are apt's bounded acquisition retries;
 an interrupted/failed package transaction is never repeated by this helper.
@@ -9,7 +9,6 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
-import tempfile
 
 PACKAGES = {
     'tracer': ('strace',),
@@ -19,20 +18,6 @@ PACKAGES = {
                 'xvfb', 'xauth', 'dbus-x11', 'strace'),
 }
 KEYRING = '/usr/share/keyrings/ubuntu-archive-keyring.gpg'
-SOURCES = f'''Types: deb
-URIs: https://archive.ubuntu.com/ubuntu
-Suites: noble noble-updates noble-backports
-Components: main restricted universe multiverse
-Architectures: amd64
-Signed-By: {KEYRING}
-
-Types: deb
-URIs: https://security.ubuntu.com/ubuntu
-Suites: noble-security
-Components: main restricted universe multiverse
-Architectures: amd64
-Signed-By: {KEYRING}
-'''
 
 
 def check_context(env, release, machine, architecture):
@@ -46,13 +31,9 @@ def check_context(env, release, machine, architecture):
         raise ValueError('APT_CONFIG override is not supported')
 
 
-def commands(root, group):
+def commands(group):
     packages = PACKAGES[group]  # No user-controlled package/option arguments.
     options = [
-        '-o', f'Dir::Etc::sourcelist={root / "ubuntu.sources"}',
-        '-o', 'Dir::Etc::sourceparts=-',
-        '-o', f'Dir::State::lists={root / "lists"}',
-        '-o', 'Dir::Cache::pkgcache=', '-o', 'Dir::Cache::srcpkgcache=',
         '-o', 'APT::Update::Error-Mode=any',
         '-o', 'Acquire::Retries=2',
         '-o', 'Acquire::http::Timeout=20', '-o', 'Acquire::https::Timeout=20',
@@ -67,12 +48,8 @@ def commands(root, group):
             command(600, ['install', '--no-install-recommends', '-y', *packages])]
 
 
-def install(root, group, run=subprocess.run):
-    root.chmod(0o755)  # apt's _apt downloader needs to traverse this directory.
-    (root / 'lists').mkdir(mode=0o755)
-    (root / 'ubuntu.sources').write_text(SOURCES, encoding='utf-8')
-    (root / 'ubuntu.sources').chmod(0o644)
-    for command in commands(root, group):
+def install(group, run=subprocess.run):
+    for command in commands(group):
         result = run(command, check=False)
         if result.returncode != 0:
             # In particular, never proceed after partial update / stale-index
@@ -89,11 +66,8 @@ def main(argv=None):
                   subprocess.check_output(['/usr/bin/dpkg', '--print-architecture'], text=True).strip())
     if not Path(KEYRING).is_file():
         raise ValueError('Ubuntu archive signing keyring is missing')
-    # apt owns some generated list files. Retain this unique directory for the
-    # ephemeral runner's lifetime instead of adding a privileged cleanup command.
-    root = Path(tempfile.mkdtemp(prefix='agentdeck-ci-ubuntu-'))
-    print(f'Installing {argv[0]} from signed Ubuntu noble sources; indexes: {root}', flush=True)
-    return install(root, argv[0])
+    print(f'Installing {argv[0]} using the hosted Ubuntu runner sources and trust configuration', flush=True)
+    return install(argv[0])
 
 
 if __name__ == '__main__':
