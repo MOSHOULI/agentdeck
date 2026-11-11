@@ -16,6 +16,9 @@ pub mod codex_animations_fs;
 pub mod codex_animations_observation;
 mod codex_preview;
 mod destination;
+mod metadata;
+#[cfg(all(test, target_os = "linux"))]
+mod metadata_tests;
 pub use codex_preview::{
     CodexConfigurationPreview, CodexConfigurationTarget, preview_codex_configuration,
 };
@@ -158,6 +161,28 @@ fn backup_file_in(path: &Path, home: &Path) -> crate::Result<Option<PathBuf>> {
         .file_name()
         .ok_or_else(|| crate::Error::Other("目标路径无文件名".into()))?;
     let dest = backup_root.join(name);
+    #[cfg(target_os = "linux")]
+    {
+        let mut created = false;
+        let result = (|| -> crate::Result<()> {
+            let mut output = create_staging_file(&dest, &mut created)?;
+            destination::check(path)?;
+            let mut input = fs::File::open(path)?;
+            metadata::check_file(&input)?;
+            output.set_permissions(input.metadata()?.permissions())?;
+            metadata::check_file(&output)?;
+            std::io::copy(&mut input, &mut output)?;
+            metadata::check_file(&input)?;
+            metadata::check_file(&output)?;
+            destination::check(path)?;
+            Ok(())
+        })();
+        if result.is_err() && created {
+            let _ = fs::remove_file(&dest);
+        }
+        result?;
+    }
+    #[cfg(not(target_os = "linux"))]
     fs::copy(path, &dest)?;
     Ok(Some(dest))
 }
@@ -181,40 +206,64 @@ fn write_bytes(path: &Path, content: &[u8]) -> crate::Result<()> {
         fs::create_dir_all(parent)?;
     }
     let temporary = path.with_file_name(format!(".agentdeck-{}.tmp", uuid::Uuid::new_v4()));
+    let mut created = false;
     let result = (|| -> crate::Result<()> {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
+        let mut file = create_staging_file(&temporary, &mut created)?;
         if let Ok(metadata) = fs::metadata(path) {
             fs::set_permissions(&temporary, metadata.permissions())?;
         }
+        metadata::check_file(&file)?;
         file.write_all(content)?;
         file.sync_all()?;
+        metadata::check_file(&file)?;
         drop(file);
-        destination::check(path)?;
-        #[cfg(windows)]
-        {
-            use std::os::windows::ffi::OsStrExt;
-            use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MoveFileExW};
-            let src: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
-            let dst: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-            if unsafe { MoveFileExW(src.as_ptr(), dst.as_ptr(), MOVEFILE_REPLACE_EXISTING) } == 0 {
-                return Err(std::io::Error::last_os_error().into());
-            }
-            Ok(())
-        }
-        #[cfg(not(windows))]
-        {
-            fs::rename(&temporary, path)?;
-            Ok(())
-        }
+        replace_staged_file(path, &temporary)
     })();
-    if result.is_err() {
+    if result.is_err() && created {
         let _ = fs::remove_file(&temporary);
     }
     result?;
     Ok(())
+}
+
+// Check inherited metadata before chmod or content writes. The injectable creator
+// keeps the same production guard testable without requiring filesystem ACL support.
+fn checked_staging_file(
+    create: impl FnOnce() -> std::io::Result<fs::File>,
+) -> crate::Result<fs::File> {
+    let file = create()?;
+    metadata::check_file(&file)?;
+    Ok(file)
+}
+
+fn create_staging_file(path: &Path, created: &mut bool) -> crate::Result<fs::File> {
+    checked_staging_file(|| {
+        let file = OpenOptions::new().write(true).create_new(true).open(path)?;
+        *created = true;
+        Ok(file)
+    })
+}
+
+fn replace_staged_file(path: &Path, temporary: &Path) -> crate::Result<()> {
+    destination::check(path)?;
+    #[cfg(target_os = "linux")]
+    destination::check(temporary)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MoveFileExW};
+        let src: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
+        let dst: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        if unsafe { MoveFileExW(src.as_ptr(), dst.as_ptr(), MOVEFILE_REPLACE_EXISTING) } == 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        fs::rename(temporary, path)?;
+        Ok(())
+    }
 }
 
 /// 去掉 JSONC 的 // 与 /* */ 注释（字符串内不处理）
