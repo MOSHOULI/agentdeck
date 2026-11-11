@@ -355,6 +355,9 @@ jobs:
       - name: Real Windows failed-install residual snapshot regressions
         shell: pwsh
         run: ./scripts/test_windows_failed_install_state.ps1
+      - name: Execute Windows workspace activation route regressions
+        shell: pwsh
+        run: ./scripts/test_windows_workspace_activation.ps1
       - name: Execute Windows evidence canary guard regressions
         shell: pwsh
         run: ./scripts/test_windows_acceptance_canaries.ps1
