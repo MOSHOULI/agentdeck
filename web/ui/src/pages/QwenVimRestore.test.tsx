@@ -23,6 +23,29 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe('confirmed Qwen restoration snapshot', () => {
+  it.each([
+    { current: true, initial: false, text: '当前值：启用；首次原值：关闭。' },
+    { current: false, initial: true, text: '当前值：关闭；首次原值：启用。' },
+    { current: true, initial: null, text: '当前值：启用；首次原值：未声明。' },
+    { current: false, initial: null, text: '当前值：关闭；首次原值：未声明。' },
+    { current: null, initial: null, text: '当前值：未声明；首次原值：未声明。' },
+    { current: true, initial: true, text: '当前值：启用；首次原值：启用。' },
+    { current: false, initial: false, text: '当前值：关闭；首次原值：关闭。' },
+  ])('renders one accessible summary text node: $text', async ({ current, initial, text }) => {
+    const cleanupOnly = current === initial;
+    vi.mocked(bridge.previewQwenVimRestore).mockResolvedValue({ ...preview, current, initial,
+      state: cleanupOnly ? 'cleanup_receipt' : 'restore_field', changesSettings: !cleanupOnly });
+    render(<QwenSettings />); fill(); start(); const dialog = await ready();
+    const summary = screen.getByText(text, { exact: true });
+    expect(dialog).toContainElement(summary);
+    // Mixed JSX text fragments become separate Windows UIA text names. Keep
+    // this concrete confirmation summary available as one exact text child.
+    expect(summary.childNodes).toHaveLength(1);
+    expect(summary.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+    expect(summary.firstChild?.textContent).toBe(text);
+    expect(bridge.restoreQwenVim).not.toHaveBeenCalled();
+  });
+
   it.each([preview, { ...preview, state: 'cleanup_receipt' as const, current: false, changesSettings: false }])('shows concrete $state then submits captured token only once', async report => {
     vi.mocked(bridge.previewQwenVimRestore).mockResolvedValue(report);
     const work = defer<boolean>(); vi.mocked(bridge.restoreQwenVim).mockReturnValue(work.promise);

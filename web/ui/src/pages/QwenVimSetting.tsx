@@ -111,7 +111,7 @@ export function QwenVimSetting({ settings, manifest, inspecting, onActivity }: P
       <button type="button" className="button" onClick={invalidate}>取消 Vim 变更</button>
     </div>}
     {restoreConfirm && <div role="dialog" aria-label="确认撤销 Vim 设置">
-      <p>当前值：{restoreConfirm.current === null ? '未声明' : restoreConfirm.current ? '启用' : '关闭'}；首次原值：{restoreConfirm.initial === null ? '未声明' : restoreConfirm.initial ? '启用' : '关闭'}。</p>
+      <p>{`当前值：${restoreConfirm.current === null ? '未声明' : restoreConfirm.current ? '启用' : '关闭'}；首次原值：${restoreConfirm.initial === null ? '未声明' : restoreConfirm.initial ? '启用' : '关闭'}。`}</p>
       <p>{restoreConfirm.changesSettings ? '动作：恢复首次原值并清理所有权记录。' : '动作：仅清理所有权记录，不改变配置字段。'}</p>
       <p>确认仅绑定此次读取的所选路径和文件字节，不绑定文件系统身份；字节完全相同时令牌可复用。字节变化后需重新预览，不提供原子快照或跨进程保护。</p>
       <p>仅根据所选文件旁的 AgentDeck 所有权记录撤销受管字段；恢复首次管理前的字段状态，不是本次更新前的值或完整配置。若字段已被外部更改，将拒绝覆盖。</p>

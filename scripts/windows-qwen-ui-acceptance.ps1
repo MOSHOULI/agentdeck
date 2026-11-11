@@ -142,9 +142,19 @@ function Check-QwenManifestBoundary([string]$fixture, [string]$manifest) {
 function Preview-QwenRestore([string]$fixture) {
     $before = Get-QwenFixtureSnapshot $fixture
     Click-Qwen '撤销受管 Vim 设置'
-    Wait-QwenText '当前值：启用；首次原值：关闭。'
-    Wait-QwenText '动作：恢复首次原值并清理所有权记录。'
-    $null = Wait-QwenControl '确认撤销 Vim 设置' ([Windows.Automation.ControlType]::Button)
+    try {
+        Wait-QwenText '当前值：启用；首次原值：关闭。'
+        Wait-QwenText '动作：恢复首次原值并清理所有权记录。'
+        $null = Wait-QwenControl '确认撤销 Vim 设置' ([Windows.Automation.ControlType]::Button)
+    } catch {
+        $previewFailure = $_
+        # Read-only evidence from the failed state, before shutdown. The existing
+        # canary guard must pass before any accessibility names are persisted.
+        # Never replay the trigger or weaken the exact intent assertion.
+        try { Save-QwenEvidence 'qwen-restore-preview-failure' }
+        catch { Record 'qwen-restore-preview-evidence-unavailable' @{ captured = $false } }
+        throw $previewFailure
+    }
     if ((Get-QwenFixtureSnapshot $fixture) -cne $before) { throw 'Restore preview changed fixture files' }
     Save-QwenEvidence 'qwen-restore-preview'
 }

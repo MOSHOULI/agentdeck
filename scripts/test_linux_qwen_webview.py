@@ -346,6 +346,12 @@ class Tests(unittest.TestCase):
         preview = source.split('function Preview-QwenRestore', 1)[1].split('function Check-QwenCurrentLifecycle', 1)[0]
         for value in (subject.RESTORE_INTENT, subject.RESTORE_ACTION, 'Get-QwenFixtureSnapshot $fixture'):
             self.assertIn(value, preview)
+        self.assertEqual(preview.count("Click-Qwen '撤销受管 Vim 设置'"), 1)
+        self.assertIn("Save-QwenEvidence 'qwen-restore-preview-failure'", preview)
+        self.assertIn('throw $previewFailure', preview)
+        self.assertIn("Record 'qwen-restore-preview-evidence-unavailable' @{ captured = $false }", preview)
+        evidence = source.split('function Save-QwenEvidence', 1)[1].split('function Open-QwenFixture', 1)[0]
+        self.assertLess(evidence.index('Assert-AcceptanceCanariesAbsent $nodes'), evidence.index('Set-Content'))
         lifecycle = source.split('# Authored synthetic external edit AFTER', 1)[1]
         self.assertLess(lifecycle.index("$external.general.other = 'external-edit-preserved'"),
                         lifecycle.index("Click-Qwen '确认撤销 Vim 设置'"))
