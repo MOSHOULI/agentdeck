@@ -81,6 +81,78 @@ class Tests(unittest.TestCase):
             Path(m['hardlinkAliases'][1]).write_bytes(b'changed alias')
             self.assertNotEqual(after, fixture.snapshot(m['configurationTargets']))
 
+    def test_success_dacl_stage_is_additive_and_checks_real_content_backup_and_acls(self):
+        script = (ROOT / 'scripts/windows-config-dacl-ui-acceptance.ps1').read_text(encoding='utf-8')
+        self.assertIn("'windows-config-dacl-ui-acceptance.ps1'", LIFECYCLE)
+        self.assertLess(SCRIPT.index('$result.hardlinks ='), SCRIPT.index('$result.successfulDacl ='))
+        self.assertEqual(script.count('Confirm-ConfigurationOnce $agent.name'), 1)
+        self.assertEqual(script.count('Click-Qwen ("应用默认配置 " + $agent.name)'), 1)
+        for required in ('AccessControlSections]::Access', 'AreAccessRulesProtected', '$otherParentGrants.Count -eq 0',
+                         '$rules.Count -ne 1', '$rules[0].IdentityReference -ne $owner',
+                         '$beforeOwner', 'Get-ConfigurationDacl $verified.backup',
+                         "'verify-success'", 'Get-InactiveConfigurationSnapshot', 'Wait-ConfigurationSuccess',
+                         'rollbackExercised = $false', 'officialAgentExecuted = $false'):
+            self.assertIn(required, script)
+        self.assertIn('$beforeGroup = $beforeAcl.GetGroup([Security.Principal.SecurityIdentifier]).Value', script)
+        for state in ('afterAcl', 'closedAcl'):
+            for field, expected in (('AreAccessRulesProtected', '$beforeAcl.AreAccessRulesProtected'),
+                                    ('GetOwner([Security.Principal.SecurityIdentifier]).Value', '$beforeOwner'),
+                                    ('GetGroup([Security.Principal.SecurityIdentifier]).Value', '$beforeGroup')):
+                self.assertIn('$' + state + '.' + field + (' -ne ' if field == 'AreAccessRulesProtected' else ' -cne ') + expected, script)
+        close_checks = script.split('$closedAcl = Get-Acl', 1)[0]
+        self.assertGreater(close_checks.rfind('Stop-App'), close_checks.rfind('Save-QwenEvidence'))
+        self.assertIn('primaryGroupPreserved = $true', script)
+        self.assertIn("file = '.claude/CLAUDE.md'; protected = $true", script)
+        self.assertIn("file = '.gemini/GEMINI.md'; protected = $false", script)
+        for unsafe in ('executeScript', 'invoke_handler', '--remote-debugging', '--no-sandbox', 'Invoke-WebRequest'):
+            self.assertNotIn(unsafe, script)
+
+    def test_success_fixture_requires_managed_content_and_original_backup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home, root = Path(tmp) / 'home', Path(tmp) / 'root'
+            root.mkdir()
+            targets = []
+            for _, _, _, instruction in fixture.AGENTS:
+                target = home / instruction
+                target.parent.mkdir(parents=True)
+                target.write_bytes(b'initial')
+                settings = target.parent / 'settings.json'
+                settings.write_bytes(b'{}')
+                targets.extend((str(target), str(settings)))
+            m = fixture.prepare_hardlinks(dict(home=str(home), root=str(root), configurationTargets=targets))
+            alias_before = fixture.snapshot(m['hardlinkAliases'])
+            m = fixture.prepare_dacl(m)
+            alias_after = fixture.snapshot(m['hardlinkAliases'])
+            self.assertEqual([a['hash'] for a in alias_before], [a['hash'] for a in alias_after])
+            self.assertTrue(all(a['links'] == 1 for a in alias_after))
+            self.assertEqual(len(m['inactiveTargets']), 4)
+            for binary, _, _, instruction in fixture.AGENTS:
+                target = home / instruction
+                self.assertEqual(target.read_bytes(), fixture.DACL_ORIGINAL)
+                template = home / '.agentdeck/profiles/default/personalization' / binary / 'AGENTS.md'
+                template.parent.mkdir(parents=True)
+                template.write_bytes(b'Authored template.\n')
+                expected = fixture.DACL_ORIGINAL + b'\n\n<!-- agentdeck:personalization:start -->\nAuthored template.\n<!-- agentdeck:personalization:end -->\n'
+                target.write_bytes(expected)
+                backup = home / '.agentdeck/backups/inject-1' / target.name
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                backup.write_bytes(fixture.DACL_ORIGINAL)
+                with patch.object(fixture, 'verify', return_value={'claude': 1, 'gemini': 1}):
+                    self.assertEqual(fixture.verify_success(m, binary)['backup'], str(backup))
+                    target.write_bytes(b'false success')
+                    with self.assertRaisesRegex(ValueError, 'incorrect_successful_configuration'):
+                        fixture.verify_success(m, binary)
+                    target.write_bytes(expected)
+                    backup.write_bytes(b'wrong old bytes')
+                    with self.assertRaisesRegex(ValueError, 'incorrect_prewrite_backup'):
+                        fixture.verify_success(m, binary)
+                    backup.write_bytes(fixture.DACL_ORIGINAL)
+                    duplicate = home / '.agentdeck/backups/inject-2' / target.name
+                    duplicate.parent.mkdir(parents=True, exist_ok=True)
+                    duplicate.write_bytes(fixture.DACL_ORIGINAL)
+                    with self.assertRaisesRegex(ValueError, 'incorrect_prewrite_backup'):
+                        fixture.verify_success(m, binary)
+
     def test_snapshot_detects_identical_bytes_replacement_and_metadata_change(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'instructions'

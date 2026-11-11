@@ -13,8 +13,12 @@ fn wide(path: &Path) -> Vec<u16> {
 }
 
 fn restrict(path: &Path) {
+    set_dacl(path, "D:P(A;;FA;;;OW)");
+}
+
+fn set_dacl(path: &Path, sddl: &str) {
     // OWNER RIGHTS grants the current synthetic file owner full access only.
-    let sddl: Vec<u16> = "D:P(A;;FA;;;OW)".encode_utf16().chain(Some(0)).collect();
+    let sddl: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
     let mut descriptor = std::ptr::null_mut();
     assert_ne!(
         unsafe {
@@ -180,5 +184,167 @@ fn windows_configuration_transaction_rollback_preserves_protected_dacl() {
         before,
         "rollback lost captured DACL or protection"
     );
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn windows_configuration_inherited_dacl_survives_write_and_backup() {
+    let (home, target) = fixture("inherited");
+    let before = acl(&target);
+    assert!(!before.1, "fixture must retain ordinary inheritance");
+    let backup = backup_file_in(&target, &home).unwrap().unwrap();
+    assert_eq!(acl(&backup), before);
+    inject_in_home(Format::PlainText, &target, "updated", &home).unwrap();
+    assert_eq!(acl(&target), before);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn windows_configuration_staging_is_secured_while_still_empty() {
+    let (home, target) = fixture("empty-staging");
+    restrict(&target);
+    let security = windows_security::Security::read_path(&target).unwrap();
+    let staging = home.join("staging");
+    let mut created = false;
+    let mut output = create_staging_file(&staging, &mut created).unwrap();
+    assert!(created);
+    assert_eq!(output.metadata().unwrap().len(), 0);
+    security.apply_before_content(&output).unwrap();
+    assert_eq!(output.metadata().unwrap().len(), 0);
+    assert_eq!(acl(&staging), acl(&target));
+    output.write_all(b"only now write synthetic bytes").unwrap();
+    drop(output);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn windows_configuration_rollback_uses_completed_journal_entry() {
+    let (home, target) = fixture("journal");
+    restrict(&target);
+    let original = acl(&target);
+    let mut journal = Vec::new();
+    inject_journaled(
+        Format::PlainText,
+        &target,
+        "committed replacement",
+        Some(&home),
+        &mut journal,
+    )
+    .unwrap();
+    assert_eq!(journal.len(), 1);
+    assert_eq!(fs::read(&target).unwrap(), b"committed replacement");
+    let entry = journal.pop().unwrap();
+    rollback_security_checked(
+        &entry.path,
+        entry.before,
+        entry.security,
+        entry.committed_security,
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read(&target).unwrap(),
+        b"original synthetic instructions"
+    );
+    assert_eq!(acl(&target), original);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn windows_configuration_rollback_refuses_security_drift_for_restore_and_delete() {
+    for existed in [true, false] {
+        let (home, target) = fixture("drift");
+        if !existed {
+            fs::remove_file(&target).unwrap();
+        }
+        let mut journal = Vec::new();
+        inject_journaled(
+            Format::PlainText,
+            &target,
+            "committed replacement",
+            Some(&home),
+            &mut journal,
+        )
+        .unwrap();
+        assert_eq!(journal.len(), 1);
+        restrict(&target); // Changes ordinary inherited DACL to protected owner-only.
+        let changed = acl(&target);
+        let entry = journal.pop().unwrap();
+        assert!(
+            rollback_security_checked(
+                &entry.path,
+                entry.before,
+                entry.security,
+                entry.committed_security
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"committed replacement");
+        assert_eq!(acl(&target), changed);
+        fs::remove_dir_all(home).unwrap();
+    }
+}
+
+#[test]
+fn windows_configuration_null_dacl_refuses_before_backup_or_write() {
+    let (home, target) = fixture("null-dacl");
+    set_dacl(&target, "D:NO_ACCESS_CONTROL");
+    assert!(windows_security::Security::read_path(&target).is_err());
+    assert!(inject_in_home(Format::PlainText, &target, "must not write", &home).is_err());
+    assert_eq!(
+        fs::read(&target).unwrap(),
+        b"original synthetic instructions"
+    );
+    assert!(!home.join(".agentdeck/backups").exists());
+    restrict(&target);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn windows_configuration_security_query_error_is_not_empty_metadata() {
+    let (home, target) = fixture("query-error");
+    fs::remove_file(&target).unwrap();
+    assert!(windows_security::Security::read_path(&target).is_err());
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn windows_configuration_unsupported_staging_dacl_refuses_while_empty() {
+    let (home, target) = fixture("unsupported-staging");
+    let stage = home.join("empty-stage");
+    let output = windows_security::create(&stage).unwrap();
+    set_dacl(&stage, "D:NO_ACCESS_CONTROL");
+    let result = checked_staging_file(|| Ok(output));
+    assert!(result.is_err());
+    assert_eq!(fs::metadata(&stage).unwrap().len(), 0);
+    assert_eq!(
+        fs::read(&target).unwrap(),
+        b"original synthetic instructions"
+    );
+    restrict(&stage);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn windows_configuration_conditional_dacl_refuses_before_backup_or_write() {
+    let (home, target) = fixture("conditional-dacl");
+    // Owner retains full access, so refusal must be policy, not an access denial.
+    // Callback conditional ACE refers to a resource attribute outside our scope.
+    set_dacl(
+        &target,
+        "D:P(A;;FA;;;OW)(XA;;FR;;;WD;(@Resource.Department == \"Engineering\"))",
+    );
+    let before = acl(&target);
+    let error = inject_in_home(Format::PlainText, &target, "must not write", &home).unwrap_err();
+    assert!(
+        error.to_string().contains("ordinary allow/deny subset"),
+        "{error}"
+    );
+    assert_eq!(
+        fs::read(&target).unwrap(),
+        b"original synthetic instructions"
+    );
+    assert_eq!(acl(&target), before);
+    assert!(!home.join(".agentdeck/backups").exists());
+    restrict(&target);
     fs::remove_dir_all(home).unwrap();
 }

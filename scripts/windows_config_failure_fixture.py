@@ -81,6 +81,42 @@ def prepare_hardlinks(m):
     return m
 
 
+DACL_ORIGINAL = b'# Valid private authored instructions\r\nPreserve this text.\r\n'
+
+
+def prepare_dacl(m):
+    """Replace only verified fixture hardlinks after their refusal evidence was captured."""
+    aliases = m['hardlinkAliases']
+    if len(aliases) != len(AGENTS):
+        raise ValueError('missing_aliases')
+    for (_, _, _, instruction), alias in zip(AGENTS, aliases):
+        target = Path(m['home']) / instruction
+        snapshot([target, alias])
+        a, b = target.lstat(), Path(alias).lstat()
+        if a.st_nlink != 2 or (a.st_dev, a.st_ino) != (b.st_dev, b.st_ino):
+            raise ValueError('unexpected_fixture_identity')
+        target.unlink()
+        write_new(target, DACL_ORIGINAL)
+    m['inactiveTargets'] = [str(Path(m['home']) / Path(row[3]).parent / 'settings.json') for row in AGENTS] + aliases
+    return m
+
+
+def verify_success(m, agent):
+    row = next(row for row in AGENTS if row[0] == agent)
+    target = Path(m['home']) / row[3]
+    template = Path(m['home']) / '.agentdeck/profiles/default/personalization' / agent / 'AGENTS.md'
+    expected = (DACL_ORIGINAL.decode('utf-8') + '\n\n<!-- agentdeck:personalization:start -->\n' +
+                safe_file(template, 65536).decode('utf-8').rstrip() + '\n<!-- agentdeck:personalization:end -->\n').encode('utf-8')
+    if safe_file(target, 65536) != expected or target.stat().st_nlink != 1:
+        raise ValueError('incorrect_successful_configuration')
+    backups = list((Path(m['home']) / '.agentdeck/backups').glob('inject-*/' + target.name))
+    if len(backups) != 1 or safe_file(backups[0], 65536) != DACL_ORIGINAL or backups[0].stat().st_nlink != 1:
+        raise ValueError('incorrect_prewrite_backup')
+    # The caller uses this private path to inspect the actual backup DACL. It is
+    # never included in the public acceptance artifact.
+    return dict(backup=str(backups[0]), versionOnlyProbes=verify(m))
+
+
 def snapshot(paths):
     result = []
     for value in paths:
@@ -115,11 +151,12 @@ def verify(m):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('action', choices=('prepare', 'prepare-hardlinks', 'snapshot', 'verify'))
+    p.add_argument('action', choices=('prepare', 'prepare-hardlinks', 'snapshot', 'verify', 'prepare-dacl', 'snapshot-inactive', 'verify-success'))
     p.add_argument('--root', type=Path)
     p.add_argument('--node', type=Path)
     p.add_argument('--home', type=Path)
     p.add_argument('--manifest', type=Path)
+    p.add_argument('--agent', choices=tuple(row[0] for row in AGENTS))
     args = p.parse_args()
     if os.name != 'nt':
         raise ValueError('requires_windows')
@@ -127,10 +164,14 @@ def main():
         print(setup(args.root, args.node, args.home))
     else:
         m = json.loads(safe_file(args.manifest, 65536))
-        if args.action == 'prepare-hardlinks':
-            m = prepare_hardlinks(m)
+        if args.action in ('prepare-hardlinks', 'prepare-dacl'):
+            m = prepare_hardlinks(m) if args.action == 'prepare-hardlinks' else prepare_dacl(m)
             args.manifest.write_text(json.dumps(m), encoding='utf-8')
             print(json.dumps({'prepared': True}))
+        elif args.action == 'snapshot-inactive':
+            print(json.dumps(snapshot(m['inactiveTargets'])))
+        elif args.action == 'verify-success':
+            print(json.dumps(verify_success(m, args.agent)))
         else:
             print(json.dumps(snapshot(m['configurationTargets']) if args.action == 'snapshot' else verify(m)))
 
