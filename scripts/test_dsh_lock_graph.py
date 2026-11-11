@@ -6,7 +6,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from dsh_lock_graph import audit
+from dsh_lock_graph import _location, _path, audit
 from dsh_platform_plan import PlanError
 
 
@@ -66,6 +66,41 @@ class LockGraphTests(unittest.TestCase):
         self.assertEqual(codes(report), {'producer_npm_version_missing', 'target_missing',
                                         'exact_version_mismatch', 'spec_unverified'})
         self.assertFalse(report['dependencies_resolved'])
+
+    def test_scoped_node_modules_name_and_nested_children_remain_atomic(self):
+        root = manifest('root', dependencies={'@scope/node_modules': '1.0.0'})
+        first = manifest('@scope/node_modules', dependencies={'@other/node_modules': '1.0.0'})
+        second = manifest('@other/node_modules', dependencies={'child': '1.0.0'})
+        child = manifest('child', dependencies={'@scope/node_modules': '1.0.0'})
+        first_path = 'node_modules/@scope/node_modules'
+        second_path = first_path + '/node_modules/@other/node_modules'
+        child_path = second_path + '/node_modules/child'
+        report = audit(lock(root, **{first_path: first, second_path: second, child_path: child}),
+                       graph(root, first, second, child), npm_version='11.9.0')
+        self.assertEqual(report['findings'], [])
+        edges = {edge['from']: edge['to'] for edge in report['edges']}
+        self.assertEqual(edges, {'': first_path, first_path: second_path,
+                                 second_path: child_path, child_path: first_path})
+        self.assertTrue(all(node['candidate_reachable'] for node in report['nodes']))
+
+    def test_location_parser_consumes_canonical_package_components(self):
+        # Preserve the existing name validator's boundary, even for a repeated
+        # unscoped token; package-name publishability is not this partial gate.
+        for names in (('@scope/node_modules',), ('@scope/node_modules', 'child'),
+                      ('@node_modules/node_modules', '@scope/node_modules', 'node_modules'),
+                      ('node_modules', 'node_modules', 'child')):
+            with self.subTest(names=names):
+                self.assertEqual(_location(_path(names)), names)
+        for path in ('node_modules/@scope/node_modules/child',
+                     'node_modules/@scope/node_modules/node_modules',
+                     'node_modules/@scope/node_modules/node_modules/@other',
+                     'node_modules/@scope/node_modules//node_modules/child',
+                     'node_modules/@scope/node_modules/node_modules/@other/',
+                     'node_modules/@scope/node_modules/node_modules/../child',
+                     'node_modules/@scope/node_modules/node_modules/child/',
+                     'node_modules/@scope/node_modules/node_modules/@other/node_modules/child'):
+            with self.subTest(path=path), self.assertRaises(PlanError):
+                _location(path)
 
     def test_nearest_wrong_version_does_not_fall_back_to_compatible_ancestor(self):
         root = manifest('root', dependencies={'a': '1.0.0', 'dep': '1.0.0'})

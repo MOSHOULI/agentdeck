@@ -18,12 +18,25 @@ def _location(path):
     if path == '':
         return ()
     _string(path)
-    if not path.startswith('node_modules/'):
-        raise PlanError('Unsupported lock location; workspace/link paths are not accepted')
-    names = tuple(path[len('node_modules/'):].split('/node_modules/'))
-    for name in names:
+    parts = path.split('/')
+    names = []
+    index = 0
+    while index < len(parts):
+        if parts[index] != 'node_modules' or index + 1 == len(parts):
+            raise PlanError('Unsupported lock location; workspace/link paths are not accepted')
+        index += 1
+        name = parts[index]
+        index += 1
+        # Consume a scoped name atomically: its package component can itself be
+        # "node_modules", so splitting on that directory name is ambiguous.
+        if name.startswith('@'):
+            if index == len(parts):
+                raise PlanError('Incomplete scoped lock location')
+            name += '/' + parts[index]
+            index += 1
         _name(name)
-    return names
+        names.append(name)
+    return tuple(names)
 
 
 def _path(names):
