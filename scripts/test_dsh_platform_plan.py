@@ -131,6 +131,13 @@ class PlatformPlanTests(unittest.TestCase):
         self.assertEqual(codes(report), {"peer_context_unresolved"})
         self.assertTrue(report["edges"][0]["optional_peer"])
 
+    def test_unbound_peer_metadata_is_retained_without_inventing_an_edge(self):
+        report = plan(graph(package("root", peerDependenciesMeta={"supports-color": {"optional": True}})))
+        self.assertEqual(report["edges"], [])
+        self.assertEqual(nodes(report)["root@1.0.0"]["unbound_peer_metadata"], ["supports-color"])
+        self.assertTrue(nodes(report)["root@1.0.0"]["peer_metadata"]["supports-color"]["optional"])
+        self.assertFalse(report["dependencies_resolved"])
+
     def test_cycles_and_unreachable_nodes_are_bounded_and_retained(self):
         report = plan(graph(package("root", dependencies={"child": "1.0.0"}),
                             package("child", dependencies={"root": "1.0.0"}), package("orphan")))
@@ -152,7 +159,7 @@ class PlatformPlanTests(unittest.TestCase):
         invalid = [{"os": None}, {"os": [1]}, {"cpu": ["!!x64"]}, {"libc": {}},
                    {"dependencies": None}, {"dependencies": {"x": 1}},
                    {"dependencies": {"../x": "1.0.0"}},
-                   {"peerDependenciesMeta": {"x": {"optional": True}}},
+                   {"peerDependenciesMeta": {"x": []}},
                    {"peerDependencies": {"x": "1.0.0"},
                     "peerDependenciesMeta": {"x": {"optional": "true"}}}]
         for fields in invalid:
@@ -174,6 +181,9 @@ class PlatformPlanTests(unittest.TestCase):
             def items(self):
                 raise AssertionError("Oversized map was traversed")
 
+        hints = MustNotTraverse({"a": {"optional": True}, "b": {"optional": True}})
+        with patch("dsh_platform_plan.MAX_EDGES", 1), self.assertRaises(PlanError):
+            plan(graph(package("root", peerDependenciesMeta=hints)))
         oversized = MustNotTraverse({"a": "1.0.0", "b": "1.0.0"})
         with patch("dsh_platform_plan.MAX_EDGES", 1), self.assertRaises(PlanError):
             plan(graph(package("root", dependencies=oversized)))

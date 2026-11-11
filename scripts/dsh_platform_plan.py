@@ -108,6 +108,7 @@ def plan(document):
         raise PlanError("Package count out of bounds")
     nodes = {}
     edge_count = 0
+    peer_hint_count = 0
     for package in packages:
         if not isinstance(package, dict):
             raise PlanError("Expected package metadata object")
@@ -131,13 +132,18 @@ def plan(document):
         peer_meta = package.get("peerDependenciesMeta", {})
         if not isinstance(peer_meta, dict):
             raise PlanError("Malformed peer metadata")
+        if peer_hint_count + len(peer_meta) > MAX_EDGES:
+            raise PlanError("Peer metadata count out of bounds")
+        peer_hint_count += len(peer_meta)
         for peer, info in peer_meta.items():
-            if peer not in declarations["peerDependencies"] or not isinstance(info, dict):
-                raise PlanError("Peer metadata needs a declared peer")
+            _name(peer)
+            if not isinstance(info, dict):
+                raise PlanError("Malformed peer metadata entry")
             if "optional" in info and type(info["optional"]) is not bool:
                 raise PlanError("Peer optional flag must be boolean")
         nodes[identity] = {"platform": platform, "declarations": declarations,
-                           "peer_meta": peer_meta}
+                           "peer_meta": {name: {"optional": info.get("optional", False)}
+                                         for name, info in sorted(peer_meta.items())}}
     root = _string(document["root"])
     if root not in nodes:
         raise PlanError("Root metadata is missing")
@@ -211,7 +217,10 @@ def plan(document):
             findings.append({"code": "platform_unknown", "node": identity})
         result_nodes.append({"id": identity, "declared_reachable": identity in observed,
                              "target_path_kinds": modes, "platform": node["platform"],
-                             "declarations": node["declarations"]})
+                             "declarations": node["declarations"],
+                             "peer_metadata": node["peer_meta"],
+                             "unbound_peer_metadata": sorted(set(node["peer_meta"])
+                                 - set(node["declarations"]["peerDependencies"]))})
     return {
         "schema_version": 1, "mode": "offline_exact_metadata_platform_plan",
         "target": {key: target[key] for key in ("os", "cpu", "libc")}, "root": root, "nodes": result_nodes, "edges": edges,
