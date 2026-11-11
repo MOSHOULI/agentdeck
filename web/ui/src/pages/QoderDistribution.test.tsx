@@ -248,3 +248,20 @@ it('failed diagnosis gives no safety conclusion and binds only the requested dir
   expect(await screen.findByRole('alert')).toHaveTextContent('不能推断为空、安全或可删除');
   expect(screen.getByText('未获得诊断结论的目录：/missing/cache')).toBeInTheDocument();expect(screen.queryByRole('region',{name:'Qoder 缓存诊断结果'})).not.toBeInTheDocument();
 });
+it('private deployment blocks existing cache operations until actual settlement', async () => {
+  const p = defer<{ state: 'private_executable_deployed_not_activated' }>();
+  vi.spyOn(bridge, 'previewQoderDeployment').mockResolvedValue({ token: 'a'.repeat(64) });
+  const deploy = vi.spyOn(bridge, 'deployQoderPrivate').mockReturnValue(p.promise);
+  const write = vi.spyOn(bridge, 'writeQoderCache');
+  render(<QoderDistribution />);
+  fireEvent.change(screen.getByLabelText('Qoder 已解包缓存绝对目录'), { target: { value: '/cache' } });
+  fireEvent.change(screen.getByLabelText('Qoder 全新私有部署绝对目录'), { target: { value: '/new' } });
+  fireEvent.click(screen.getByRole('button', { name: '预览 Qoder 私有部署' }));
+  await screen.findByRole('dialog', { name: '确认 Qoder 私有可执行部署' });
+  fireEvent.click(screen.getByRole('button', { name: '确认部署 Qoder 可执行文件' }));
+  expect(screen.getByRole('button', { name: '选择暂存归档' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '预览 Qoder 缓存写入' })).toBeDisabled();
+  expect(write).not.toHaveBeenCalled(); expect(deploy).toHaveBeenCalledTimes(1);
+  await act(async () => p.resolve({ state: 'private_executable_deployed_not_activated' }));
+  expect(screen.getByRole('button', { name: '选择暂存归档' })).toBeEnabled();
+});

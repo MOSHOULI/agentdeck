@@ -127,6 +127,75 @@ pub async fn write_qoder_cache(
     .await
     .map_err(|_| "QODER_WRITE_UNCONFIRMED_PARTIAL_POSSIBLE".to_string())?
 }
+// Deployment shares the native cache-write mutex, and does not execute Qoder.
+fn validate_deployment_paths(source: &str, destination: &str) -> Result<(), String> {
+    if [source, destination].iter().any(|path| {
+        path.trim().is_empty()
+            || path.len() > 4096
+            || path.chars().any(char::is_control)
+            || !std::path::Path::new(path).is_absolute()
+    }) {
+        return Err("QODER_DEPLOY_INVALID_REQUEST".into());
+    }
+    if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        return Err("QODER_DEPLOY_UNSUPPORTED_HOST".into());
+    }
+    Ok(())
+}
+fn validate_deployment_confirmation(token: &str, confirmed: bool) -> Result<(), String> {
+    if !confirmed
+        || token.len() != 64
+        || !token
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err("QODER_DEPLOY_INVALID_REQUEST".into());
+    }
+    Ok(())
+}
+#[tauri::command]
+pub async fn preview_qoder_deployment(
+    source: String,
+    destination: String,
+) -> Result<aisync_core::qoder::deployment::DeploymentPreview, String> {
+    validate_deployment_paths(&source, &destination)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = CACHE_WRITE
+            .try_lock()
+            .map_err(|_| "QODER_DEPLOY_BUSY".to_string())?;
+        aisync_core::qoder::deployment::preview(
+            std::path::Path::new(&source),
+            std::path::Path::new(&destination),
+        )
+        .map_err(|_| "QODER_DEPLOY_PREVIEW_UNAVAILABLE".to_string())
+    })
+    .await
+    .map_err(|_| "QODER_DEPLOY_PREVIEW_UNAVAILABLE".to_string())?
+}
+#[tauri::command]
+pub async fn deploy_qoder_private(
+    source: String,
+    destination: String,
+    token: String,
+    confirmed: bool,
+) -> Result<aisync_core::qoder::deployment::DeploymentOutcome, String> {
+    validate_deployment_confirmation(&token, confirmed)?;
+    validate_deployment_paths(&source, &destination)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        // Guard survives caller cancellation until actual filesystem work settles.
+        let _guard = CACHE_WRITE
+            .try_lock()
+            .map_err(|_| "QODER_DEPLOY_BUSY".to_string())?;
+        aisync_core::qoder::deployment::deploy(
+            std::path::Path::new(&source),
+            std::path::Path::new(&destination),
+            &token,
+        )
+        .map_err(|_| "QODER_DEPLOY_UNCONFIRMED_PARTIAL_POSSIBLE".to_string())
+    })
+    .await
+    .map_err(|_| "QODER_DEPLOY_UNCONFIRMED_PARTIAL_POSSIBLE".to_string())?
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,6 +258,27 @@ mod tests {
     #[test]
     fn native_write_lock_rejects_concurrent_commands_and_releases() {
         let guard = CACHE_WRITE.try_lock().unwrap();
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            assert_eq!(
+                tauri::async_runtime::block_on(preview_qoder_deployment(
+                    "/not-read".into(),
+                    "/not-created".into()
+                ))
+                .unwrap_err(),
+                "QODER_DEPLOY_BUSY"
+            );
+            assert_eq!(
+                tauri::async_runtime::block_on(deploy_qoder_private(
+                    "/not-read".into(),
+                    "/not-created".into(),
+                    "a".repeat(64),
+                    true
+                ))
+                .unwrap_err(),
+                "QODER_DEPLOY_BUSY"
+            );
+        }
         assert!(CACHE_WRITE.try_lock().is_err());
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         for operation in ["stage", "unpack"] {
@@ -335,5 +425,60 @@ mod tests {
             }
             assert!(qoder_distribution_plan("x".repeat(65)).await.is_err());
         });
+    }
+    #[test]
+    fn deployment_request_bounds_and_confirmation_are_required_before_io() {
+        for (token, confirmed) in [
+            ("a".repeat(64), false),
+            ("A".repeat(64), true),
+            ("a".repeat(63), true),
+            ("g".repeat(64), true),
+        ] {
+            assert_eq!(
+                validate_deployment_confirmation(&token, confirmed).unwrap_err(),
+                "QODER_DEPLOY_INVALID_REQUEST"
+            );
+        }
+        assert!(validate_deployment_confirmation(&"a".repeat(64), true).is_ok());
+        for path in [
+            "".to_string(),
+            "relative".into(),
+            "/SECRET\npath".into(),
+            format!("/{}", "a".repeat(4096)),
+        ] {
+            assert_eq!(
+                validate_deployment_paths(&path, "/new").unwrap_err(),
+                "QODER_DEPLOY_INVALID_REQUEST"
+            );
+            assert_eq!(
+                validate_deployment_paths("/source", &path).unwrap_err(),
+                "QODER_DEPLOY_INVALID_REQUEST"
+            );
+        }
+        let target = std::env::temp_dir().join(format!(
+            "qoder-deployment-unconfirmed-{}",
+            std::process::id()
+        ));
+        assert!(!target.exists());
+        let result = tauri::async_runtime::block_on(deploy_qoder_private(
+            "/not-read".into(),
+            target.to_string_lossy().into_owned(),
+            "a".repeat(64),
+            false,
+        ));
+        assert_eq!(result.unwrap_err(), "QODER_DEPLOY_INVALID_REQUEST");
+        assert!(!target.exists());
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    #[test]
+    fn deployment_unsupported_platform_fails_before_core_io() {
+        let path = std::env::temp_dir()
+            .join("qoder-not-created")
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            validate_deployment_paths(&path, &path).unwrap_err(),
+            "QODER_DEPLOY_UNSUPPORTED_HOST"
+        );
     }
 }

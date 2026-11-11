@@ -56,6 +56,7 @@ jobs:
           ref: ${{ env.BUILD_SHA }}
       - run: python -B scripts/test_build_nsis_resilient.py
       - run: python -B scripts/test_linux_qoder_webview.py
+      - run: python -B scripts/test_linux_qoder_deploy_webview.py
       - run: python -B scripts/test_linux_qwen_webview.py
       - run: python -B scripts/test_linux_codex_config_webview.py
       - run: python -B scripts/test_windows_codex_ui_acceptance.py
@@ -382,6 +383,7 @@ jobs:
       - name: Offline acceptance harness and complete-fixture checks
         run: |
           python -B scripts/test_linux_qoder_webview.py
+          python -B scripts/test_linux_qoder_deploy_webview.py
           python -B scripts/test_linux_qwen_webview.py
           python -B scripts/test_linux_codex_config_webview.py
           python -B scripts/test_linux_install_webview.py

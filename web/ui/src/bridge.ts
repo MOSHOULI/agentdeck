@@ -1,3 +1,4 @@
+import { validQoderDeploymentPath, validQoderDeploymentToken, validateQoderDeploymentPreview, validateQoderDeploymentOutcome } from "./qoderDeploymentContract";
 import { validSessionRef, parseResidual } from './codexResidualContract';
 import { validateAnimationsCapability, validateAnimationsObservation } from "./codexAnimationsContract";
 import { validateAnimationsPreview, validateAnimationsRecovery, validateAnimationsMutation, validAnimationsToken } from "./codexAnimationsContract";
@@ -677,4 +678,16 @@ export async function inspectCodexInstallResidual(sessionRef: string) {
   if (!validSessionRef(sessionRef)) throw new Error('本会话只读检查不可用。');
   try { return parseResidual(await invoke<unknown>('inspect_codex_install_residual', { sessionRef })); }
   catch { throw new Error('本会话只读检查不可用或路径发生变化。未清理或执行程序。'); }
+}
+
+/** Explicit private executable deployment; no demo, download, activation or execution. */
+export async function previewQoderDeployment(source: string, destination: string) {
+  useDemo(true);
+  if (!validQoderDeploymentPath(source) || !validQoderDeploymentPath(destination)) throw new Error('请选择有效绝对路径。');
+  return validateQoderDeploymentPreview(await invoke<unknown>('preview_qoder_deployment', { source, destination }));
+}
+export async function deployQoderPrivate(source: string, destination: string, token: string, confirmed: boolean) {
+  useDemo(true);
+  if (!confirmed || !validQoderDeploymentPath(source) || !validQoderDeploymentPath(destination) || !validQoderDeploymentToken(token)) throw new Error('请重新预览并确认。');
+  return validateQoderDeploymentOutcome(await invoke<unknown>('deploy_qoder_private', { source, destination, token, confirmed: true }));
 }

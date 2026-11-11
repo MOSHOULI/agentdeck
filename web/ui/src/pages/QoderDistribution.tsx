@@ -1,3 +1,4 @@
+import { QoderPrivateDeployment } from './QoderPrivateDeployment';
 import { QoderScopeInspection } from './QoderScopeInspection';
 import { useEffect, useRef, useState } from 'react';
 import * as bridge from '../bridge';
@@ -6,7 +7,7 @@ import type { QoderPlan, QoderVerification, QoderCacheObservation, QoderWriteOpe
 import { useWorkspaceActivity, useWorkspaceActivityStore } from '../stores/workspaceActivity';
 import './DshInventory.css';
 import './QoderDistribution.css';
-export function QoderDistribution() {
+export function QoderDistribution({ active = true }: { active?: boolean }) {
   const [operation, setOperation] = useState<QoderWriteOperation>('stage');
   const [source, setSource] = useState('');
   const [destination, setDestination] = useState('');
@@ -68,7 +69,7 @@ export function QoderDistribution() {
   };
   return <div className="dsh-workspace">
     <header className="workspace-heading"><div><p className="eyebrow">QODER DISTRIBUTION</p><h1>Qoder 分发与校验</h1><p className="muted">固定 1.1.85 分发清单，不查询滚动最新版本，不自动判断本机平台。</p></div><span className="status-badge">显式受控操作</span></header>
-    <div className="notice">分发计划与诊断只读；Linux x86_64 可明确确认后写入全新受控缓存。不下载、不执行、不安装、不修改 PATH 或配置。</div>
+    <div className="notice">分发计划与诊断只读；Linux x86_64 可明确确认后写入全新受控缓存。不下载、不执行、不激活、不修改 PATH 或配置；私有可执行部署须在独立区域预览确认。</div>
     {!native && <p role="status">仅桌面原生后端可用；浏览器及演示模式不读取归档，也不模拟校验成功。</p>}
     <section className="panel" aria-label="Qoder 分发选择">
       <fieldset className="qoder-targets" disabled={!native || writing}>
@@ -151,6 +152,7 @@ export function QoderDistribution() {
       {writeError && <p role="alert">Qoder 缓存写入未确认完成。仅支持 Linux x86_64；目标不可存在，不安全来源会被拒绝。可能留下部分私有目录，请保留现场，不原地重试。</p>}
       {written && <section aria-label="Qoder 缓存写入结果"><p role="status">{qoderCacheLabels[written.state]}</p><p>未安装、未运行；没有删除授权。可另行只读诊断明确目标目录。</p></section>}
     </section>
+    <QoderPrivateDeployment active={active} />
     <QoderScopeInspection />
   </div>;
 }
