@@ -304,6 +304,8 @@ export interface AgentInstallPreview {
   executable: string;
   managerPath: string;
   nodePath: string;
+  installerNodeVersion: string;
+  installerNodeMinimum: string;
   prefix: string;
   globalRoot: string;
   packageRoot: string;
@@ -313,12 +315,23 @@ export interface AgentInstallPreview {
   revision: string;
 }
 
-const installPackages: Record<string, readonly [string, string]> = {
-  codex: ['@openai/codex', 'codex'],
-  opencode: ['opencode-ai', 'opencode'],
-  'gemini-cli': ['@google/gemini-cli', 'gemini'],
-  pi: ['@earendil-works/pi-coding-agent', 'pi'],
+const installPackages: Record<string, readonly [string, string, string]> = {
+  codex: ['@openai/codex', 'codex', '18.0.0'],
+  opencode: ['opencode-ai', 'opencode', '18.0.0'],
+  'gemini-cli': ['@google/gemini-cli', 'gemini', '20.0.0'],
+  pi: ['@earendil-works/pi-coding-agent', 'pi', '22.19.0'],
 };
+/** Only the frozen installer's stable Node version, not package engine compatibility. */
+function validInstallerNodeVersion(value: unknown, minimum: string): value is string {
+  if (typeof value !== 'string' || value.length > 33 || value.trim() !== value || !/^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(value)) return false;
+  const measured = value.slice(1).split('.').map(Number);
+  if (measured.some(part => !Number.isInteger(part) || part > 0xffffffff)) return false;
+  const required = minimum.split('.').map(Number);
+  for (let i = 0; i < required.length; i++) {
+    if (measured[i] !== required[i]) return measured[i] > required[i];
+  }
+  return true;
+}
 export function validInstallRevision(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 }
@@ -351,7 +364,8 @@ export function parseInstallPreview(value: unknown, id: string): AgentInstallPre
   const scriptPolicy = (id === 'pi' || id === 'codex') ? 'disabled' : 'npm_configured';
   if (raw.schemaVersion !== 1 || raw.agentId !== id || raw.package !== expected[0]
     || raw.executable !== expected[1] || raw.scriptPolicy !== scriptPolicy
-    || raw.versionPolicy !== 'npm_configured' || !validInstallRevision(raw.revision)) return fail();
+    || raw.versionPolicy !== 'npm_configured' || !validInstallRevision(raw.revision)
+    || raw.installerNodeMinimum !== expected[2] || !validInstallerNodeVersion(raw.installerNodeVersion, expected[2])) return fail();
   const paths = ['managerPath', 'nodePath', 'prefix', 'globalRoot', 'packageRoot', 'launcherDirectory'] as const;
   for (const key of paths) if (!safeInstallPath(raw[key])) return fail();
   if (!consistentInstallLayout(raw, expected[0])) return fail();
@@ -360,6 +374,7 @@ export function parseInstallPreview(value: unknown, id: string): AgentInstallPre
     ...(id === 'codex' && validSessionRef(raw.sessionRef) ? { sessionRef: raw.sessionRef } : {}),
     versionPolicy: 'npm_configured', revision: raw.revision,
     managerPath: raw.managerPath as string, nodePath: raw.nodePath as string,
+    installerNodeVersion: raw.installerNodeVersion, installerNodeMinimum: expected[2],
     prefix: raw.prefix as string, globalRoot: raw.globalRoot as string,
     packageRoot: raw.packageRoot as string, launcherDirectory: raw.launcherDirectory as string,
   };

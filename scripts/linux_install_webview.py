@@ -12,6 +12,8 @@ from pathlib import Path
 import shutil
 import stat
 
+from installer_node_fixture import measured_version
+
 STAGES = ('preview_cancel', 'stale_revision', 'confirmed_install', 'observed_source', 'no_configuration')
 PREVIEW = "//*[@data-testid='install-preview-codex']"
 DIALOG = "//*[@data-testid='install-review-dialog']"
@@ -52,9 +54,13 @@ def prepare(root, path):
         raise InstallFailure('node_not_native')
     with node.open('rb') as stream:
         if stream.read(4) != b'\x7fELF': raise InstallFailure('node_not_native')
+    try:
+        node_version = measured_version(node)
+    except (ValueError, OSError) as error:
+        raise InstallFailure('node_version_unavailable') from error
     root.mkdir(mode=0o700)
     root = root.resolve(strict=True)
-    paths = {'root': root, 'node': node, 'manager_bin': root / 'manager/bin',
+    paths = {'root': root, 'node': node, 'installer_node_version': node_version, 'manager_bin': root / 'manager/bin',
              'manager': root / 'manager/lib/node_modules/npm/bin/npm-cli.js',
              'prefix': root / 'prefix', 'global': root / 'prefix/lib/node_modules',
              'package': root / 'prefix/lib/node_modules/@openai/codex',
@@ -174,7 +180,9 @@ def assert_plan(driver, fixture):
     fields = {'npm 包': '@openai/codex', '启动命令': 'codex', 'npm prefix': str(fixture['prefix']),
               'npm 全局目录': str(fixture['global']), '包目录': str(fixture['package']),
               '启动文件目录': str(fixture['bin']), 'npm 规范入口': str(fixture['manager']),
-              '安装器 Node': str(fixture['node'])}
+              '安装器 Node': str(fixture['node']),
+              '安装器 Node 实测版本': fixture['installer_node_version'],
+              'AgentDeck 安装器 Node 最低策略': '18.0.0'}
     for label, value in fields.items():
         if driver.text(DIALOG + "//div[dt[text()='" + label + "']]/dd") != value:
             raise InstallFailure('plan_mismatch')

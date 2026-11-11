@@ -7,8 +7,9 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
+import installer_node_fixture
 import linux_install_webview as subject
 import linux_qoder_webview as harness
 
@@ -49,7 +50,9 @@ class OfflineDriver:
         f = self.fixture
         fields = {'npm 包': '@openai/codex', '启动命令': 'codex', 'npm prefix': str(f['prefix']),
                   'npm 全局目录': str(f['global']), '包目录': str(f['package']),
-                  '启动文件目录': str(f['bin']), 'npm 规范入口': str(f['manager']), '安装器 Node': str(f['node'])}
+                  '启动文件目录': str(f['bin']), 'npm 规范入口': str(f['manager']), '安装器 Node': str(f['node']),
+                  '安装器 Node 实测版本': f['installer_node_version'],
+                  'AgentDeck 安装器 Node 最低策略': '18.0.0'}
         if '/dd' in selector:
             return fields[selector.split("dt[text()='")[1].split("']")[0]]
         if selector == subject.DIALOG:
@@ -80,6 +83,25 @@ class FixtureTests(unittest.TestCase):
     def install_args(self):
         return ['install', '--global', '--prefix', str(self.f['prefix']), '--force=false',
                 '--no-audit', '--no-fund', '--no-progress', '--ignore-scripts', '@openai/codex']
+
+    def test_native_node_expected_version_matches_real_program(self):
+        actual = subprocess.run([str(self.f['node']), '--version'], capture_output=True,
+                                check=True, timeout=5).stdout.decode().strip()
+        self.assertEqual(self.f['installer_node_version'], actual)
+        subject.assert_absent(self.f)
+
+    def test_expected_node_version_rejects_malformed_failure_and_preloads(self):
+        for output in (b'v18.0.0\n\r\n', b'v18.0.0-rc.1', b'v018.0.0',
+                       b'v17.9.0', b'v4294967296.0.0', b'', b'v18.0.0\nextra', b'v18.0.0 '):
+            with patch.object(installer_node_fixture.subprocess, 'run', return_value=Mock(returncode=0, stdout=output)):
+                with self.assertRaises(ValueError): installer_node_fixture.measured_version(self.f['node'])
+        with patch.object(installer_node_fixture.subprocess, 'run', return_value=Mock(returncode=1, stdout=b'v18.0.0')):
+            with self.assertRaises(ValueError): installer_node_fixture.measured_version(self.f['node'])
+        with patch.dict(os.environ, {'NODE_OPTIONS':'--require=private', 'Node_Path':'private', 'npm_config_node_options':'private'}), \
+             patch.object(installer_node_fixture.subprocess, 'run', return_value=Mock(returncode=0, stdout=b'v18.0.0\r\n')) as run:
+            self.assertEqual(installer_node_fixture.measured_version(self.f['node']), 'v18.0.0')
+            self.assertEqual(run.call_args.args[0], [str(self.f['node']), '--version'])
+            self.assertFalse({'node_options','node_path','npm_config_node_options'} & {k.lower() for k in run.call_args.kwargs['env']})
 
     def test_queries_are_readonly_install_is_exact_and_single_use(self):
         for query, key in [('prefix', 'prefix'), ('root', 'global')]:
