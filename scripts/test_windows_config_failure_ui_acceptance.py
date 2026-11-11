@@ -107,6 +107,58 @@ class Tests(unittest.TestCase):
         for unsafe in ('executeScript', 'invoke_handler', '--remote-debugging', '--no-sandbox', 'Invoke-WebRequest'):
             self.assertNotIn(unsafe, script)
 
+    def test_failure_classifier_ignores_unrelated_ui_labels(self):
+        import shutil
+        powershell = shutil.which('pwsh')
+        if powershell is None:
+            self.skipTest('PowerShell unavailable for offline classifier execution')
+        code = r'''$ErrorActionPreference = 'Stop'
+. ./scripts/windows-config-dacl-ui-acceptance.ps1
+$prefix = '配置失败（可能已写入部分配置，请检查备份与当前配置）:'
+$cases = @(
+    @{ text = "Git repository`n$prefix Windows configuration security cannot be preserved: staging DACL verification failed"; expected = 'staging-dacl-verification' },
+    @{ text = "Git repository`n$prefix unknown authored error"; expected = 'other-configuration-error' },
+    @{ text = "$prefix staging DACL verification failed (ACL bytes and control flags)"; expected = 'staging-dacl-verification-acl-and-control' },
+    @{ text = "$prefix staging DACL verification failed (ACL bytes)"; expected = 'staging-dacl-verification-acl-bytes' },
+    @{ text = "$prefix staging DACL verification failed (control flags)"; expected = 'staging-dacl-verification-control-flags' },
+    @{ text = "$prefix staging DACL verification failed (owner/group)"; expected = 'staging-dacl-verification-owner-group' },
+    @{ text = 'Git repository staging DACL verification failed'; expected = 'no-known-configuration-error' },
+    @{ text = "Git repository`n$prefix Windows configuration security cannot be preserved: outside ordinary allow/deny subset"; expected = 'unsupported-ace-policy' },
+    @{ text = "DPAPI label`n$prefix unknown authored error"; expected = 'other-configuration-error' }
+)
+foreach ($case in $cases) { if ((Get-ConfigurationFailureCategory $case.text) -cne $case.expected) { throw 'Fixed category mismatch' } }
+Set-StrictMode -Version Latest
+function Stop-App { }
+function Invoke-ConfigurationFixture { throw 'original-fixture-failure' }
+$EvidenceDirectory = Join-Path ([IO.Path]::GetTempPath()) ('agentdeck-diagnostic-' + [Guid]::NewGuid())
+$null = New-Item -ItemType Directory -Path $EvidenceDirectory
+try {
+    foreach ($brokenDiagnostic in @($false, $true)) {
+        if ($brokenDiagnostic) { function Get-ConfigurationFailureDiagnostic { throw 'diagnostic-failure' } }
+        $observed = $null
+        try { Check-ConfigurationDaclPreservation 'unused-private-manifest' } catch { $observed = $_.Exception.Message }
+        if ($observed -cne 'original-fixture-failure') { throw 'Diagnostic masked original early failure' }
+    }
+} finally { Remove-Item -LiteralPath $EvidenceDirectory -Recurse -Force }
+
+'''
+        result = subprocess.run([powershell, '-NoLogo', '-NoProfile', '-Command', code], cwd=ROOT,
+                                capture_output=True, text=True, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_failure_diagnostics_precede_cleanup_and_do_not_publish_raw_errors(self):
+        script = (ROOT / 'scripts/windows-config-dacl-ui-acceptance.ps1').read_text(encoding='utf-8')
+        final = script.split('function Check-ConfigurationDaclPreservation', 1)[1]
+        self.assertLess(final.index('$result.failure = Get-ConfigurationFailureDiagnostic'), final.index('    } finally {'))
+        self.assertIn('        throw $originalFailure\n    } finally {', final)
+        diagnostic = script.split('function Get-ConfigurationFailureDiagnostic', 1)[1].split('function Check-ConfigurationDaclPreservation', 1)[0]
+        for required in ('beforeAutoInherited', 'beforeAutoInheritRequired', 'daclControlMatches', 'beforeAceCount', 'beforeAclBytes', 'ownerMatches', 'groupMatches', "'diagnose-success'"):
+            self.assertIn(required, diagnostic)
+        self.assertNotIn('Save-QwenEvidence', diagnostic)
+        self.assertNotIn('Exception.Message', diagnostic)
+        self.assertNotIn('$diagnostic.text', diagnostic)
+        self.assertIn("'staging-dacl-verification' = 'staging DACL verification failed'", script)
+
     def test_success_fixture_requires_managed_content_and_original_backup(self):
         with tempfile.TemporaryDirectory() as tmp:
             home, root = Path(tmp) / 'home', Path(tmp) / 'root'
@@ -129,6 +181,8 @@ class Tests(unittest.TestCase):
             for binary, _, _, instruction in fixture.AGENTS:
                 target = home / instruction
                 self.assertEqual(target.read_bytes(), fixture.DACL_ORIGINAL)
+                diagnosis = fixture.diagnose_success(m, binary)
+                self.assertEqual(diagnosis, dict(targetOriginalBytes=True, targetHasManagedMarkers=False, backupCount=0, backupsOriginalBytes=True))
                 template = home / '.agentdeck/profiles/default/personalization' / binary / 'AGENTS.md'
                 template.parent.mkdir(parents=True)
                 template.write_bytes(b'Authored template.\n')

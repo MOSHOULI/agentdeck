@@ -117,6 +117,19 @@ def verify_success(m, agent):
     return dict(backup=str(backups[0]), versionOnlyProbes=verify(m))
 
 
+def diagnose_success(m, agent):
+    row = next(row for row in AGENTS if row[0] == agent)
+    target = Path(m['home']) / row[3]
+    data = safe_file(target, 65536)
+    backups = list((Path(m['home']) / '.agentdeck/backups').glob('inject-*/' + target.name))
+    if len(backups) > 16:
+        raise ValueError('unexpected_backup_count')
+    return dict(targetOriginalBytes=data == DACL_ORIGINAL,
+                targetHasManagedMarkers=b'<!-- agentdeck:personalization:start -->' in data and b'<!-- agentdeck:personalization:end -->' in data,
+                backupCount=len(backups),
+                backupsOriginalBytes=all(safe_file(p, 65536) == DACL_ORIGINAL for p in backups))
+
+
 def snapshot(paths):
     result = []
     for value in paths:
@@ -151,7 +164,7 @@ def verify(m):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('action', choices=('prepare', 'prepare-hardlinks', 'snapshot', 'verify', 'prepare-dacl', 'snapshot-inactive', 'verify-success'))
+    p.add_argument('action', choices=('prepare', 'prepare-hardlinks', 'snapshot', 'verify', 'prepare-dacl', 'snapshot-inactive', 'verify-success', 'diagnose-success'))
     p.add_argument('--root', type=Path)
     p.add_argument('--node', type=Path)
     p.add_argument('--home', type=Path)
@@ -170,6 +183,8 @@ def main():
             print(json.dumps({'prepared': True}))
         elif args.action == 'snapshot-inactive':
             print(json.dumps(snapshot(m['inactiveTargets'])))
+        elif args.action == 'diagnose-success':
+            print(json.dumps(diagnose_success(m, args.agent)))
         elif args.action == 'verify-success':
             print(json.dumps(verify_success(m, args.agent)))
         else:

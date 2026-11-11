@@ -33,9 +33,56 @@ pub(super) fn validate(control: u16, acl: &[u8]) -> crate::Result<()> {
     Ok(())
 }
 
+// Privacy-neutral diagnostics only. Callers must still enforce full equality.
+pub(super) fn verification_mismatch_reason(
+    acl: bool,
+    control: bool,
+    owner_group: bool,
+) -> &'static str {
+    if owner_group {
+        "staging DACL verification failed (owner/group)"
+    } else if acl && control {
+        "staging DACL verification failed (ACL bytes and control flags)"
+    } else if control {
+        "staging DACL verification failed (control flags)"
+    } else if acl {
+        "staging DACL verification failed (ACL bytes)"
+    } else {
+        "staging DACL verification failed"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mismatch_diagnostics_are_fixed_categories_with_owner_precedence() {
+        assert_eq!(
+            verification_mismatch_reason(false, false, false),
+            "staging DACL verification failed"
+        );
+        assert_eq!(
+            verification_mismatch_reason(true, false, false),
+            "staging DACL verification failed (ACL bytes)"
+        );
+        assert_eq!(
+            verification_mismatch_reason(false, true, false),
+            "staging DACL verification failed (control flags)"
+        );
+        assert_eq!(
+            verification_mismatch_reason(true, true, false),
+            "staging DACL verification failed (ACL bytes and control flags)"
+        );
+        for acl in [false, true] {
+            for control in [false, true] {
+                assert_eq!(
+                    verification_mismatch_reason(acl, control, true),
+                    "staging DACL verification failed (owner/group)"
+                );
+            }
+        }
+    }
 
     fn ordinary(kind: u8) -> Vec<u8> {
         vec![

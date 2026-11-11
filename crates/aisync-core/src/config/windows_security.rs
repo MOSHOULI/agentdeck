@@ -152,8 +152,15 @@ impl Security {
         {
             return Err(failure("staging DACL application failed"));
         }
-        if Self::read(file)? != *self {
-            return Err(failure("staging DACL verification failed"));
+        let observed = Self::read(file)?;
+        if observed != *self {
+            // Fixed category words only: never expose descriptor bytes or SIDs.
+            let reason = super::windows_acl_policy::verification_mismatch_reason(
+                observed.acl != self.acl,
+                observed.control != self.control,
+                observed.owner != self.owner || observed.group != self.group,
+            );
+            return Err(failure(reason));
         }
         Ok(())
     }

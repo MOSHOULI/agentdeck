@@ -19,10 +19,67 @@ function Wait-ConfigurationSuccess {
     } while ([DateTime]::UtcNow -lt $deadline)
     throw 'Configuration success not observed through installed UI'
 }
+# Never publish raw UI errors: they may contain paths or configuration contents.
+function Get-ConfigurationFailureCategory([string]$text) {
+    $prefix = '配置失败（可能已写入部分配置，请检查备份与当前配置）:'
+    $notices = @($text -split "`n" | Where-Object { $_.Contains($prefix) } | ForEach-Object { $_.Substring($_.IndexOf($prefix)) })
+    if ($notices.Count -eq 0) { return 'no-known-configuration-error' }
+    $notice = $notices -join "`n"
+    $known = [ordered]@{
+        'staging-owner-group' = 'staging owner/group differs from original'
+        'staging-dacl-application' = 'staging DACL application failed'
+        'staging-dacl-verification-acl-and-control' = 'staging DACL verification failed (ACL bytes and control flags)'
+        'staging-dacl-verification-acl-bytes' = 'staging DACL verification failed (ACL bytes)'
+        'staging-dacl-verification-control-flags' = 'staging DACL verification failed (control flags)'
+        'staging-dacl-verification-owner-group' = 'staging DACL verification failed (owner/group)'
+        'staging-dacl-verification' = 'staging DACL verification failed'
+        'descriptor-inspection' = 'security descriptor inspection failed'
+        'unsupported-dacl' = 'absent, null or defaulted DACL is unsupported'
+        'invalid-dacl' = 'invalid DACL'
+        'unsupported-ace-policy' = 'ordinary allow/deny subset'
+        'owner-group-inspection' = 'owner/group inspection failed'
+        'protection-inspection' = 'DACL protection inspection failed'
+        'handle-security-drift' = 'configuration handle security changed'
+        'snapshot-security-drift' = 'configuration security changed since snapshot'
+    }
+    foreach ($entry in $known.GetEnumerator()) { if ($notice.Contains($entry.Value)) { return $entry.Key } }
+    if ($notice.Contains('Windows configuration security cannot be preserved:')) { return 'other-windows-security' }
+    return 'other-configuration-error'
+}
+function Get-ConfigurationFailureDiagnostic($agent, $target, $beforeAcl, $before, $beforeOwner, $beforeGroup, $manifest) {
+    $diagnostic = @{ category = 'ui-unavailable'; aclInspection = $false; bytesInspection = $false }
+    try { $diagnostic.category = Get-ConfigurationFailureCategory (Get-InstallAccessibleText) } catch { }
+    try {
+        $current = Get-Acl -LiteralPath $target
+        $oldRaw = [Security.AccessControl.RawSecurityDescriptor]::new($beforeAcl.GetSecurityDescriptorBinaryForm(), 0)
+        $newRaw = [Security.AccessControl.RawSecurityDescriptor]::new($current.GetSecurityDescriptorBinaryForm(), 0)
+        $diagnostic.aclInspection = $true
+        $diagnostic.daclMatches = (Get-ConfigurationDacl $target) -ceq $before
+        $diagnostic.protectionMatches = $current.AreAccessRulesProtected -eq $beforeAcl.AreAccessRulesProtected
+        $diagnostic.ownerMatches = $current.GetOwner([Security.Principal.SecurityIdentifier]).Value -ceq $beforeOwner
+        $diagnostic.groupMatches = $current.GetGroup([Security.Principal.SecurityIdentifier]).Value -ceq $beforeGroup
+        $diagnostic.beforeProtected = $beforeAcl.AreAccessRulesProtected
+        $diagnostic.beforeAceCount = $oldRaw.DiscretionaryAcl.Count
+        $diagnostic.beforeAclBytes = $oldRaw.DiscretionaryAcl.BinaryLength
+        $diagnostic.currentAceCountMatches = $newRaw.DiscretionaryAcl.Count -eq $oldRaw.DiscretionaryAcl.Count
+        $diagnostic.currentAclBytesMatch = $newRaw.DiscretionaryAcl.BinaryLength -eq $oldRaw.DiscretionaryAcl.BinaryLength
+        $diagnostic.beforeAutoInherited = ($oldRaw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited) -ne 0
+        $diagnostic.beforeAutoInheritRequired = ($oldRaw.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInheritRequired) -ne 0
+        $diagnostic.daclControlMatches = (($oldRaw.ControlFlags -band 0x1500) -eq ($newRaw.ControlFlags -band 0x1500))
+    } catch { }
+    try {
+        $state = Invoke-ConfigurationFixture @('diagnose-success', '--manifest', $manifest, '--agent', $agent.id) | ConvertFrom-Json
+        $diagnostic.byteState = $state
+        $diagnostic.bytesInspection = $true
+    } catch { }
+    return $diagnostic
+}
 function Check-ConfigurationDaclPreservation([string]$manifest) {
     Stop-App
     $stage = 'configuration-success-dacl-preservation'
     $result = @{ passed = $false; agents = @(); officialAgentExecuted = $false; rollbackExercised = $false }
+    $agent = $null; $target = $null; $beforeAcl = $null; $before = $null
+    $beforeOwner = $null; $beforeGroup = $null
     try {
         $null = Invoke-ConfigurationFixture @('prepare-dacl', '--manifest', $manifest)
         $fixture = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -80,6 +137,12 @@ function Check-ConfigurationDaclPreservation([string]$manifest) {
         $result.passed = $true
         Record $stage $result
         return $result
+    } catch {
+        # Capture while the failed UI still exists. Keep the original failure and
+        # failed gate; diagnostic collection does not retry or permit success.
+        $originalFailure = $_
+        try { $result.failure = Get-ConfigurationFailureDiagnostic $agent $target $beforeAcl $before $beforeOwner $beforeGroup $manifest } catch { $result.failure = @{ category = 'diagnostic-collection-failed' } }
+        throw $originalFailure
     } finally {
         # No paths, SIDs, DACL strings, hashes or contents leave the private fixture.
         $result | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory "$stage.json") -Encoding utf8
