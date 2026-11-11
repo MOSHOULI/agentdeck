@@ -66,7 +66,14 @@ fn existing_destination_of_every_kind_is_not_absence() {
     symlink("missing", temp.0.join("link")).unwrap();
     for name in ["file", "directory", "link"] {
         assert!(absent(&parent, OsStr::new(name)).is_err());
-        assert!(preview(&temp.0.join("invalid-cache"), &temp.0.join(name)).is_err());
+        assert!(
+            preview(
+                distribution::reviewed_release(distribution::VERSION).unwrap(),
+                &temp.0.join("invalid-cache"),
+                &temp.0.join(name)
+            )
+            .is_err()
+        );
     }
     assert_eq!(fs::read(temp.0.join("file")).unwrap(), b"keep");
 }
@@ -85,7 +92,14 @@ fn private_parent_and_source_metadata_fail_closed() {
     assert!(regular(&source, 3, 0o600).is_err());
     fs::set_permissions(&temp.0, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(directory_identity(&dir).is_err());
-    assert!(preview(&temp.0.join("cache"), &temp.0.join("new")).is_err());
+    assert!(
+        preview(
+            distribution::reviewed_release(distribution::VERSION).unwrap(),
+            &temp.0.join("cache"),
+            &temp.0.join("new")
+        )
+        .is_err()
+    );
     assert!(!temp.0.join("new").exists());
 }
 #[test]
@@ -107,9 +121,24 @@ fn unsupported_cache_and_invalid_tokens_create_nothing() {
     fs::create_dir(&cache).unwrap();
     fs::set_permissions(&cache, fs::Permissions::from_mode(0o700)).unwrap();
     let dest = temp.0.join("new");
-    assert!(preview(&cache, &dest).is_err());
+    assert!(
+        preview(
+            distribution::reviewed_release(distribution::VERSION).unwrap(),
+            &cache,
+            &dest
+        )
+        .is_err()
+    );
     for token in ["", "not-preview", &"0".repeat(64)] {
-        assert!(deploy(&cache, &dest, token).is_err());
+        assert!(
+            deploy(
+                distribution::reviewed_release(distribution::VERSION).unwrap(),
+                &cache,
+                &dest,
+                token
+            )
+            .is_err()
+        );
         assert!(!dest.exists());
     }
     assert_eq!(fs::read_dir(&cache).unwrap().count(), 0);
@@ -218,6 +247,7 @@ fn execution_fixture(root: &Temp) -> (Selection, PathBuf, PathBuf, Contract) {
         token: String::new(),
     };
     let contract = Contract {
+        version: distribution::VERSION,
         bytes: b"authored-not-a-program".len() as u64,
         sha256: format!("{:x}", Sha256::digest(b"authored-not-a-program")),
         authored_fixture: true,

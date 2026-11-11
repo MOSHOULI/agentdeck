@@ -6,6 +6,7 @@ pub const PAYLOAD_SHA256: &str = "8af52502ae32eabd8eac922e6dc5769840d710bcf0374f
 pub const LIMITATIONS: &str = "Private extracted cache only, not installed or executable/runtime-ready. Ownership records are not authorization or signatures. Fixed same-source digests are not independent authenticity verification. No execution, PATH, login or config changes. Failure may leave incomplete output; never retry over an existing directory. Same-user hostile races, mount deadlines and full power-loss recovery are not solved.";
 #[derive(Debug, Serialize)]
 pub struct UnpackedCache {
+    pub version: &'static str,
     pub state: &'static str,
     pub installed: bool,
     pub executable: bool,
@@ -31,13 +32,23 @@ pub enum UnpackError {
     Incomplete,
 }
 pub fn unpack_cache(cache: &Path, destination: &Path) -> Result<UnpackedCache, UnpackError> {
+    unpack_cache_for_release(crate::qoder::distribution::VERSION, cache, destination)
+}
+pub fn unpack_cache_for_release(
+    release: &str,
+    cache: &Path,
+    destination: &Path,
+) -> Result<UnpackedCache, UnpackError> {
+    let reviewed = crate::qoder::distribution::reviewed_release(release)
+        .map_err(|_| UnpackError::Unsupported)?;
+
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        linux::unpack(cache, destination)
+        linux::unpack(reviewed, cache, destination)
     }
     #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
     {
-        let _ = (cache, destination);
+        let _ = (reviewed, cache, destination);
         Err(UnpackError::Unsupported)
     }
 }
@@ -60,8 +71,9 @@ pub(crate) mod linux {
         io::{self, BufReader, Read, Seek, SeekFrom, Write},
         os::{fd::AsRawFd, unix::fs::MetadataExt},
     };
+    #[cfg(test)]
     const ARCHIVE_BYTES: u64 = 78_587_775;
-    const TAR_BYTES: u64 = 182_545_920;
+
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Complete {
@@ -126,24 +138,28 @@ pub(crate) mod linux {
         let value = serde_json::from_slice(&bytes).map_err(|_| UnpackError::InvalidCache)?;
         Ok((value, bytes))
     }
-    pub(crate) fn validate_records(dir: &File) -> Result<(Vec<u8>, Vec<u8>), UnpackError> {
+    pub(crate) fn validate_records_for_release(
+        reviewed: distribution::ReviewedRelease,
+        dir: &File,
+    ) -> Result<(Vec<u8>, Vec<u8>), UnpackError> {
         let (c, cb) = read_record::<Complete>(dir, "complete.json")?;
         let (i, ib) = read_record::<Intent>(dir, "incomplete.json")?;
-        let p = distribution::plan(staging::TARGET).map_err(failed)?;
+        let p =
+            distribution::plan_for_release(reviewed.version, staging::TARGET).map_err(failed)?;
         if c.format != 1
             || c.owner != "agentdeck"
             || c.state != "verified_archive_staged_not_installed"
-            || c.version != distribution::VERSION
+            || c.version != reviewed.version
             || c.target != staging::TARGET
             || c.archive_sha256 != p.sha256
-            || c.bytes != ARCHIVE_BYTES
+            || c.bytes != reviewed.archive_bytes
             || c.installed
             || c.extracted
             || c.limitations != staging::LIMITATIONS
             || i.format != 1
             || i.owner != "agentdeck"
             || i.state != "incomplete_archive_staging"
-            || i.version != distribution::VERSION
+            || i.version != reviewed.version
             || i.target != staging::TARGET
             || i.installed
         {
@@ -194,17 +210,18 @@ pub(crate) mod linux {
     }
     // Internal parser only. Production always supplies fixed payload/tar sizes;
     // tests use small synthetic streams, never a CLI/env/digest bypass.
-    fn extract<R: Read, W: Write>(
+    fn extract_for_release<R: Read, W: Write>(
         input: R,
         output: &mut W,
         size: u64,
         tar_size: u64,
+        archive_size: u64,
     ) -> io::Result<(String, String)> {
         let hashed = HashRead {
             inner: input,
             hash: Sha256::new(),
             count: 0,
-            max: ARCHIVE_BYTES,
+            max: archive_size,
         };
         let gz = flate2::bufread::GzDecoder::new(BufReader::new(hashed));
         let capped = Cap {
@@ -289,7 +306,11 @@ pub(crate) mod linux {
             format!("{:x}", hashed.hash.finalize()),
         ))
     }
-    pub(super) fn unpack(cache: &Path, destination: &Path) -> Result<UnpackedCache, UnpackError> {
+    pub(super) fn unpack(
+        reviewed: distribution::ReviewedRelease,
+        cache: &Path,
+        destination: &Path,
+    ) -> Result<UnpackedCache, UnpackError> {
         let leaf = cache
             .file_name()
             .and_then(|v| v.to_str())
@@ -302,7 +323,7 @@ pub(crate) mod linux {
         if cm.uid() != unsafe { libc::geteuid() } || cm.mode() & 0o7777 != 0o700 {
             return Err(UnpackError::InvalidCache);
         }
-        let records = validate_records(&cache_dir)?;
+        let records = validate_records_for_release(reviewed, &cache_dir)?;
         let mut source = fsio::open_at(
             &cache_dir,
             OsStr::new("archive.tar.gz"),
@@ -310,8 +331,8 @@ pub(crate) mod linux {
             0,
         )
         .map_err(|_| UnpackError::InvalidCache)?;
-        let before = private_file(&source, ARCHIVE_BYTES)?;
-        if before.len() != ARCHIVE_BYTES {
+        let before = private_file(&source, reviewed.archive_bytes)?;
+        if before.len() != reviewed.archive_bytes {
             return Err(UnpackError::InvalidCache);
         }
         let leaf = destination
@@ -336,7 +357,7 @@ pub(crate) mod linux {
         if dm.uid() != unsafe { libc::geteuid() } || dm.mode() & 0o7777 != 0o700 {
             return Err(UnpackError::Incomplete);
         }
-        fsio::record(&dir,"incomplete.json",&serde_json::json!({"format":1,"owner":"agentdeck","state":"incomplete_archive_unpack","version":distribution::VERSION,"target":staging::TARGET,"installed":false})).map_err(failed)?;
+        fsio::record(&dir,"incomplete.json",&serde_json::json!({"format":1,"owner":"agentdeck","state":"incomplete_archive_unpack","version":reviewed.version,"target":staging::TARGET,"installed":false})).map_err(failed)?;
         let mut copy = fsio::new_file(&dir, "archive.tar.gz").map_err(failed)?;
         let mut hash = Sha256::new();
         let mut bytes = 0u64;
@@ -347,15 +368,16 @@ pub(crate) mod linux {
                 break;
             }
             bytes += n as u64;
-            if bytes > ARCHIVE_BYTES {
+            if bytes > reviewed.archive_bytes {
                 return Err(UnpackError::Incomplete);
             }
             copy.write_all(&buf[..n]).map_err(failed)?;
             hash.update(&buf[..n]);
         }
-        let plan = distribution::plan(staging::TARGET).map_err(failed)?;
-        let after = private_file(&source, ARCHIVE_BYTES)?;
-        if bytes != ARCHIVE_BYTES
+        let plan =
+            distribution::plan_for_release(reviewed.version, staging::TARGET).map_err(failed)?;
+        let after = private_file(&source, reviewed.archive_bytes)?;
+        if bytes != reviewed.archive_bytes
             || format!("{:x}", hash.finalize()) != plan.sha256
             || before.len() != after.len()
             || before.modified().ok() != after.modified().ok()
@@ -372,21 +394,27 @@ pub(crate) mod linux {
         if fsio::identity(&named).map_err(failed)? != fsio::identity(&source).map_err(failed)?
             || fsio::identity(&fsio::directory(cache).map_err(failed)?).map_err(failed)?
                 != fsio::identity(&cache_dir).map_err(failed)?
-            || validate_records(&cache_dir)? != records
+            || validate_records_for_release(reviewed, &cache_dir)? != records
         {
             return Err(UnpackError::InvalidCache);
         }
         copy.sync_all().map_err(failed)?;
         copy.seek(SeekFrom::Start(0)).map_err(failed)?;
         let mut payload = fsio::new_file(&dir, "qodercli").map_err(failed)?;
-        let (payload_hash, compressed_hash) =
-            extract(&mut copy, &mut payload, PAYLOAD_BYTES, TAR_BYTES).map_err(failed)?;
-        if payload_hash != PAYLOAD_SHA256 || compressed_hash != plan.sha256 {
+        let (payload_hash, compressed_hash) = extract_for_release(
+            &mut copy,
+            &mut payload,
+            reviewed.payload_bytes,
+            reviewed.tar_bytes,
+            reviewed.archive_bytes,
+        )
+        .map_err(failed)?;
+        if payload_hash != reviewed.payload_sha256 || compressed_hash != plan.sha256 {
             return Err(UnpackError::Incomplete);
         }
         payload.sync_all().map_err(failed)?;
-        let pm = private_file(&payload, PAYLOAD_BYTES)?;
-        if pm.len() != PAYLOAD_BYTES {
+        let pm = private_file(&payload, reviewed.payload_bytes)?;
+        if pm.len() != reviewed.payload_bytes {
             return Err(UnpackError::Incomplete);
         }
         payload.seek(SeekFrom::Start(0)).map_err(failed)?;
@@ -398,17 +426,17 @@ pub(crate) mod linux {
                 break;
             }
             written_bytes += n as u64;
-            if written_bytes > PAYLOAD_BYTES {
+            if written_bytes > reviewed.payload_bytes {
                 return Err(UnpackError::Incomplete);
             }
             written_hash.update(&buf[..n]);
         }
-        if written_bytes != PAYLOAD_BYTES
-            || format!("{:x}", written_hash.finalize()) != PAYLOAD_SHA256
+        if written_bytes != reviewed.payload_bytes
+            || format!("{:x}", written_hash.finalize()) != reviewed.payload_sha256
         {
             return Err(UnpackError::Incomplete);
         }
-        private_file(&copy, ARCHIVE_BYTES)?;
+        private_file(&copy, reviewed.archive_bytes)?;
         for (name, file) in [("qodercli", &payload), ("archive.tar.gz", &copy)] {
             let named = fsio::open_at(&dir, OsStr::new(name), libc::O_RDONLY | libc::O_NONBLOCK, 0)
                 .map_err(failed)?;
@@ -423,7 +451,7 @@ pub(crate) mod linux {
         {
             return Err(UnpackError::Incomplete);
         }
-        fsio::record(&dir,"completion.pending",&serde_json::json!({"format":1,"owner":"agentdeck","state":"verified_payload_unpacked_not_installed","version":distribution::VERSION,"target":staging::TARGET,"archive_sha256":plan.sha256,"payload_sha256":PAYLOAD_SHA256,"payload_bytes":PAYLOAD_BYTES,"installed":false,"executable":false,"limitations":LIMITATIONS})).map_err(failed)?;
+        fsio::record(&dir,"completion.pending",&serde_json::json!({"format":1,"owner":"agentdeck","state":"verified_payload_unpacked_not_installed","version":reviewed.version,"target":staging::TARGET,"archive_sha256":plan.sha256,"payload_sha256":reviewed.payload_sha256,"payload_bytes":reviewed.payload_bytes,"installed":false,"executable":false,"limitations":LIMITATIONS})).map_err(failed)?;
         let from = CString::new("completion.pending").unwrap();
         let to = CString::new("complete.json").unwrap();
         if unsafe {
@@ -441,14 +469,32 @@ pub(crate) mod linux {
         dir.sync_all().map_err(failed)?;
         parent.sync_all().map_err(failed)?;
         Ok(UnpackedCache {
+            version: reviewed.version,
             state: "verified_payload_unpacked_not_installed",
             installed: false,
             executable: false,
-            payload_bytes: PAYLOAD_BYTES,
-            payload_sha256: PAYLOAD_SHA256,
+            payload_bytes: reviewed.payload_bytes,
+            payload_sha256: reviewed.payload_sha256,
             limitations: LIMITATIONS,
         })
     }
     #[cfg(test)]
     mod tests;
+
+    #[cfg(test)]
+    fn extract<R: Read, W: Write>(
+        input: R,
+        output: &mut W,
+        size: u64,
+        tar_size: u64,
+    ) -> io::Result<(String, String)> {
+        extract_for_release(input, output, size, tar_size, ARCHIVE_BYTES)
+    }
+    #[cfg(test)]
+    pub(crate) fn validate_records(dir: &File) -> Result<(Vec<u8>, Vec<u8>), UnpackError> {
+        validate_records_for_release(
+            distribution::reviewed_release(distribution::VERSION).unwrap(),
+            dir,
+        )
+    }
 }

@@ -6,6 +6,38 @@ use std::path::Path;
 pub const VERSION: &str = "1.1.85";
 pub const MANIFEST_SHA256: &str =
     "a78234316fe2065cdae6fc17ac425bbc2ae11006d04b6ab5216fd6093597e4de";
+pub const RELEASES: &[&str] = &["1.1.85", "1.1.86"];
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(
+    not(all(target_os = "linux", target_arch = "x86_64")),
+    allow(dead_code)
+)]
+pub(crate) struct ReviewedRelease {
+    pub version: &'static str,
+    pub archive_bytes: u64,
+    pub tar_bytes: u64,
+    pub payload_bytes: u64,
+    pub payload_sha256: &'static str,
+}
+pub(crate) fn reviewed_release(release: &str) -> Result<ReviewedRelease, DistributionError> {
+    match release {
+        "1.1.85" => Ok(ReviewedRelease {
+            version: VERSION,
+            archive_bytes: 78_587_775,
+            tar_bytes: 182_545_920,
+            payload_bytes: 182_543_840,
+            payload_sha256: "8af52502ae32eabd8eac922e6dc5769840d710bcf0374f50f23339779f19b06b",
+        }),
+        "1.1.86" => Ok(ReviewedRelease {
+            version: "1.1.86",
+            archive_bytes: 78_537_803,
+            tar_bytes: 182_414_848,
+            payload_bytes: 182_412_768,
+            payload_sha256: "fccd0ce90d1119f6bb213146de6e45358db0c89585048c31315ddb180c925ae8",
+        }),
+        _ => Err(DistributionError::UnknownRelease),
+    }
+}
 pub const LIMITATIONS: &str = "Pinned upstream SHA256 is same-source integrity, not independent signature verification. No installation, execution, authentication, runtime compatibility or effective configuration has been verified. No download, unpacking, PATH, configuration or ownership changes. Explicit target is not host detection. File reads are bounded but not atomic against same-user races and have no mount I/O deadline; access times may change. Windows ARM64 documentation contradicts the manifest; manifest presence does not establish support.";
 #[derive(Debug, Serialize)]
 pub struct DistributionPlan {
@@ -34,6 +66,8 @@ pub struct VerifiedPackage {
 }
 #[derive(Debug, thiserror::Error)]
 pub enum DistributionError {
+    #[error("Unknown explicit reviewed Qoder release")]
+    UnknownRelease,
     #[error("Unknown explicit Qoder distribution target; use one of the fixed reviewed target IDs")]
     UnknownTarget,
     #[error("Selected Qoder archive is unavailable, unsafe, changed, oversized or unsupported")]
@@ -203,7 +237,14 @@ pub fn plan(target: &str) -> Result<DistributionPlan, DistributionError> {
 }
 /// The caller cannot supply a digest or remote URL. Inspect only the explicit archive.
 pub fn verify_package(target: &str, archive: &Path) -> Result<VerifiedPackage, DistributionError> {
-    let plan = plan(target)?;
+    verify_package_for_release(VERSION, target, archive)
+}
+pub fn verify_package_for_release(
+    release: &str,
+    target: &str,
+    archive: &Path,
+) -> Result<VerifiedPackage, DistributionError> {
+    let plan = plan_for_release(release, target)?;
     let (digest, bytes) = NativeSelectedFileReader.hash_archive(archive, plan.archive_name)?;
     if digest != plan.sha256 {
         return Err(DistributionError::DigestMismatch);
@@ -217,3 +258,67 @@ pub fn verify_package(target: &str, archive: &Path) -> Result<VerifiedPackage, D
 
 #[cfg(test)]
 mod tests;
+
+/// Explicit reviewed release only. Never infer a release from an unsigned receipt.
+pub fn plan_for_release(
+    release: &str,
+    target: &str,
+) -> Result<DistributionPlan, DistributionError> {
+    let reviewed = reviewed_release(release)?;
+    let mut plan = plan(target)?;
+    if reviewed.version == VERSION {
+        return Ok(plan);
+    }
+    let (url, sha256) = match target {
+        "darwin-arm64" => (
+            "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-darwin-arm64.tar.gz",
+            "d57de0037657a8db855bad0136f64a6cf85a296e3aac0952aadd9f82c159c2a1",
+        ),
+        "darwin-amd64" => (
+            "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-darwin-x64.tar.gz",
+            "797c4991a52e7e29e3743c3a53b2b68337b2929c04e94a162d2e44adf8eb3006",
+        ),
+        "linux-arm64-musl" => (
+            "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-linux-arm64-musl.tar.gz",
+            "76f6c0e97e579fa2a332e1d652be6816efe6ce3d57221862112f07f929b54825",
+        ),
+        "linux-arm64" => (
+            "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-linux-arm64.tar.gz",
+            "640d6528a60b045e83eabf57c642096ccec9fb09940633847617c603d703bbaf",
+        ),
+        "linux-amd64-baseline" => (
+            "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-linux-x64-baseline.tar.gz",
+            "9673b64b8f651fc883ea8c29fbd61ff19bf78db02d30db6ad4892b58ab3c9b7e",
+        ),
+        "linux-amd64-musl" => (
+            "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-linux-x64-musl.tar.gz",
+            "ef2cbce359495d4d923071b4bd8b6a997e597191db547504fd3fef42d44769b1",
+        ),
+        "linux-amd64" => (
+            "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-linux-x64.tar.gz",
+            "f88de4dcd41af7d8264ef80da9cc94ef94fb3daf7069920604e8460db2241354",
+        ),
+        "openharmony-arm64" => (
+            "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-openharmony-arm64.tar.gz",
+            "19ee72e6c3ae306cfe73f705c4a761b6775eae229b1646cf28abd83b0c3f42ad",
+        ),
+        "windows-arm64-standard" => (
+            "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-windows-arm64.zip",
+            "40d7d3704b154571ba33ec4608bbfcdca5abf97ee94df3d5f711ca605c9c3b45",
+        ),
+        "windows-amd64-legacy" => (
+            "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-windows-x64-legacy.zip",
+            "f749602e9eaf1a6aa47228a16d49321af963eb16c7aa1f198498283705067af2",
+        ),
+        "windows-amd64-standard" => (
+            "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-windows-x64.zip",
+            "404f991c2ac665f2507930c89ccfcbee07005623530f766329cd7babe910b923",
+        ),
+        _ => return Err(DistributionError::UnknownTarget),
+    };
+    plan.version = reviewed.version;
+    plan.url = url;
+    plan.sha256 = sha256;
+    plan.manifest_sha256 = "f323905da3f75088b1e9ae4cf9b0fef6f117879f4f6942b609e92228a533fa78";
+    Ok(plan)
+}

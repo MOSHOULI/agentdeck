@@ -11,11 +11,20 @@ import stat
 import sys
 import time
 import urllib.request
+import qoder_releases as releases
 
 URL = 'https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.85/qodercli-linux-x64-baseline.tar.gz'
 NAME = 'qodercli-linux-x64-baseline.tar.gz'
 SIZE = 78_587_775
 SHA256 = 'a2fd8cc04711603f9637f54b63097380efc79939739967985cd6193507472dc4'
+VERSION = releases.DEFAULT
+
+def select_release(release):
+    global VERSION, SIZE, SHA256, URL
+    size, digest, _, _ = releases.contract(release)
+    VERSION, SIZE, SHA256 = release, size, digest
+    URL = f'https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/{release}/{NAME}'
+
 CHUNK = 64 * 1024
 TOTAL_SECONDS = 180
 SOCKET_SECONDS = 15
@@ -88,10 +97,11 @@ def _fetch(directory, opener=None, clock=time.monotonic):
                 raise DownloadFailure('archive_integrity_mismatch')
         output.flush()
         os.fsync(output.fileno())
-    return {'state': 'pinned_archive_downloaded_not_executed', 'bytes': SIZE, 'sha256': SHA256, 'target': 'linux-amd64-baseline', 'version': '1.1.85'}
+    return {'state': 'pinned_archive_downloaded_not_executed', 'bytes': SIZE, 'sha256': SHA256, 'target': 'linux-amd64-baseline', 'version': VERSION}
 
-def _worker(directory, sender):
+def _worker(directory, sender, release=releases.DEFAULT):
     try:
+        select_release(release)
         _guard_destination(Path(directory))
         sender.send((True, _fetch(Path(directory))))
     except Exception as error:
@@ -121,12 +131,14 @@ def _supervise(process, receiver):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--destination', type=Path, required=True, help='NEW directory beneath RUNNER_TEMP; no existing directory reused')
+    parser.add_argument('--release', choices=tuple(releases.RELEASES), default=releases.DEFAULT)
     args = parser.parse_args()
+    select_release(args.release)
     try:
         _guard_destination(args.destination)
         context = multiprocessing.get_context('spawn')
         receiver, sender = context.Pipe(duplex=False)
-        process = context.Process(target=_worker, args=(str(args.destination), sender))
+        process = context.Process(target=_worker, args=(str(args.destination), sender, args.release))
         process.start()
         sender.close()
         try:

@@ -10,10 +10,10 @@ it.each(qoderTargets)('strictly projects reviewed target %s', async target => {
   const raw = qoderRawPlan(target); vi.mocked(invoke).mockResolvedValue(raw);
   const plan = await bridge.qoderDistributionPlan(target);
   expect(plan.target).toBe(target); expect(JSON.stringify(plan)).not.toContain('SECRET');
-  expect(invoke).toHaveBeenCalledExactlyOnceWith('qoder_distribution_plan', { target });
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('qoder_distribution_plan', { target, release: '1.1.85' });
   vi.mocked(invoke).mockResolvedValue({ state: 'matches_pinned_archive', bytes: 123, plan: raw, path: 'SECRET' });
   expect(await bridge.verifyQoderPackage(target, '/explicit/archive')).toEqual({ plan, bytes: 123 });
-  expect(invoke).toHaveBeenLastCalledWith('verify_qoder_package', { target, archivePath: '/explicit/archive' });
+  expect(invoke).toHaveBeenLastCalledWith('verify_qoder_package', { target, archivePath: '/explicit/archive', release: '1.1.85' });
 });
 it.each(['version', 'manifest_sha256', 'target', 'url', 'sha256', 'archive_name', 'runtime', 'variant', 'min_windows_build', 'host_eligibility', 'install_supported', 'execution_verified', 'signature_verified', 'max_archive_bytes'])('rejects incompatible field %s', key => {
   expect(() => validateQoderPlan({ ...qoderRawPlan(), [key]: 'SECRET' }, 'linux-amd64-baseline')).toThrow();
@@ -41,14 +41,14 @@ it.each(['/', '/?demo=1'])('never reads in browser or demo mode %s', async url =
 
 it.each(['staged_archive_verified', 'unpacked_payload_verified', 'incomplete', 'conflict', 'unknown_ownership'])('projects cache state %s without backend strings', async state => {
   const recovery_plan = state.endsWith('_verified') ? 'retain_cache_no_action' : 'preserve_and_review';
-  vi.mocked(invoke).mockResolvedValue({ state, recovery_plan, deletion_authorized: false, manual_review_required: true, installed: false, limitations: 'SECRET', path: 'SECRET' });
+  vi.mocked(invoke).mockResolvedValue({ version: '1.1.85', state, recovery_plan, deletion_authorized: false, manual_review_required: true, installed: false, limitations: 'SECRET', path: 'SECRET' });
   const result = await bridge.inspectQoderCache('/explicit/cache');
   expect(result.state).toBe(state); expect(result.deletionAuthorized).toBe(false);
   expect(JSON.stringify(result)).not.toContain('SECRET');
-  expect(invoke).toHaveBeenCalledExactlyOnceWith('inspect_qoder_cache', { cachePath: '/explicit/cache' });
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('inspect_qoder_cache', { cachePath: '/explicit/cache', release: '1.1.85' });
 });
 it.each(['state', 'recovery_plan', 'deletion_authorized', 'manual_review_required', 'installed'])('rejects inconsistent cache %s', async field => {
-  vi.mocked(invoke).mockResolvedValue({ state: 'incomplete', recovery_plan: 'preserve_and_review', deletion_authorized: false, manual_review_required: true, installed: false, [field]: 'SECRET' });
+  vi.mocked(invoke).mockResolvedValue({ version: '1.1.85', state: 'incomplete', recovery_plan: 'preserve_and_review', deletion_authorized: false, manual_review_required: true, installed: false, [field]: 'SECRET' });
   await expect(bridge.inspectQoderCache('/explicit/cache')).rejects.toThrow();
 });
 it.each(['', ' ', 'SECRET\npath', 'x'.repeat(4097), '字'.repeat(1366)])('blocks bad cache path before IPC', async path => {
@@ -64,7 +64,7 @@ it.each(['stage','unpack'] as const)('strict write %s response is projected and 
   const raw={operation,state,target:'linux-amd64-baseline',version:'1.1.85',installed:false,executable:false,path:'SECRET'};
   vi.mocked(invoke).mockResolvedValue(raw);
   expect(await bridge.writeQoderCache(operation,'/source','/new',true)).toEqual({operation,state});
-  expect(invoke).toHaveBeenCalledExactlyOnceWith('write_qoder_cache',{operation,target:'linux-amd64-baseline',source:'/source',destination:'/new',confirmed:true});
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('write_qoder_cache',{operation,target:'linux-amd64-baseline',source:'/source',destination:'/new',confirmed:true,release:'1.1.85'});
   for (const patch of [{installed:true},{executable:true},{version:'latest'},{operation:'execute'},{state:'incomplete'},{target:'other'}]) {
     vi.mocked(invoke).mockResolvedValue({...raw,...patch});
     await expect(bridge.writeQoderCache(operation,'/source','/new',true)).rejects.toThrow();
@@ -78,5 +78,33 @@ it('write rejects missing confirmation, relative or unbounded input and demo wit
   await expect(bridge.writeQoderCache('stage','/source','/new',true)).rejects.toThrow();
   window.history.replaceState({},'', '/?demo=1');
   await expect(bridge.writeQoderCache('stage','/source','/new',true)).rejects.toThrow();
+  expect(invoke).not.toHaveBeenCalled();
+});
+it.each(qoderTargets)('explicit 1.1.86 manifest target %s rejects mixed and default contracts', async target => {
+  const old = qoderRawPlan(target); const next = qoderRawPlan(target, '1.1.86');
+  expect(validateQoderPlan(next, target, '1.1.86').version).toBe('1.1.86');
+  expect(() => validateQoderPlan(next, target)).toThrow();
+  expect(() => validateQoderPlan(old, target, '1.1.86')).toThrow();
+  for (const key of ['version', 'manifest_sha256', 'url', 'sha256'] as const) expect(() => validateQoderPlan({ ...next, [key]: old[key] }, target, '1.1.86')).toThrow();
+  vi.mocked(invoke).mockResolvedValue(next); await bridge.qoderDistributionPlan(target, '1.1.86');
+  expect(invoke).toHaveBeenLastCalledWith('qoder_distribution_plan', { target, release: '1.1.86' });
+});
+it('explicit cache release crosses IPC and rejects mismatched cache/write responses', async () => {
+  const cache = { version: '1.1.86', state: 'incomplete', recovery_plan: 'preserve_and_review', deletion_authorized: false, manual_review_required: true, installed: false };
+  vi.mocked(invoke).mockResolvedValue(cache); await bridge.inspectQoderCache('/cache', '1.1.86');
+  expect(invoke).toHaveBeenLastCalledWith('inspect_qoder_cache', { cachePath: '/cache', release: '1.1.86' });
+  await expect(bridge.inspectQoderCache('/cache')).rejects.toThrow();
+  vi.mocked(invoke).mockResolvedValue({ ...cache, version: '1.1.85' }); await expect(bridge.inspectQoderCache('/cache', '1.1.86')).rejects.toThrow();
+  const write = { operation: 'stage', state: 'staged_archive_verified', target: 'linux-amd64-baseline', version: '1.1.86', installed: false, executable: false };
+  vi.mocked(invoke).mockResolvedValue(write); await bridge.writeQoderCache('stage', '/source', '/new', true, '1.1.86');
+  expect(invoke).toHaveBeenLastCalledWith('write_qoder_cache', { operation: 'stage', target: 'linux-amd64-baseline', source: '/source', destination: '/new', confirmed: true, release: '1.1.86' });
+  await expect(bridge.writeQoderCache('stage', '/source', '/new', true)).rejects.toThrow();
+});
+it('unreviewed releases fail before all Qoder IPC calls', async () => {
+  const release = 'latest' as never;
+  await expect(bridge.qoderDistributionPlan('linux-amd64-baseline', release)).rejects.toThrow();
+  await expect(bridge.verifyQoderPackage('linux-amd64-baseline', '/file', release)).rejects.toThrow();
+  await expect(bridge.inspectQoderCache('/cache', release)).rejects.toThrow();
+  await expect(bridge.writeQoderCache('stage', '/file', '/new', true, release)).rejects.toThrow();
   expect(invoke).not.toHaveBeenCalled();
 });

@@ -77,7 +77,7 @@ def exercise(driver, source, root, config_root, records, phase=lambda value: Non
         action('preview')
         driver.wait(lambda: len(driver.elements(DIALOG)) == 1, seconds=90)
         text = driver.text(DIALOG)
-        for expected in ('1.1.85', 'linux-amd64-baseline', '0700', str(source), str(target)):
+        for expected in (complete.pinned.VERSION, 'linux-amd64-baseline', '0700', str(source), str(target)):
             if expected not in text: raise DeploymentGuiFailure('deployment_preview_details_missing')
         if before != deployment.snapshot(root): raise DeploymentGuiFailure('deployment_preview_wrote_files')
         safe()

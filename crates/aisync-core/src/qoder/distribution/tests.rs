@@ -137,3 +137,73 @@ fn fifo_rejected_without_open_blocking() {
     assert_eq!(unsafe { mkfifo(path.as_ptr(), 0o600) }, 0);
     assert!(verify_package("linux-amd64-baseline", &f.archive).is_err());
 }
+
+#[test]
+fn explicit_new_release_matches_manifest_without_changing_legacy_default() {
+    let bytes = include_bytes!("../../../../../docs/upstream/qoder/manifest-1.1.86.json");
+    let manifest: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+    assert_eq!(manifest["latest"], "1.1.86");
+    assert_eq!(manifest["files"].as_array().unwrap().len(), TARGETS.len());
+    for file in manifest["files"].as_array().unwrap() {
+        let mut id = format!(
+            "{}-{}",
+            file["os"].as_str().unwrap(),
+            file["arch"].as_str().unwrap()
+        );
+        if let Some(variant) = file["variant"].as_str() {
+            id.push('-');
+            id.push_str(variant);
+        }
+        let p = plan_for_release("1.1.86", &id).unwrap();
+        assert_eq!(p.version, "1.1.86");
+        assert_eq!(p.url, file["url"]);
+        assert_eq!(p.sha256, file["sha256"]);
+        assert_eq!(p.manifest_sha256, format!("{:x}", Sha256::digest(bytes)));
+        assert_eq!(p.archive_name, p.url.rsplit('/').next().unwrap());
+        assert_eq!(p.limitations, LIMITATIONS);
+        assert!(!p.install_supported && !p.execution_verified && !p.signature_verified);
+        let old = plan(&id).unwrap();
+        assert_eq!(old.version, VERSION);
+        assert_eq!(
+            serde_json::to_value(&old).unwrap(),
+            serde_json::to_value(plan_for_release(VERSION, &id).unwrap()).unwrap()
+        );
+        assert_ne!(old.sha256, p.sha256);
+        if file["os"] == "windows" {
+            assert_eq!(p.runtime, file["runtime"]);
+            assert_eq!(p.variant, file["variant"]);
+            assert_eq!(
+                p.min_windows_build.map(u64::from),
+                file["min_windows_build"].as_u64()
+            );
+        }
+    }
+    for release in [
+        "latest", "auto", "1.1.84", "1.1.87", " 1.1.86", "1.1.86 ", "",
+    ] {
+        assert!(matches!(
+            plan_for_release(release, "linux-amd64-baseline"),
+            Err(DistributionError::UnknownRelease)
+        ));
+    }
+}
+
+#[test]
+fn unknown_release_fails_all_public_boundaries_without_io() {
+    use crate::qoder::{cache_inspection, deployment, staging, unpacking};
+    let f = Fixture::new();
+    let destination = f.dir.join("new");
+    assert!(verify_package_for_release("latest", staging::TARGET, &f.archive).is_err());
+    assert!(
+        staging::stage_package_for_release("latest", staging::TARGET, &f.archive, &destination)
+            .is_err()
+    );
+    assert!(unpacking::unpack_cache_for_release("latest", &f.dir, &destination).is_err());
+    assert!(cache_inspection::inspect_cache_for_release("latest", &f.dir).is_err());
+    assert!(deployment::preview_for_release("latest", &f.dir, &destination).is_err());
+    assert!(
+        deployment::deploy_for_release("latest", &f.dir, &destination, &"a".repeat(64)).is_err()
+    );
+    assert!(!destination.exists());
+    assert_eq!(fs::read_dir(&f.dir).unwrap().count(), 0);
+}

@@ -232,7 +232,7 @@ def fixtures(root):
         paths[kind] = directory
         if kind != 'unknown':
             record = {'format': 1, 'owner': 'agentdeck', 'state': 'incomplete_archive_staging',
-                      'version': '1.1.85', 'target': 'linux-amd64-baseline', 'installed': False}
+                      'version': complete.pinned.VERSION, 'target': 'linux-amd64-baseline', 'installed': False}
             write_private(directory / 'incomplete.json', json.dumps(record).encode())
             write_private(directory / 'archive.tar.gz', CANARY.encode())
         if kind == 'conflict':
@@ -296,6 +296,11 @@ def exercise(driver, paths, root, record, phase=lambda value: None, exact=None):
     driver.wait(lambda: len(driver.elements(tab)) == 1)
     phase('click_qoder_tab')
     driver.click(tab)
+    if complete.pinned.VERSION != complete.pinned.releases.DEFAULT:
+        select = "//*[@id='qoder-release']"
+        driver.wait(lambda: driver.enabled(select))
+        driver.click(select + "/option[@value='" + complete.pinned.VERSION + "']")
+        driver.wait(lambda: driver.value(select) == complete.pinned.VERSION)
     phase('assert_registry_startup_idle')
     if len(driver.elements("//*[@id='workspace-tab-updates' and @aria-label='注册表更新']")) != 1:
         raise Failure('startup_registry_not_idle')
@@ -381,7 +386,7 @@ def exercise_cache_writes(driver, archive, root, records, phase=lambda value: No
         driver.wait(lambda: len(driver.elements(dialog)) == 1)
         text = driver.text(dialog)
         required = ['操作：' + ('暂存归档' if operation == 'stage' else '解包缓存'),
-                    '固定目标：linux-amd64-baseline', '版本：1.1.85',
+                    '固定目标：linux-amd64-baseline', '版本：' + complete.pinned.VERSION,
                     '来源：' + str(source), '全新目录：' + str(destination)]
         if any(value not in text for value in required):
             raise Failure('desktop_confirmation_details_mismatch')
@@ -809,7 +814,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         if CANARY.encode() in retained:
             retained = b'Synthetic private content suppressed.\n'; passed = False
         (evidence / 'driver.log').write_bytes(retained)
-        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'qoder_deployment_checks': deployment_records, 'qoder_deployment_gui_verified': passed and deployment_records == [{'stage': name, 'verified': True} for name in qoder_deploy.STAGES], 'qoder_deployment_gui_boundary': 'Real fixed official payload deployed through UI/IPC. Harness does not launch Qoder; mandatory CLI lane separately traces exec, GUI process execution is not traced. No runtime, login, service or PATH activation acceptance.', 'qoder_deployment_harness_invokes_qoder': False, 'qoder_official_payload_deployed': passed and deployment_records == [{'stage': name, 'verified': True} for name in qoder_deploy.STAGES], 'qoder_deployment_payload_mode': '0700', 'codex_animations_checks': codex_animation_records, 'codex_animations_gui_verified': passed and codex_animation_records == [{'stage': name, 'verified': True} for name in codex_config.ANIMATION_STAGES], 'codex_animations_agent_executed': False, 'codex_config_plan_checks': codex_config_records, 'codex_config_plan_gui_verified': passed and codex_config_records == [{'stage': name, 'verified': True} for name in codex_config.STAGES], 'codex_config_plan_agent_executed': False, 'reviewed_install_checks': install_records, 'reviewed_install_query_trace': install_trace, 'synthetic_install_gui_verified': passed and install_records == [{'stage': name, 'verified': True} for name in install_gui.STAGES], 'real_agent_package_installed_or_executed': False, 'real_agent_package_installed_or_executed_scope': 'Synthetic npm install lane only; separate Qoder deployment lane copies a real official payload without invoking it.', 'registry_or_lifecycle_compatibility_verified': False, 'qwen_owned_checks': qwen_records, 'qwen_owned_gui_verified': passed and qwen_records == [{'stage': name, 'verified': True} for name in qwen.STAGES], 'qwen_current_checks': qwen_current_records, 'qwen_current_gui_verified': passed and qwen_current_records == [{'stage': name, 'verified': True} for name in qwen.CURRENT_STAGES], 'qwen_current_version': '0.27.2', 'qwen_legacy_version': '0.27.0', 'qwen_executed': False, 'desktop_write_checks': write_records, 'scope_checks': scope_records, 'dsh_root_checks': dsh_records, 'dsh_root_gui_verified': passed and len(dsh_records)==3, 'dsh_executed': False, 'synthetic_scope_gui_verified': passed and len(scope_records)==2, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_file_mode_scope': 'Cache data and synthetic configuration; separate deployed Qoder payload mode is 0700.', 'required_directory_mode': '0700'}, indent=2))
+        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'qoder_deployment_checks': deployment_records, 'qoder_deployment_gui_verified': passed and deployment_records == [{'stage': name, 'verified': True} for name in qoder_deploy.STAGES], 'qoder_deployment_gui_boundary': 'Real fixed official payload deployed through UI/IPC. Harness does not launch Qoder; mandatory CLI lane separately traces exec, GUI process execution is not traced. No runtime, login, service or PATH activation acceptance.', 'qoder_deployment_harness_invokes_qoder': False, 'qoder_official_payload_deployed': passed and deployment_records == [{'stage': name, 'verified': True} for name in qoder_deploy.STAGES], 'qoder_deployment_payload_mode': '0700', 'codex_animations_checks': codex_animation_records, 'codex_animations_gui_verified': passed and codex_animation_records == [{'stage': name, 'verified': True} for name in codex_config.ANIMATION_STAGES], 'codex_animations_agent_executed': False, 'codex_config_plan_checks': codex_config_records, 'codex_config_plan_gui_verified': passed and codex_config_records == [{'stage': name, 'verified': True} for name in codex_config.STAGES], 'codex_config_plan_agent_executed': False, 'reviewed_install_checks': install_records, 'reviewed_install_query_trace': install_trace, 'synthetic_install_gui_verified': passed and install_records == [{'stage': name, 'verified': True} for name in install_gui.STAGES], 'real_agent_package_installed_or_executed': False, 'real_agent_package_installed_or_executed_scope': 'Synthetic npm install lane only; separate Qoder deployment lane copies a real official payload without invoking it.', 'registry_or_lifecycle_compatibility_verified': False, 'qwen_owned_checks': qwen_records, 'qwen_owned_gui_verified': passed and qwen_records == [{'stage': name, 'verified': True} for name in qwen.STAGES], 'qwen_current_checks': qwen_current_records, 'qwen_current_gui_verified': passed and qwen_current_records == [{'stage': name, 'verified': True} for name in qwen.CURRENT_STAGES], 'qwen_current_version': '0.27.2', 'qwen_legacy_version': '0.27.0', 'qwen_executed': False, 'desktop_write_checks': write_records, 'scope_checks': scope_records, 'dsh_root_checks': dsh_records, 'dsh_root_gui_verified': passed and len(dsh_records)==3, 'dsh_executed': False, 'synthetic_scope_gui_verified': passed and len(scope_records)==2, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'qoder_release': complete.pinned.VERSION, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_file_mode_scope': 'Cache data and synthetic configuration; separate deployed Qoder payload mode is 0700.', 'required_directory_mode': '0700'}, indent=2))
     if not passed:
         raise Failure('acceptance_not_confirmed')
 
@@ -817,7 +822,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     for name in ('application', 'driver', 'native-driver', 'evidence', 'cli', 'archive', 'dsh-archive'):
         parser.add_argument('--' + name, type=Path, required=True)
+    parser.add_argument('--release', choices=tuple(complete.pinned.releases.RELEASES), default=complete.pinned.releases.DEFAULT)
     args = parser.parse_args()
+    complete.select_release(args.release)
     try:
         guarded_run(args.application, args.driver, args.native_driver, args.evidence, args.cli, args.archive, args.dsh_archive)
     except Exception:

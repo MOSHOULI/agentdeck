@@ -32,7 +32,7 @@ def file_hash(path, mode, size=None, expected=None):
     before = path.lstat()
     if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
             or before.st_uid != os.geteuid() or stat.S_IMODE(before.st_mode) != mode
-            or before.st_size > complete.PAYLOAD_BYTES or (size is not None and before.st_size != size)):
+            or before.st_size > max(c[2] for c in complete.pinned.releases.RELEASES.values()) or (size is not None and before.st_size != size)):
         raise Failure('unsafe_file')
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, 'rb') as stream:
@@ -83,10 +83,10 @@ def check_trace(path, cli):
 def run_preview(cli, cache, destination, env, trace):
     command = ['/usr/bin/strace', '-f', '-qq', '-s', '4096', '-o', str(trace),
                '-e', 'trace=execve,execveat', str(cli), 'qoder', 'deploy-preview',
-               '--cache', str(cache), '--destination', str(destination)]
+               '--cache', str(cache), '--destination', str(destination)] + complete.release_args()
     result = complete.run_cli(command, env)
     check_trace(trace, cli)
-    expected = {'version': '1.1.85', 'target': 'linux-amd64-baseline',
+    expected = {'version': complete.pinned.VERSION, 'target': 'linux-amd64-baseline',
                 'payload_bytes': complete.PAYLOAD_BYTES, 'payload_sha256': complete.PAYLOAD_SHA256,
                 'executable_mode': '0700'}
     if not isinstance(result, dict) or not isinstance(result.get('token'), str) or re.fullmatch('[0-9a-f]{64}', result['token']) is None:
@@ -98,7 +98,7 @@ def run_preview(cli, cache, destination, env, trace):
 def run_deploy(cli, cache, destination, token, env, trace, *, reject=False):
     command = ['/usr/bin/strace', '-f', '-qq', '-s', '4096', '-o', str(trace),
                '-e', 'trace=execve,execveat', str(cli), 'qoder', 'deploy-private',
-               '--cache', str(cache), '--destination', str(destination), '--preview-token', token, '--yes']
+               '--cache', str(cache), '--destination', str(destination), '--preview-token', token, '--yes'] + complete.release_args()
     if not reject:
         result = complete.run_cli(command, env)
     else:
@@ -119,7 +119,7 @@ def run_deploy(cli, cache, destination, token, env, trace, *, reject=False):
 
 
 # Product report and directory validators follow the fixed reviewed CLI contract.
-OUTCOME = {'state': 'private_executable_deployed_not_activated', 'version': '1.1.85',
+OUTCOME = {'state': 'private_executable_deployed_not_activated', 'version': complete.pinned.VERSION,
            'target': 'linux-amd64-baseline', 'executable_mode': '0700',
            'execution_verified': False, 'activated': False}
 
@@ -135,7 +135,7 @@ def exact_fields(value, expected, *, limitations=False):
 
 
 def validate_report(report):
-    exact_fields(report, OUTCOME, limitations=True)
+    exact_fields(report, {**OUTCOME, 'version': complete.pinned.VERSION}, limitations=True)
 
 
 def load_record(path):
@@ -157,10 +157,10 @@ def validate_destination(destination):
         raise Failure('unexpected_deployment_members')
     file_hash(destination / 'qodercli', 0o700, complete.PAYLOAD_BYTES, complete.PAYLOAD_SHA256)
     exact_fields(load_record(destination / 'deployment.intent.json'),
-                 {'format': 1, 'state': 'private_deployment_started', 'version': '1.1.85',
+                 {'format': 1, 'state': 'private_deployment_started', 'version': complete.pinned.VERSION,
                   'target': 'linux-amd64-baseline', 'execution_verified': False, 'activated': False})
     exact_fields(load_record(destination / 'deployment.complete.json'),
-                 {**OUTCOME, 'format': 1, 'payload_bytes': complete.PAYLOAD_BYTES,
+                 {**OUTCOME, 'version': complete.pinned.VERSION, 'format': 1, 'payload_bytes': complete.PAYLOAD_BYTES,
                   'payload_sha256': complete.PAYLOAD_SHA256}, limitations=True)
 
 
@@ -192,15 +192,25 @@ def run(cli, archive, evidence):
            'XDG_CONFIG_HOME': str(home / 'config'), 'XDG_CACHE_HOME': str(home / 'cache'),
            'XDG_DATA_HOME': str(home / 'data'), 'XDG_STATE_HOME': str(home / 'state')}
     cache_root = root / 'caches'; cache_root.mkdir(mode=0o700)
-    report = {'passed': False, 'version': '1.1.85', 'target': 'linux-amd64-baseline',
+    report = {'passed': False, 'version': complete.pinned.VERSION, 'target': 'linux-amd64-baseline',
               'latest_version_claimed': False, 'harness_invokes_qoder': False, 'traced_steps_qoder_executed': None,
-              'boundary': 'Trace covers preview, deploy and repeated deploy only; configuration comparison covers synthetic HOME. Fixed private deployment, not runtime, login, PATH activation, service validation or proof of no other system side effects.',
+              'boundary': 'Trace covers stage, unpack, preview, deploy and repeated deploy; configuration comparison covers synthetic HOME. Fixed private deployment, not runtime, login, PATH activation, service validation or proof of no other system side effects.',
               'source_unchanged': False, 'configuration_unchanged': False,
               'repeat_rejected_unchanged': False, 'preview_unchanged': False, 'preview_exec_count': 0, 'deploy_exec_count': 0, 'repeat_exec_count': 0}
     try:
         before_home = snapshot(home)
         before_archive = (identity(archive.lstat()), complete.file_digest(archive, complete.pinned.SIZE, (complete.pinned.SIZE, complete.pinned.SHA256)))
-        caches, _ = complete.prepare(cli, archive, cache_root, env)
+        preparation_traces = []
+        def traced_preparation(command, environment):
+            trace = root / f'preparation-{len(preparation_traces)}.trace'
+            result = complete.run_cli(['/usr/bin/strace', '-f', '-qq', '-s', '4096', '-o', str(trace),
+                                       '-e', 'trace=execve,execveat'] + command, environment)
+            check_trace(trace, cli)
+            preparation_traces.append(1)
+            return result
+        caches, _ = complete.prepare(cli, archive, cache_root, env, runner=traced_preparation)
+        if preparation_traces != [1, 1]: raise Failure('missing_preparation_traces')
+        report.update(stage_exec_count=1, unpack_exec_count=1)
         before_cache = snapshot(cache_root)
         if snapshot(home) != before_home: raise Failure('preparation_changed_config')
         destination = root / 'private-deployment'
@@ -240,7 +250,9 @@ def main():
     parser.add_argument('--cli', type=Path, required=True)
     parser.add_argument('--archive', type=Path, required=True)
     parser.add_argument('--evidence', type=Path, required=True)
+    parser.add_argument('--release', choices=tuple(complete.pinned.releases.RELEASES), default=complete.pinned.releases.DEFAULT)
     args = parser.parse_args()
+    complete.select_release(args.release)
     try: return 0 if run(args.cli, args.archive, args.evidence) else 1
     except Exception:
         print('Qoder private deployment acceptance could not start')

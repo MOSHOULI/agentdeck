@@ -164,3 +164,29 @@ fn bad_same_length_digest_and_file_snapshot_validation() {
     assert!(digest(&dir, "archive.tar.gz", 3, &"0".repeat(64)).is_err());
     assert!(digest(&dir, "archive.tar.gz", 2, &expected).is_err());
 }
+
+#[test]
+fn explicit_release_never_adopts_other_release_intent_or_changes_records() {
+    let f = Fixture::new();
+    for version in distribution::RELEASES {
+        let bytes = serde_json::to_vec(&serde_json::json!({"format":1,"owner":"agentdeck","state":"incomplete_archive_staging","version":version,"target":staging::TARGET,"installed":false})).unwrap();
+        f.write("incomplete.json", &bytes);
+        for selected in distribution::RELEASES {
+            let report = inspect_cache_for_release(selected, &f.0).unwrap();
+            assert_eq!(report.version, *selected);
+            assert_eq!(
+                report.state,
+                if selected == version {
+                    CacheState::Incomplete
+                } else {
+                    CacheState::UnknownOwnership
+                }
+            );
+            assert_eq!(report.recovery_plan, "preserve_and_review");
+            assert!(!report.deletion_authorized && !report.installed);
+            assert_eq!(fs::read(f.0.join("incomplete.json")).unwrap(), bytes);
+            assert_eq!(fs::read_dir(&f.0).unwrap().count(), 1);
+        }
+    }
+    assert!(inspect_cache_for_release("latest", &f.0).is_err());
+}

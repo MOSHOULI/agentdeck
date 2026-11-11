@@ -41,13 +41,23 @@ pub enum DeploymentError {
     Incomplete,
 }
 pub fn preview(cache: &Path, destination: &Path) -> Result<DeploymentPreview, DeploymentError> {
+    preview_for_release(crate::qoder::distribution::VERSION, cache, destination)
+}
+pub fn preview_for_release(
+    release: &str,
+    cache: &Path,
+    destination: &Path,
+) -> Result<DeploymentPreview, DeploymentError> {
+    let reviewed = crate::qoder::distribution::reviewed_release(release)
+        .map_err(|_| DeploymentError::Unsupported)?;
+
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        linux::preview(cache, destination)
+        linux::preview(reviewed, cache, destination)
     }
     #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
     {
-        let _ = (cache, destination);
+        let _ = (reviewed, cache, destination);
         Err(DeploymentError::Unsupported)
     }
 }
@@ -56,13 +66,29 @@ pub fn deploy(
     destination: &Path,
     token: &str,
 ) -> Result<DeploymentOutcome, DeploymentError> {
+    deploy_for_release(
+        crate::qoder::distribution::VERSION,
+        cache,
+        destination,
+        token,
+    )
+}
+pub fn deploy_for_release(
+    release: &str,
+    cache: &Path,
+    destination: &Path,
+    token: &str,
+) -> Result<DeploymentOutcome, DeploymentError> {
+    let reviewed = crate::qoder::distribution::reviewed_release(release)
+        .map_err(|_| DeploymentError::Unsupported)?;
+
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        linux::deploy(cache, destination, token)
+        linux::deploy(reviewed, cache, destination, token)
     }
     #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
     {
-        let _ = (cache, destination, token);
+        let _ = (reviewed, cache, destination, token);
         Err(DeploymentError::Unsupported)
     }
 }

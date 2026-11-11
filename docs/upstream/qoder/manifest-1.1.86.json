@@ -1,0 +1,93 @@
+{
+  "latest": "1.1.86",
+  "published_at": "2026-11-09T13:05:36.036Z",
+  "files": [
+    {
+      "os": "darwin",
+      "arch": "arm64",
+      "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-darwin-arm64.tar.gz",
+      "sha256": "d57de0037657a8db855bad0136f64a6cf85a296e3aac0952aadd9f82c159c2a1"
+    },
+    {
+      "os": "darwin",
+      "arch": "amd64",
+      "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-darwin-x64.tar.gz",
+      "sha256": "797c4991a52e7e29e3743c3a53b2b68337b2929c04e94a162d2e44adf8eb3006"
+    },
+    {
+      "os": "linux",
+      "arch": "arm64-musl",
+      "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-linux-arm64-musl.tar.gz",
+      "sha256": "76f6c0e97e579fa2a332e1d652be6816efe6ce3d57221862112f07f929b54825"
+    },
+    {
+      "os": "linux",
+      "arch": "arm64",
+      "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-linux-arm64.tar.gz",
+      "sha256": "640d6528a60b045e83eabf57c642096ccec9fb09940633847617c603d703bbaf"
+    },
+    {
+      "os": "linux",
+      "arch": "amd64-baseline",
+      "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-linux-x64-baseline.tar.gz",
+      "sha256": "9673b64b8f651fc883ea8c29fbd61ff19bf78db02d30db6ad4892b58ab3c9b7e"
+    },
+    {
+      "os": "linux",
+      "arch": "amd64-musl",
+      "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-linux-x64-musl.tar.gz",
+      "sha256": "ef2cbce359495d4d923071b4bd8b6a997e597191db547504fd3fef42d44769b1"
+    },
+    {
+      "os": "linux",
+      "arch": "amd64",
+      "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-linux-x64.tar.gz",
+      "sha256": "f88de4dcd41af7d8264ef80da9cc94ef94fb3daf7069920604e8460db2241354"
+    },
+    {
+      "os": "openharmony",
+      "arch": "arm64",
+      "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-openharmony-arm64.tar.gz",
+      "sha256": "19ee72e6c3ae306cfe73f705c4a761b6775eae229b1646cf28abd83b0c3f42ad"
+    },
+    {
+      "os": "windows",
+      "arch": "arm64",
+      "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-windows-arm64.zip",
+      "sha256": "40d7d3704b154571ba33ec4608bbfcdca5abf97ee94df3d5f711ca605c9c3b45",
+      "runtime": "bun",
+      "variant": "standard",
+      "min_windows_build": 17763
+    },
+    {
+      "os": "windows",
+      "arch": "amd64",
+      "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-windows-x64-legacy.zip",
+      "sha256": "f749602e9eaf1a6aa47228a16d49321af963eb16c7aa1f198498283705067af2",
+      "runtime": "node-sea",
+      "variant": "legacy"
+    },
+    {
+      "os": "windows",
+      "arch": "amd64",
+      "url": "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.86/qodercli-windows-x64.zip",
+      "sha256": "404f991c2ac665f2507930c89ccfcbee07005623530f766329cd7babe910b923",
+      "runtime": "bun",
+      "variant": "standard",
+      "min_windows_build": 17763
+    }
+  ],
+  "rollback_versions": [
+    "1.1.85",
+    "1.1.84",
+    "1.1.83",
+    "1.1.82",
+    "1.1.81",
+    "1.1.80",
+    "1.1.79",
+    "1.1.78",
+    "1.1.77",
+    "1.1.76",
+    "1.0.45"
+  ]
+}

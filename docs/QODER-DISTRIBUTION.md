@@ -1,5 +1,14 @@
 # Qoder native distribution plan / Qoder 原生分发计划
 
+> **Release selection / 版本选择:** 1.1.85 remains the default. Explicit
+> 1.1.86 is additionally reviewed; CLI accepts `--release 1.1.86` on Qoder
+> distribution/cache/deployment subcommands, and the desktop has a reviewed-release
+> selector. Caches, receipts and previews are version-bound; no migration,
+> implicit latest selection or reuse of another release's confirmation.
+> 旧版仍可显式选择；不同版本的归档、收据与载荷不能混用。下文历史 1.1.85
+> 证据仍仅适用于该版本，新版来源见 `upstream/qoder/PROVENANCE.md`。
+
+
 ```sh
 aisync qoder distribution-plan --target linux-amd64-baseline
 aisync qoder verify-package --target linux-amd64-baseline \
@@ -57,3 +66,8 @@ not enable installation or extraction. 另有需明确确认的[受控暂存命�
 
 The desktop now provides a separate [read-only plan and verification workspace](QODER-DESKTOP-VERIFICATION.md),
 without download, staging, extraction or installation actions. 桌面现有独立[只读分发计划与包校验](QODER-DESKTOP-VERIFICATION.md)，不开放下载、暂存、解包或安装。
+
+JSON compatibility: cache-inspection and unpack responses now include an additive
+`version` field. Legacy default selection and valid 1.1.85 receipts remain
+compatible, but response bytes and exact field sets are not unchanged. Strict
+consumers must validate the selected version rather than discard this field.

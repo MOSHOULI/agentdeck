@@ -33,16 +33,32 @@ pub fn stage_package(
     archive: &Path,
     destination: &Path,
 ) -> Result<StagedPackage, StagingError> {
+    stage_package_for_release(
+        crate::qoder::distribution::VERSION,
+        target,
+        archive,
+        destination,
+    )
+}
+pub fn stage_package_for_release(
+    release: &str,
+    target: &str,
+    archive: &Path,
+    destination: &Path,
+) -> Result<StagedPackage, StagingError> {
+    let reviewed = crate::qoder::distribution::reviewed_release(release)
+        .map_err(|_| StagingError::Unsupported)?;
+
     if target != TARGET {
         return Err(StagingError::Unsupported);
     }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
-        linux::stage(archive, destination)
+        linux::stage(reviewed, archive, destination)
     }
     #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
     {
-        let _ = (archive, destination);
+        let _ = (reviewed, archive, destination);
         Err(StagingError::Unsupported)
     }
 }
@@ -128,13 +144,18 @@ pub(crate) mod linux {
         .map_err(|_| StagingError::Incomplete)?;
         file.sync_all().map_err(|_| StagingError::Incomplete)
     }
-    pub(super) fn stage(archive: &Path, destination: &Path) -> Result<StagedPackage, StagingError> {
+    pub(super) fn stage(
+        reviewed: distribution::ReviewedRelease,
+        archive: &Path,
+        destination: &Path,
+    ) -> Result<StagedPackage, StagingError> {
         let leaf = destination
             .file_name()
             .and_then(|n| n.to_str())
             .ok_or(StagingError::InvalidDestination)?;
         validate_path(destination, leaf).map_err(|_| StagingError::InvalidDestination)?;
-        let plan = distribution::plan(TARGET).map_err(|_| StagingError::Unsupported)?;
+        let plan = distribution::plan_for_release(reviewed.version, TARGET)
+            .map_err(|_| StagingError::Unsupported)?;
         validate_path(archive, plan.archive_name).map_err(|_| StagingError::Incomplete)?;
         let parent_path = destination
             .parent()
@@ -160,7 +181,7 @@ pub(crate) mod linux {
         record(
             &dir,
             "incomplete.json",
-            &serde_json::json!({"format":1,"owner":"agentdeck","state":"incomplete_archive_staging","version":distribution::VERSION,"target":TARGET,"installed":false}),
+            &serde_json::json!({"format":1,"owner":"agentdeck","state":"incomplete_archive_staging","version":reviewed.version,"target":TARGET,"installed":false}),
         )?;
         let mut copy = new_file(&dir, "archive.tar.gz")?;
         let (digest, bytes) = NativeSelectedFileReader
@@ -216,7 +237,7 @@ pub(crate) mod linux {
         record(
             &dir,
             "completion.pending",
-            &serde_json::json!({"format":1,"owner":"agentdeck","state":"verified_archive_staged_not_installed","version":distribution::VERSION,"target":TARGET,"archive_sha256":plan.sha256,"bytes":bytes,"installed":false,"extracted":false,"limitations":LIMITATIONS}),
+            &serde_json::json!({"format":1,"owner":"agentdeck","state":"verified_archive_staged_not_installed","version":reviewed.version,"target":TARGET,"archive_sha256":plan.sha256,"bytes":bytes,"installed":false,"extracted":false,"limitations":LIMITATIONS}),
         )?;
         // Atomic completion-marker publication without replacing any preexisting name.
         let from = CString::new("completion.pending").unwrap();
@@ -237,7 +258,7 @@ pub(crate) mod linux {
         parent.sync_all().map_err(|_| StagingError::Incomplete)?;
         Ok(StagedPackage {
             state: "verified_archive_staged_not_installed",
-            version: distribution::VERSION,
+            version: reviewed.version,
             target: TARGET,
             bytes,
             installed: false,

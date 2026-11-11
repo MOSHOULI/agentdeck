@@ -101,8 +101,10 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum QoderAction {
-    /// Review fixed Qoder 1.1.85 baseline private executable deployment (no writes).
+    /// Review fixed Qoder reviewed release (default 1.1.85) baseline private executable deployment (no writes).
     DeployPreview {
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        release: String,
         #[arg(long)]
         cache: PathBuf,
         #[arg(long)]
@@ -110,9 +112,11 @@ enum QoderAction {
     },
     /// Copy reviewed payload into a NEW private directory; never execute or activate.
     #[command(
-        long_about = "Linux x86_64 only. Deploy pinned Qoder 1.1.85 baseline to a NEW directory beneath an existing private 0700 parent. Requires a matching deploy-preview token and --yes. Source cache stays non-executable; only the new verified payload gets mode 0700. No PATH, global links, program execution, authentication or configuration changes. Existing destinations are never reused. Any failure after creation may leave executable partial output; preserve for manual review, never retry in place. Not latest-version, signature or runtime compatibility verification."
+        long_about = "Linux x86_64 only. Deploy pinned Qoder reviewed release (default 1.1.85) baseline to a NEW directory beneath an existing private 0700 parent. Requires a matching deploy-preview token and --yes. Source cache stays non-executable; only the new verified payload gets mode 0700. No PATH, global links, program execution, authentication or configuration changes. Existing destinations are never reused. Any failure after creation may leave executable partial output; preserve for manual review, never retry in place. Not latest-version, signature or runtime compatibility verification."
     )]
     DeployPrivate {
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        release: String,
         #[arg(long)]
         cache: PathBuf,
         #[arg(long)]
@@ -124,17 +128,21 @@ enum QoderAction {
     },
     /// Read-only cache state and preservation plan, never deletion or repair authorization.
     #[command(
-        long_about = "Linux x86_64 only. Observe an explicit Qoder 1.1.85 baseline staged or unpacked cache. Fixed record contracts and complete archive/payload hashes are rechecked. No locks, writes, cleanup, execution or PATH changes. Exit zero reports an observation, including conflict/unknown ownership, not readiness or permission to delete. Reads may update access times; same-user races are not an atomic guarantee."
+        long_about = "Linux x86_64 only. Observe an explicit Qoder reviewed release (default 1.1.85) baseline staged or unpacked cache. Fixed record contracts and complete archive/payload hashes are rechecked. No locks, writes, cleanup, execution or PATH changes. Exit zero reports an observation, including conflict/unknown ownership, not readiness or permission to delete. Reads may update access times; same-user races are not an atomic guarantee."
     )]
     InspectCache {
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        release: String,
         #[arg(long)]
         cache: PathBuf,
     },
     /// Strictly unpack a pinned staged cache to a NEW private non-executable directory.
     #[command(
-        long_about = "Linux x86_64 only: validate the explicit staged Qoder 1.1.85 baseline cache and extract its single pinned payload into a NEW private directory. Requires --yes. No execution, activation, PATH, login or configuration changes. Completion means extracted cache only, not installed. Records are not authorization; fixed archive and payload hashes are independently rechecked. Existing destinations are never overwritten. Failure may retain partial output; inspect before manual cleanup, never retry in place."
+        long_about = "Linux x86_64 only: validate the explicit staged Qoder reviewed release (default 1.1.85) baseline cache and extract its single pinned payload into a NEW private directory. Requires --yes. No execution, activation, PATH, login or configuration changes. Completion means extracted cache only, not installed. Records are not authorization; fixed archive and payload hashes are independently rechecked. Existing destinations are never overwritten. Failure may retain partial output; inspect before manual cleanup, never retry in place."
     )]
     UnpackCache {
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        release: String,
         #[arg(long)]
         cache: PathBuf,
         #[arg(long)]
@@ -144,9 +152,11 @@ enum QoderAction {
     },
     /// Stage a pinned archive in a NEW private directory; never unpack, install or execute.
     #[command(
-        long_about = "Create a new explicit private archive cache, only for linux-amd64-baseline@1.1.85 on Linux x86_64. Requires --yes. Existing destinations are never reused or overwritten. Copies and hashes the same audited source handle, then rechecks the private copy. No unpacking, execution, PATH or configuration writes. Failure may retain an incomplete destination; inspect before manual cleanup. Completion means staged archive only, not installed/runtime-ready. Same-user hostile races and mount I/O deadlines are not solved."
+        long_about = "Create a new explicit private archive cache, only for linux-amd64-baseline at the explicit reviewed release (default 1.1.85) on Linux x86_64. Requires --yes. Existing destinations are never reused or overwritten. Copies and hashes the same audited source handle, then rechecks the private copy. No unpacking, execution, PATH or configuration writes. Failure may retain an incomplete destination; inspect before manual cleanup. Completion means staged archive only, not installed/runtime-ready. Same-user hostile races and mount I/O deadlines are not solved."
     )]
     StagePackage {
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        release: String,
         #[arg(long, value_parser = [qoder::staging::TARGET])]
         target: String,
         #[arg(long)]
@@ -158,14 +168,18 @@ enum QoderAction {
     },
     /// Print a pinned native distribution plan; never download, install or execute.
     DistributionPlan {
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        release: String,
         #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(qoder::distribution::TARGETS.iter().copied()))]
         target: String,
     },
     /// Hash an explicit archive against pinned upstream SHA256. No unpacking or execution.
     #[command(
-        long_about = "Check an explicit local archive against the fixed reviewed Qoder 1.1.85 target SHA256. Does not download, unpack, execute, install, modify PATH or configuration. Requires the official archive basename. Exit 0 means only a digest match; NOT independent signature verification, installation or runtime compatibility. Unknown target, unsupported/unsafe file, oversized input and mismatch exit nonzero. Only audited Windows/Linux readers are supported; access time may change and same-user races/mount I/O deadlines are not solved."
+        long_about = "Check an explicit local archive against the fixed reviewed Qoder reviewed release (default 1.1.85) target SHA256. Does not download, unpack, execute, install, modify PATH or configuration. Requires the official archive basename. Exit 0 means only a digest match; NOT independent signature verification, installation or runtime compatibility. Unknown target, unsupported/unsafe file, oversized input and mismatch exit nonzero. Only audited Windows/Linux readers are supported; access time may change and same-user races/mount I/O deadlines are not solved."
     )]
     VerifyPackage {
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        release: String,
         #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(qoder::distribution::TARGETS.iter().copied()))]
         target: String,
         #[arg(long, value_name = "ABSOLUTE_OFFICIAL_ARCHIVE")]
@@ -545,18 +559,28 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             writeln!(std::io::stdout().lock(), "{report}")?;
         }
         Commands::Qoder {
-            action: QoderAction::DeployPreview { cache, destination },
+            action:
+                QoderAction::DeployPreview {
+                    release,
+                    cache,
+                    destination,
+                },
         } => {
             use std::io::Write;
             writeln!(
                 std::io::stdout().lock(),
                 "{}",
-                serde_json::to_string_pretty(&qoder::deployment::preview(&cache, &destination)?)?
+                serde_json::to_string_pretty(&qoder::deployment::preview_for_release(
+                    &release,
+                    &cache,
+                    &destination
+                )?)?
             )?;
         }
         Commands::Qoder {
             action:
                 QoderAction::DeployPrivate {
+                    release,
                     cache,
                     destination,
                     preview_token,
@@ -572,7 +596,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             writeln!(
                 std::io::stdout().lock(),
                 "{}",
-                serde_json::to_string_pretty(&qoder::deployment::deploy(
+                serde_json::to_string_pretty(&qoder::deployment::deploy_for_release(
+                    &release,
                     &cache,
                     &destination,
                     &preview_token
@@ -580,18 +605,21 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             )?;
         }
         Commands::Qoder {
-            action: QoderAction::InspectCache { cache },
+            action: QoderAction::InspectCache { release, cache },
         } => {
             use std::io::Write;
             writeln!(
                 std::io::stdout().lock(),
                 "{}",
-                serde_json::to_string_pretty(&qoder::cache_inspection::inspect_cache(&cache)?)?
+                serde_json::to_string_pretty(&qoder::cache_inspection::inspect_cache_for_release(
+                    &release, &cache
+                )?)?
             )?;
         }
         Commands::Qoder {
             action:
                 QoderAction::UnpackCache {
+                    release,
                     cache,
                     destination,
                     yes,
@@ -602,7 +630,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             writeln!(
                 std::io::stdout().lock(),
                 "{}",
-                serde_json::to_string_pretty(&qoder::unpacking::unpack_cache(
+                serde_json::to_string_pretty(&qoder::unpacking::unpack_cache_for_release(
+                    &release,
                     &cache,
                     &destination
                 )?)?
@@ -611,6 +640,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Qoder {
             action:
                 QoderAction::StagePackage {
+                    release,
                     target,
                     archive,
                     destination,
@@ -622,7 +652,8 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             writeln!(
                 std::io::stdout().lock(),
                 "{}",
-                serde_json::to_string_pretty(&qoder::staging::stage_package(
+                serde_json::to_string_pretty(&qoder::staging::stage_package_for_release(
+                    &release,
                     &target,
                     &archive,
                     &destination
@@ -630,24 +661,31 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             )?;
         }
         Commands::Qoder {
-            action: QoderAction::DistributionPlan { target },
+            action: QoderAction::DistributionPlan { release, target },
         } => {
             use std::io::Write;
             writeln!(
                 std::io::stdout().lock(),
                 "{}",
-                serde_json::to_string_pretty(&qoder::distribution::plan(&target)?)?
+                serde_json::to_string_pretty(&qoder::distribution::plan_for_release(
+                    &release, &target
+                )?)?
             )?;
         }
         Commands::Qoder {
-            action: QoderAction::VerifyPackage { target, archive },
+            action:
+                QoderAction::VerifyPackage {
+                    release,
+                    target,
+                    archive,
+                },
         } => {
             use std::io::Write;
             writeln!(
                 std::io::stdout().lock(),
                 "{}",
-                serde_json::to_string_pretty(&qoder::distribution::verify_package(
-                    &target, &archive
+                serde_json::to_string_pretty(&qoder::distribution::verify_package_for_release(
+                    &release, &target, &archive
                 )?)?
             )?;
         }

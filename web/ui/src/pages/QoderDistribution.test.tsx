@@ -17,9 +17,9 @@ it('requires explicit target and renders all 11 variants with no install actions
   expect(screen.getByRole('button', { name: '查看 Qoder 分发计划' })).toBeDisabled();
   fill(); fireEvent.click(screen.getByRole('button', { name: '查看 Qoder 分发计划' }));
   expect(await screen.findByRole('region', { name: 'Qoder 分发计划结果' })).toHaveTextContent('未安装、未运行');
-  expect(bridge.qoderDistributionPlan).toHaveBeenCalledExactlyOnceWith(plan.target); expect(bridge.verifyQoderPackage).not.toHaveBeenCalled();
+  expect(bridge.qoderDistributionPlan).toHaveBeenCalledExactlyOnceWith(plan.target, '1.1.85'); expect(bridge.verifyQoderPackage).not.toHaveBeenCalled();
   verify(); expect(await screen.findByRole('region', { name: 'Qoder 归档校验结果' })).toHaveTextContent('这不是安装成功');
-  expect(bridge.verifyQoderPackage).toHaveBeenCalledExactlyOnceWith(plan.target, '/selected/archive');
+  expect(bridge.verifyQoderPackage).toHaveBeenCalledExactlyOnceWith(plan.target, '/selected/archive', '1.1.85');
 });
 it.each(['target', 'path', 'clear', 'cancel', 'unmount'])('discards late success after %s and releases busy safely', async change => {
   const work = defer<typeof result>(); vi.mocked(bridge.verifyQoderPackage).mockReturnValue(work.promise);
@@ -97,7 +97,7 @@ it('renders fixed preservation advice, no deletion action, and clears completed 
   vi.spyOn(bridge, 'inspectQoderCache').mockResolvedValue(cacheResult);
   render(<QoderDistribution />); fillCache(); inspectCache();
   expect(await screen.findByRole('region', { name: 'Qoder 缓存诊断结果' })).toHaveTextContent('本报告不授权删除');
-  expect(bridge.inspectQoderCache).toHaveBeenCalledExactlyOnceWith('/selected/cache');
+  expect(bridge.inspectQoderCache).toHaveBeenCalledExactlyOnceWith('/selected/cache', '1.1.85');
   fill(); expect(screen.queryByRole('region', { name: 'Qoder 缓存诊断结果' })).not.toBeInTheDocument();
 });
 it.each(['path', 'target', 'clear', 'cancel', 'unmount'])('discards pending cache observation after %s', async action => {
@@ -180,7 +180,7 @@ it.each(['stage','unpack'] as const)('confirms %s once, locks input and retains 
   const view = render(<QoderDistribution />);
   if (operation === 'unpack') fireEvent.click(screen.getByRole('button', { name: '选择解包缓存' }));
   writeForm(); fireEvent.click(screen.getByRole('button', { name: '确认创建 Qoder 缓存' }));
-  expect(write).toHaveBeenCalledExactlyOnceWith(operation, '/selected/source', '/selected/new-cache', true);
+  expect(write).toHaveBeenCalledExactlyOnceWith(operation, '/selected/source', '/selected/new-cache', true, '1.1.85');
   for (const label of ['Qoder 官方归档绝对路径','Qoder 缓存绝对目录','Qoder 缓存写入来源绝对路径','Qoder 全新缓存绝对目录']) expect(screen.getByLabelText(label)).toBeDisabled();
   expect(screen.getByRole('button', { name: '清除 Qoder 选择与结果' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: '取消 Qoder 结果' })).not.toBeInTheDocument();
@@ -203,7 +203,7 @@ it('renders fixed successful cache result and invalidates confirmation when oper
   expect(screen.getByRole('dialog')).toHaveTextContent('操作：解包缓存');
   fireEvent.click(screen.getByRole('button',{name:'确认创建 Qoder 缓存'}));
   expect(await screen.findByRole('region',{name:'Qoder 缓存写入结果'})).toHaveTextContent('未安装、未运行');
-  expect(write).toHaveBeenCalledExactlyOnceWith('unpack','/selected/source','/selected/new-cache',true);
+  expect(write).toHaveBeenCalledExactlyOnceWith('unpack','/selected/source','/selected/new-cache',true, '1.1.85');
   expect(screen.getByLabelText('Qoder 全新缓存绝对目录')).not.toBeDisabled();
 });
 
@@ -224,7 +224,7 @@ it.each(['complete','unconfirmed'] as const)('keeps immutable %s submission afte
   expect(screen.getByLabelText('Qoder 缓存绝对目录')).toHaveValue('/selected/new-cache');expect(inspect).not.toHaveBeenCalled();expect(write).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole('button',{name:'只读诊断 Qoder 缓存'}));
   expect(await screen.findByRole('region',{name:'Qoder 缓存诊断结果'})).toHaveTextContent('本次只读诊断目录：/selected/new-cache');
-  expect(inspect).toHaveBeenCalledExactlyOnceWith('/selected/new-cache');
+  expect(inspect).toHaveBeenCalledExactlyOnceWith('/selected/new-cache', '1.1.85');
   fireEvent.click(screen.getByRole('button',{name:'清除 Qoder 选择与结果'}));
   expect(screen.queryByRole('region',{name:'Qoder 上次提交记录'})).not.toBeInTheDocument();expect(screen.queryByRole('region',{name:'Qoder 缓存诊断结果'})).not.toBeInTheDocument();
 });
@@ -264,4 +264,65 @@ it('private deployment blocks existing cache operations until actual settlement'
   expect(write).not.toHaveBeenCalled(); expect(deploy).toHaveBeenCalledTimes(1);
   await act(async () => p.resolve({ state: 'private_executable_deployed_not_activated' }));
   expect(screen.getByRole('button', { name: '选择暂存归档' })).toBeEnabled();
+});
+it('release selector defaults old version and discards late read results on explicit switch', async () => {
+  const request = defer<typeof plan>(); vi.mocked(bridge.qoderDistributionPlan).mockReturnValueOnce(request.promise);
+  render(<QoderDistribution />); fill();
+  const selector = screen.getByLabelText('Qoder 已审阅版本'); expect(selector).toHaveValue('1.1.85');
+  fireEvent.click(screen.getByRole('button', { name: '查看 Qoder 分发计划' }));
+  fireEvent.change(selector, { target: { value: '1.1.86' } });
+  await act(async () => { request.resolve(plan); await request.promise; });
+  expect(screen.queryByRole('region', { name: 'Qoder 分发计划结果' })).not.toBeInTheDocument();
+  vi.mocked(bridge.qoderDistributionPlan).mockResolvedValue(validateQoderPlan(qoderRawPlan(plan.target, '1.1.86'), plan.target, '1.1.86'));
+  fireEvent.click(screen.getByRole('button', { name: '查看 Qoder 分发计划' }));
+  expect(await screen.findByRole('region', { name: 'Qoder 分发计划结果' })).toHaveTextContent('版本：1.1.86');
+  expect(bridge.qoderDistributionPlan).toHaveBeenLastCalledWith(plan.target, '1.1.86');
+});
+it('release switches invalidate cache confirmation and writes carry captured version with selector locked', async () => {
+  const request = defer<{ operation: 'stage'; state: 'staged_archive_verified' }>();
+  const write = vi.spyOn(bridge, 'writeQoderCache').mockReturnValue(request.promise);
+  render(<QoderDistribution />);
+  fireEvent.change(screen.getByLabelText('Qoder 缓存写入来源绝对路径'), { target: { value: '/source' } });
+  fireEvent.change(screen.getByLabelText('Qoder 全新缓存绝对目录'), { target: { value: '/new' } });
+  fireEvent.click(screen.getByRole('button', { name: '预览 Qoder 缓存写入' }));
+  const selector = screen.getByLabelText('Qoder 已审阅版本');
+  fireEvent.change(selector, { target: { value: '1.1.86' } }); expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '预览 Qoder 缓存写入' }));
+  expect(screen.getByRole('dialog')).toHaveTextContent('版本：1.1.86');
+  fireEvent.click(screen.getByRole('button', { name: '确认创建 Qoder 缓存' }));
+  expect(selector).toBeDisabled(); expect(write).toHaveBeenCalledExactlyOnceWith('stage', '/source', '/new', true, '1.1.86');
+  await act(async () => { request.resolve({ operation: 'stage', state: 'staged_archive_verified' }); await request.promise; });
+  expect(screen.getByText('已提交版本：1.1.86')).toBeInTheDocument(); expect(selector).not.toBeDisabled();
+});
+it('navigation discards unsubmitted cache confirmation and return cannot revive it', () => {
+  const write = vi.spyOn(bridge, 'writeQoderCache');
+  const { rerender } = render(<QoderDistribution />);
+  fireEvent.change(screen.getByLabelText('Qoder 缓存写入来源绝对路径'), { target: { value: '/source' } });
+  fireEvent.change(screen.getByLabelText('Qoder 全新缓存绝对目录'), { target: { value: '/new' } });
+  fireEvent.click(screen.getByRole('button', { name: '预览 Qoder 缓存写入' })); expect(screen.getByRole('dialog')).toBeInTheDocument();
+  rerender(<QoderDistribution active={false} />); expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '预览 Qoder 缓存写入' })).toBeDisabled();
+  rerender(<QoderDistribution active />); expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); expect(write).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: '预览 Qoder 缓存写入' })); expect(screen.getByRole('dialog')).toBeInTheDocument();
+});
+it('navigation invalidates a late read even after returning to the workspace', async () => {
+  const request = defer<typeof plan>(); vi.mocked(bridge.qoderDistributionPlan).mockReturnValueOnce(request.promise);
+  const { rerender } = render(<QoderDistribution />); fill(); fireEvent.click(screen.getByRole('button', { name: '查看 Qoder 分发计划' }));
+  rerender(<QoderDistribution active={false} />); rerender(<QoderDistribution active />);
+  await act(async () => { request.resolve(plan); await request.promise; });
+  expect(screen.queryByRole('region', { name: 'Qoder 分发计划结果' })).not.toBeInTheDocument();
+});
+it.each(['complete', 'unconfirmed'] as const)('navigation preserves submitted write and its %s historical settlement', async outcome => {
+  const request = defer<{ operation: 'stage'; state: 'staged_archive_verified' }>();
+  const write = vi.spyOn(bridge, 'writeQoderCache').mockReturnValue(request.promise);
+  const { rerender } = render(<QoderDistribution />);
+  fireEvent.change(screen.getByLabelText('Qoder 缓存写入来源绝对路径'), { target: { value: '/source' } });
+  fireEvent.change(screen.getByLabelText('Qoder 全新缓存绝对目录'), { target: { value: '/new' } });
+  fireEvent.click(screen.getByRole('button', { name: '预览 Qoder 缓存写入' })); fireEvent.click(screen.getByRole('button', { name: '确认创建 Qoder 缓存' }));
+  rerender(<QoderDistribution active={false} />); expect(useWorkspaceActivityStore.getState().busy.qoder).toBe(true);
+  await act(async () => { if (outcome === 'complete') request.resolve({ operation: 'stage', state: 'staged_archive_verified' }); else request.reject(new Error('test failure')); try { await request.promise; } catch { /* expected rejection */ } });
+  rerender(<QoderDistribution active />);
+  expect(screen.getByRole('region', { name: 'Qoder 上次提交记录' })).toHaveTextContent(outcome === 'complete' ? '写入曾报告完成' : '写入未确认完成');
+  expect(screen.queryByRole('region', { name: 'Qoder 缓存写入结果' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); expect(write).toHaveBeenCalledTimes(1); expect(useWorkspaceActivityStore.getState().busy.qoder).toBe(false);
 });

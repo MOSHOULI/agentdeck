@@ -1,3 +1,4 @@
+import { requireQoderRelease, type QoderRelease } from './qoderReleases';
 import { validQoderDeploymentPath, validQoderDeploymentToken, validateQoderDeploymentPreview, validateQoderDeploymentOutcome } from "./qoderDeploymentContract";
 import { validSessionRef, parseResidual } from './codexResidualContract';
 import { validateAnimationsCapability, validateAnimationsObservation } from "./codexAnimationsContract";
@@ -67,20 +68,23 @@ export async function restoreQwenVim(settingsPath: string, runtimeManifest: stri
 }
 
 /** Native, read-only Qoder distribution checks. Never stage/unpack/install. */
-export async function qoderDistributionPlan(target: string) {
+export async function qoderDistributionPlan(target: string, release: QoderRelease = '1.1.85') {
+  requireQoderRelease(release);
   useDemo(true); requireQoderTarget(target);
-  return validateQoderPlan(await invoke<unknown>('qoder_distribution_plan', { target }), target);
+  return validateQoderPlan(await invoke<unknown>('qoder_distribution_plan', { target, release }), target, release);
 }
-export async function verifyQoderPackage(target: string, archivePath: string) {
+export async function verifyQoderPackage(target: string, archivePath: string, release: QoderRelease = '1.1.85') {
+  requireQoderRelease(release);
   useDemo(true); requireQoderTarget(target);
   if (typeof archivePath !== 'string' || !archivePath.trim() || new TextEncoder().encode(archivePath).length > 4096 || /[\x00-\x1f\x7f]/.test(archivePath)) throw new Error('请选择长度受限的有效包路径。');
-  return validateQoderVerification(await invoke<unknown>('verify_qoder_package', { target, archivePath }), target);
+  return validateQoderVerification(await invoke<unknown>('verify_qoder_package', { target, archivePath, release }), target, release);
 }
 
-export async function inspectQoderCache(cachePath: string) {
+export async function inspectQoderCache(cachePath: string, release: QoderRelease = '1.1.85') {
+  requireQoderRelease(release);
   useDemo(true);
   if (typeof cachePath !== 'string' || !cachePath.trim() || new TextEncoder().encode(cachePath).length > 4096 || /[\x00-\x1f\x7f]/.test(cachePath)) throw new Error('请选择长度受限的有效缓存路径。');
-  return validateQoderCacheObservation(await invoke<unknown>('inspect_qoder_cache', { cachePath }));
+  return validateQoderCacheObservation(await invoke<unknown>('inspect_qoder_cache', { cachePath, release }), release);
 }
 
 /** Independent of deployment: no registry read, discovery, or lifecycle command. */
@@ -620,10 +624,11 @@ export async function setMemoryCollectionEnabled(enabled: boolean): Promise<void
   return invoke<void>('set_memory_collection_enabled', { enabled });
 }
 
-export async function writeQoderCache(operation: QoderWriteOperation, source: string, destination: string, confirmed: boolean) {
+export async function writeQoderCache(operation: QoderWriteOperation, source: string, destination: string, confirmed: boolean, release: QoderRelease = '1.1.85') {
+  requireQoderRelease(release);
   useDemo(true);
   if (!confirmed || !['stage','unpack'].includes(operation) || [source,destination].some(p => typeof p !== 'string' || !p.startsWith('/') || !p.trim() || new TextEncoder().encode(p).length > 4096 || /[\x00-\x1f\x7f]/.test(p))) throw new Error('QODER_WRITE_INVALID_REQUEST');
-  return validateQoderWrite(await invoke<unknown>('write_qoder_cache', { operation, target: 'linux-amd64-baseline', source, destination, confirmed: true }), operation);
+  return validateQoderWrite(await invoke<unknown>('write_qoder_cache', { operation, target: 'linux-amd64-baseline', source, destination, confirmed: true, release }), operation, release);
 }
 
 export async function inspectQoderScopes(paths: ScopePaths) {
@@ -681,13 +686,15 @@ export async function inspectCodexInstallResidual(sessionRef: string) {
 }
 
 /** Explicit private executable deployment; no demo, download, activation or execution. */
-export async function previewQoderDeployment(source: string, destination: string) {
+export async function previewQoderDeployment(source: string, destination: string, release: QoderRelease = '1.1.85') {
+  requireQoderRelease(release);
   useDemo(true);
   if (!validQoderDeploymentPath(source) || !validQoderDeploymentPath(destination)) throw new Error('请选择有效绝对路径。');
-  return validateQoderDeploymentPreview(await invoke<unknown>('preview_qoder_deployment', { source, destination }));
+  return validateQoderDeploymentPreview(await invoke<unknown>('preview_qoder_deployment', { source, destination, release }), release);
 }
-export async function deployQoderPrivate(source: string, destination: string, token: string, confirmed: boolean) {
+export async function deployQoderPrivate(source: string, destination: string, token: string, confirmed: boolean, release: QoderRelease = '1.1.85') {
+  requireQoderRelease(release);
   useDemo(true);
   if (!confirmed || !validQoderDeploymentPath(source) || !validQoderDeploymentPath(destination) || !validQoderDeploymentToken(token)) throw new Error('请重新预览并确认。');
-  return validateQoderDeploymentOutcome(await invoke<unknown>('deploy_qoder_private', { source, destination, token, confirmed: true }));
+  return validateQoderDeploymentOutcome(await invoke<unknown>('deploy_qoder_private', { source, destination, token, confirmed: true, release }), release);
 }

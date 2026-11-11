@@ -15,14 +15,14 @@ it.each([{ activated: true }, { execution_verified: true }, { state: 'installed'
 it('native bridge preserves exact paths and requires confirmation/token before IPC', async () => {
   Object.assign(window, { __TAURI_INTERNALS__: {} }); vi.mocked(invoke).mockResolvedValue(raw);
   await previewQoderDeployment('/source with space', '/new');
-  expect(invoke).toHaveBeenCalledExactlyOnceWith('preview_qoder_deployment', { source: '/source with space', destination: '/new' });
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('preview_qoder_deployment', { source: '/source with space', destination: '/new', release: '1.1.85' });
   vi.mocked(invoke).mockClear();
   await expect(deployQoderPrivate('/source', '/new', raw.token, false)).rejects.toThrow();
   await expect(deployQoderPrivate('/source', '/new', 'bad', true)).rejects.toThrow();
   for (const path of ['relative', '', '/bad\npath', '/' + '中'.repeat(1366)]) await expect(previewQoderDeployment(path, '/new')).rejects.toThrow();
   expect(invoke).not.toHaveBeenCalled();
   vi.mocked(invoke).mockResolvedValue(outcome); await deployQoderPrivate('/source with space', '/new', raw.token, true);
-  expect(invoke).toHaveBeenCalledExactlyOnceWith('deploy_qoder_private', { source: '/source with space', destination: '/new', token: raw.token, confirmed: true });
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('deploy_qoder_private', { source: '/source with space', destination: '/new', token: raw.token, confirmed: true, release: '1.1.85' });
 });
 it('browser/demo never simulate deployment', async () => {
   await expect(previewQoderDeployment('/source', '/new')).rejects.toThrow();
@@ -33,4 +33,28 @@ it('browser/demo never simulate deployment', async () => {
 it('malformed post-write outcome rejects rather than claiming completion', async () => {
   Object.assign(window, { __TAURI_INTERNALS__: {} }); vi.mocked(invoke).mockResolvedValue({ ...outcome, execution_verified: true });
   await expect(deployQoderPrivate('/source', '/new', raw.token, true)).rejects.toThrow(); expect(invoke).toHaveBeenCalledTimes(1);
+});
+it('accepts explicitly selected 1.1.86 and rejects both directions of mixed release bytes', async () => {
+  const next = { ...raw, version: '1.1.86', payload_bytes: 182412768, payload_sha256: 'fccd0ce90d1119f6bb213146de6e45358db0c89585048c31315ddb180c925ae8' };
+  expect(validateQoderDeploymentPreview(next, '1.1.86')).toEqual({ token: raw.token });
+  expect(() => validateQoderDeploymentPreview(next)).toThrow();
+  expect(() => validateQoderDeploymentPreview(raw, '1.1.86')).toThrow();
+  for (const patch of [{ payload_bytes: raw.payload_bytes }, { payload_sha256: raw.payload_sha256 }, { version: '1.1.85' }]) expect(() => validateQoderDeploymentPreview({ ...next, ...patch }, '1.1.86')).toThrow();
+  expect(() => validateQoderDeploymentPreview({ ...raw, payload_sha256: next.payload_sha256 })).toThrow();
+  expect(validateQoderDeploymentOutcome({ ...outcome, version: '1.1.86' }, '1.1.86')).toEqual({ state: outcome.state });
+  expect(() => validateQoderDeploymentOutcome(outcome, '1.1.86')).toThrow();
+  Object.assign(window, { __TAURI_INTERNALS__: {} }); vi.mocked(invoke).mockResolvedValue(next);
+  await previewQoderDeployment('/source', '/new', '1.1.86');
+  expect(invoke).toHaveBeenLastCalledWith('preview_qoder_deployment', { source: '/source', destination: '/new', release: '1.1.86' });
+  vi.mocked(invoke).mockResolvedValue({ ...outcome, version: '1.1.86' });
+  await deployQoderPrivate('/source', '/new', raw.token, true, '1.1.86');
+  expect(invoke).toHaveBeenLastCalledWith('deploy_qoder_private', { source: '/source', destination: '/new', token: raw.token, confirmed: true, release: '1.1.86' });
+});
+it('rejects arbitrary deployment releases before IPC', async () => {
+  Object.assign(window, { __TAURI_INTERNALS__: {} });
+  for (const release of ['latest', '', '1.1.87'] as never[]) {
+    await expect(previewQoderDeployment('/source', '/new', release)).rejects.toThrow();
+    await expect(deployQoderPrivate('/source', '/new', raw.token, true, release)).rejects.toThrow();
+  }
+  expect(invoke).not.toHaveBeenCalled();
 });

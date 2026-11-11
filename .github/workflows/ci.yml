@@ -355,9 +355,13 @@ jobs:
           retention-days: 14
 
   linux-webview:
-    name: Linux real WebView cache and reviewed install acceptance
+    name: Linux real WebView cache and reviewed install acceptance (${{ matrix.qoder_release }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        qoder_release: ['1.1.85', '1.1.86']
     steps:
       - uses: actions/checkout@v4
         with:
@@ -390,10 +394,12 @@ jobs:
           python -B scripts/test_qoder_complete_fixtures.py
           python -B scripts/test_qoder_private_deploy_acceptance.py
           python -B scripts/test_fetch_qoder_ui_archive.py
+          python -B scripts/test_qoder_releases.py
+          python -B scripts/test_qoder_cross_release_acceptance.py
           python -B scripts/test_dsh_distribution_smoke.py
       - name: Fetch pinned official Qoder archive (never execute)
         timeout-minutes: 4
-        run: python -B scripts/fetch_qoder_ui_archive.py --destination "$RUNNER_TEMP/qoder-linux-official"
+        run: python -B scripts/fetch_qoder_ui_archive.py --release "${{ matrix.qoder_release }}" --destination "$RUNNER_TEMP/qoder-linux-official"
       - name: Fetch pinned official DSH root archive (no CLI or package execution)
         timeout-minutes: 5
         run: python -B scripts/fetch_dsh_ui_archive.py --destination "$RUNNER_TEMP/dsh-linux-official"
@@ -402,14 +408,34 @@ jobs:
       - name: Fixed Qoder private deployment CLI acceptance (never run Qoder)
         timeout-minutes: 8
         run: |
-          python -B scripts/qoder_private_deploy_acceptance.py \
+          python -B scripts/qoder_private_deploy_acceptance.py --release "${{ matrix.qoder_release }}" \
             --cli "$PWD/target/debug/aisync" \
             --archive "$RUNNER_TEMP/qoder-linux-official/qodercli-linux-x64-baseline.tar.gz" \
             --evidence "$RUNNER_TEMP/qoder-private-deploy-evidence"
+      - name: Fetch legacy archive for cross-release rejection (never execute)
+        if: matrix.qoder_release == '1.1.86'
+        timeout-minutes: 4
+        run: python -B scripts/fetch_qoder_ui_archive.py --release 1.1.85 --destination "$RUNNER_TEMP/qoder-linux-legacy"
+      - name: Real mixed-version receipt archive and payload rejection
+        if: matrix.qoder_release == '1.1.86'
+        timeout-minutes: 12
+        run: |
+          python -B scripts/qoder_cross_release_acceptance.py \
+            --cli "$PWD/target/debug/aisync" \
+            --legacy-archive "$RUNNER_TEMP/qoder-linux-legacy/qodercli-linux-x64-baseline.tar.gz" \
+            --current-archive "$RUNNER_TEMP/qoder-linux-official/qodercli-linux-x64-baseline.tar.gz" \
+            --evidence "$RUNNER_TEMP/qoder-cross-release-evidence"
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.qoder_release == '1.1.86'
+        with:
+          name: Qoder-cross-release-${{ env.BUILD_SHA }}
+          path: ${{ runner.temp }}/qoder-cross-release-evidence/result.json
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Qoder-private-deploy-${{ env.BUILD_SHA }}
+          name: Qoder-private-deploy-${{ matrix.qoder_release }}-${{ env.BUILD_SHA }}
           path: ${{ runner.temp }}/qoder-private-deploy-evidence/result.json
           if-no-files-found: error
           retention-days: 14
@@ -423,7 +449,7 @@ jobs:
       - name: Real WebView click/type cache observation and confirmed writes (sandbox retained)
         timeout-minutes: 15
         run: |
-          dbus-run-session -- xvfb-run -a python -B scripts/linux_qoder_webview.py \
+          dbus-run-session -- xvfb-run -a python -B scripts/linux_qoder_webview.py --release "${{ matrix.qoder_release }}" \
             --application "$PWD/target/debug/agentdeck" \
             --driver "$HOME/.cargo/bin/tauri-driver" \
             --native-driver /usr/bin/WebKitWebDriver \
@@ -434,7 +460,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: Linux-webview-${{ env.BUILD_SHA }}
+          name: Linux-webview-${{ matrix.qoder_release }}-${{ env.BUILD_SHA }}
           path: ${{ runner.temp }}/linux-webview-evidence/
           if-no-files-found: warn
           retention-days: 14

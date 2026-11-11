@@ -39,7 +39,7 @@ class Tests(unittest.TestCase):
 
     def test_reports_are_exactly_typed_and_never_mean_installed(self):
         stage={'state':'verified_archive_staged_not_installed','version':'1.1.85','target':'linux-amd64-baseline','bytes':download.SIZE,'installed':False,'extracted':False,'limitations':'fixed'}
-        unpack={'state':'verified_payload_unpacked_not_installed','installed':False,'executable':False,'payload_bytes':subject.PAYLOAD_BYTES,'payload_sha256':subject.PAYLOAD_SHA256,'limitations':'fixed'}
+        unpack={'state':'verified_payload_unpacked_not_installed','version':'1.1.85','installed':False,'executable':False,'payload_bytes':subject.PAYLOAD_BYTES,'payload_sha256':subject.PAYLOAD_SHA256,'limitations':'fixed'}
         for report,is_unpack in [(stage,False),(unpack,True)]:
             subject.validate_report(report,is_unpack)
             for bad in [{**report,'installed':True},{**report,'installed':0},{**report,'unexpected':'SECRET'},{**report,'state':'installed'}]:

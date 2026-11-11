@@ -125,7 +125,11 @@ struct Selection {
     records: Vec<Vec<u8>>,
     token: String,
 }
-fn select(cache: &Path, destination: &Path) -> Result<Selection> {
+fn select(
+    reviewed: distribution::ReviewedRelease,
+    cache: &Path,
+    destination: &Path,
+) -> Result<Selection> {
     for p in [cache, destination] {
         let leaf = p
             .file_name()
@@ -144,11 +148,11 @@ fn select(cache: &Path, destination: &Path) -> Result<Selection> {
     let cache_dir = fsio::directory(cache).map_err(invalid)?;
     let cache_id = directory_identity(&cache_dir)?;
     let payload = open_payload(&cache_dir)?;
-    let metadata = regular(&payload, unpacking::PAYLOAD_BYTES, 0o600)?;
+    let metadata = regular(&payload, reviewed.payload_bytes, 0o600)?;
     let bytes = records(&cache_dir)?;
     // An unsigned record is never sufficient: production inspector independently
     // validates exact record fields, members, full archive AND payload hashes.
-    if cache_inspection::inspect_cache(cache)
+    if cache_inspection::inspect_cache_for_release(reviewed.version, cache)
         .map_err(invalid)?
         .state
         != cache_inspection::CacheState::UnpackedPayloadVerified
@@ -156,11 +160,11 @@ fn select(cache: &Path, destination: &Path) -> Result<Selection> {
         return Err(DeploymentError::Invalid);
     }
     if cache_id != directory_identity(&fsio::directory(cache).map_err(invalid)?)?
-        || snapshot(&metadata) != snapshot(&regular(&payload, unpacking::PAYLOAD_BYTES, 0o600)?)
+        || snapshot(&metadata) != snapshot(&regular(&payload, reviewed.payload_bytes, 0o600)?)
         || snapshot(&metadata)
             != snapshot(&regular(
                 &open_payload(&cache_dir)?,
-                unpacking::PAYLOAD_BYTES,
+                reviewed.payload_bytes,
                 0o600,
             )?)
         || bytes != records(&cache_dir)?
@@ -177,9 +181,9 @@ fn select(cache: &Path, destination: &Path) -> Result<Selection> {
     for value in [
         cache.as_os_str().as_bytes(),
         destination.as_os_str().as_bytes(),
-        distribution::VERSION.as_bytes(),
+        reviewed.version.as_bytes(),
         staging::TARGET.as_bytes(),
-        unpacking::PAYLOAD_SHA256.as_bytes(),
+        reviewed.payload_sha256.as_bytes(),
     ] {
         hash.update((value.len() as u64).to_le_bytes());
         hash.update(value);
@@ -198,13 +202,17 @@ fn select(cache: &Path, destination: &Path) -> Result<Selection> {
         token: format!("{:x}", hash.finalize()),
     })
 }
-pub(super) fn preview(cache: &Path, destination: &Path) -> Result<DeploymentPreview> {
-    let selected = select(cache, destination)?;
+pub(super) fn preview(
+    reviewed: distribution::ReviewedRelease,
+    cache: &Path,
+    destination: &Path,
+) -> Result<DeploymentPreview> {
+    let selected = select(reviewed, cache, destination)?;
     Ok(DeploymentPreview {
-        version: distribution::VERSION,
+        version: reviewed.version,
         target: staging::TARGET,
-        payload_bytes: unpacking::PAYLOAD_BYTES,
-        payload_sha256: unpacking::PAYLOAD_SHA256,
+        payload_bytes: reviewed.payload_bytes,
+        payload_sha256: reviewed.payload_sha256,
         executable_mode: "0700",
         token: selected.token,
         limitations: LIMITATIONS,
@@ -270,11 +278,16 @@ fn verify_named(dir: &File, name: &str, file: &File) -> Result<()> {
     }
     Ok(())
 }
-pub(super) fn deploy(cache: &Path, destination: &Path, token: &str) -> Result<DeploymentOutcome> {
+pub(super) fn deploy(
+    reviewed: distribution::ReviewedRelease,
+    cache: &Path,
+    destination: &Path,
+    token: &str,
+) -> Result<DeploymentOutcome> {
     if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(DeploymentError::Changed);
     }
-    let selected = select(cache, destination)?;
+    let selected = select(reviewed, cache, destination)?;
     if selected.token != token {
         return Err(DeploymentError::Changed);
     }
@@ -282,23 +295,25 @@ pub(super) fn deploy(cache: &Path, destination: &Path, token: &str) -> Result<De
         selected,
         cache,
         destination,
-        &Contract::pinned(),
+        &Contract::pinned(reviewed),
         |_| Ok(()),
     )
 }
 // Private execution stage shared with fault-injection tests. Production always
 // constructs the fixed contract; no caller-selected digest/size API exists.
 struct Contract {
+    version: &'static str,
     bytes: u64,
     sha256: String,
     #[cfg(test)]
     authored_fixture: bool,
 }
 impl Contract {
-    fn pinned() -> Self {
+    fn pinned(reviewed: distribution::ReviewedRelease) -> Self {
         Self {
-            bytes: unpacking::PAYLOAD_BYTES,
-            sha256: unpacking::PAYLOAD_SHA256.into(),
+            version: reviewed.version,
+            bytes: reviewed.payload_bytes,
+            sha256: reviewed.payload_sha256.into(),
             #[cfg(test)]
             authored_fixture: false,
         }
@@ -308,7 +323,7 @@ impl Contract {
         if self.authored_fixture {
             return Ok(());
         }
-        if cache_inspection::inspect_cache(cache)
+        if cache_inspection::inspect_cache_for_release(self.version, cache)
             .map_err(incomplete)?
             .state
             != cache_inspection::CacheState::UnpackedPayloadVerified
@@ -346,7 +361,7 @@ fn execute(
     .map_err(incomplete)?;
     directory_identity(&dir).map_err(incomplete)?;
     no_xattrs(&dir).map_err(incomplete)?;
-    fsio::record(&dir,"deployment.intent.json",&serde_json::json!({"format":1,"state":"private_deployment_started","version":distribution::VERSION,"target":staging::TARGET,"execution_verified":false,"activated":false})).map_err(incomplete)?;
+    fsio::record(&dir,"deployment.intent.json",&serde_json::json!({"format":1,"state":"private_deployment_started","version":contract.version,"target":staging::TARGET,"execution_verified":false,"activated":false})).map_err(incomplete)?;
     let mut output = fsio::new_file(&dir, "qodercli").map_err(incomplete)?;
     let output_before = copy_verified(
         &mut selected.payload,
@@ -408,7 +423,7 @@ fn execute(
     unchanged_output(&output, &executable_baseline, contract.bytes)?;
     verify_named(&dir, "qodercli", &output)?;
     output.sync_all().map_err(incomplete)?;
-    fsio::record(&dir,"deployment.pending.json",&serde_json::json!({"format":1,"state":"private_executable_deployed_not_activated","version":distribution::VERSION,"target":staging::TARGET,"payload_bytes":contract.bytes,"payload_sha256":&contract.sha256,"executable_mode":"0700","execution_verified":false,"activated":false,"limitations":LIMITATIONS})).map_err(incomplete)?;
+    fsio::record(&dir,"deployment.pending.json",&serde_json::json!({"format":1,"state":"private_executable_deployed_not_activated","version":contract.version,"target":staging::TARGET,"payload_bytes":contract.bytes,"payload_sha256":&contract.sha256,"executable_mode":"0700","execution_verified":false,"activated":false,"limitations":LIMITATIONS})).map_err(incomplete)?;
     hook(Stage::BeforePublication)?;
     unchanged_output(&output, &executable_baseline, contract.bytes)?;
     verify_named(&dir, "qodercli", &output)?;
@@ -445,7 +460,7 @@ fn execute(
     }
     Ok(DeploymentOutcome {
         state: "private_executable_deployed_not_activated",
-        version: distribution::VERSION,
+        version: contract.version,
         target: staging::TARGET,
         executable_mode: "0700",
         execution_verified: false,
