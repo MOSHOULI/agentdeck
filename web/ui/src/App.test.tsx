@@ -328,3 +328,23 @@ it.each(['completed', 'pending-success', 'pending-failure'] as const)('clears re
   expect(screen.getByTestId('install-session-record')).toHaveAttribute('data-state', 'unconfirmed');
   expect(inspect).toHaveBeenCalledTimes(1);
 });
+it.each(['completed', 'pending'] as const)('invalidates Qoder private preview on real navigation: %s', async mode => {
+  vi.spyOn(bridge, 'runtimeMode').mockReturnValue('native');
+  let resolve!: (value: { token: string }) => void;
+  const preview = vi.spyOn(bridge, 'previewQoderDeployment').mockImplementation(() => mode === 'completed' ? Promise.resolve({ token: 'a'.repeat(64) }) : new Promise(yes => { resolve = yes; }));
+  const deploy = vi.spyOn(bridge, 'deployQoderPrivate');
+  await renderReadyApp();
+  fireEvent.click(screen.getByRole('tab', { name: /^Qoder 分发与校验/ }));
+  fireEvent.change(screen.getByLabelText('Qoder 已解包缓存绝对目录'), { target: { value: '/cache' } });
+  fireEvent.change(screen.getByLabelText('Qoder 全新私有部署绝对目录'), { target: { value: '/new' } });
+  fireEvent.click(screen.getByRole('button', { name: '预览 Qoder 私有部署' }));
+  if (mode === 'completed') await screen.findByRole('dialog', { name: '确认 Qoder 私有可执行部署' });
+  fireEvent.click(screen.getByRole('tab', { name: /^Agent 管理/ }));
+  if (mode === 'pending') {
+    expect(useWorkspaceActivityStore.getState().busy.qoder).toBe(true);
+    await act(async () => resolve({ token: 'a'.repeat(64) }));
+  }
+  fireEvent.click(screen.getByRole('tab', { name: /^Qoder 分发与校验/ }));
+  expect(screen.queryByRole('dialog', { name: '确认 Qoder 私有可执行部署' })).not.toBeInTheDocument();
+  expect(preview).toHaveBeenCalledTimes(1); expect(deploy).not.toHaveBeenCalled();
+});

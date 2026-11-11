@@ -92,3 +92,31 @@ Qoder runtime or authentication acceptance test.
 
 小型合成测试不等于真实软件验收；官方固定 payload 的实际复制验收也不执行其程序，
 不能因此声称完成运行、认证或完整 GUI 验收。
+
+## Desktop entry / 桌面入口
+
+The Qoder workspace now exposes a separate explicit private deployment section.
+The desktop sends bounded absolute source/destination paths to the real preview
+and displays the captured paths, fixed payload digest/length and 0700 mode. Only
+an explicit second confirmation submits that exact selection and core token.
+Cancel, input change or navigation discards a preview; late preview responses
+cannot revive it. Actual deployment cannot be cancelled or automatically retried.
+A process-local native lock is shared with cache writes and held inside the
+blocking task; the frontend activity owner survives unmount until IPC settles.
+
+No backend limitation text is rendered as instructions. Unsupported hosts fail
+closed. The session submission record preserves the actual submitted destination
+and complete/unconfirmed outcome across workspace navigation, without persisting
+authorization tokens, claiming current file state or granting cleanup rights.
+This entry is still private deployment only: no PATH activation, program execution,
+login, runtime compatibility claim or automatic removal of partial executables.
+
+Qoder 工作区新增独立私有部署区域。先真实只读预览并展示精确源、目标、固定摘要、
+长度与0700权限，再由用户第二次确认；IPC提交原样路径和核心token，不替换路径。
+取消、编辑或导航会作废预览，迟到结果不能恢复确认；实际部署不可取消，不自动重试。
+原生缓存写入与部署共用进程内锁，锁随阻塞任务真实结束才释放；前端操作锁也跨卸载保留。
+
+提交记录只保留当前会话中的实际源、目标与完成/未确认结果，导航不会丢失未知结果，
+但它不是当前文件扫描、所有权或清理授权；不持久保存确认token。
+任何失败都保留“可能已有可执行部分文件”的警告；不自动回滚、删除、激活或执行。
+Windows等非Linux x86_64主机明确拒绝。本功能不代表Qoder运行、登录或兼容性验收。

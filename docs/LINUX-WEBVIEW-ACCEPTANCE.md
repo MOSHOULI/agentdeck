@@ -168,3 +168,39 @@ is introduced. Real GUI acceptance must still pass in hosted Linux CI.
 
 受管 Vim 更新验收新增取消、过期预览拒绝和两次反向更新，逐次核验首次原值和摘要
 始终保留，最终撤销回到首次状态。使用真实 AgentDeck 界面和自建配置，不运行 Qwen。
+
+## Fixed Qoder private executable deployment GUI gate / 固定 Qoder 私有可执行部署
+
+The mandatory real WebView lane additionally exercises the explicit private
+Qoder deployment controls with the verified **1.1.85 linux-amd64-baseline**
+unpacked cache. It does not claim that version is upstream latest. Seven ordered
+stages are required: preview/cancel without writes; input changes discard the
+preview; an external destination creation rejects stale confirmation; one explicit
+confirmation copies the fixed payload; a pre-existing destination rejects another
+preview; clearing controls preserves files; navigation invalidates an unsubmitted
+preview. A failed action is not replayed. Native WebDriver Enter activates buttons;
+there is no DOM script evaluation, direct IPC call or test backend.
+
+The cache remains **0600 non-executable data**. The separately chosen new private
+destination holds the fixed payload at **0700** plus the exact deployment records.
+Every success validates the full official payload length/hash, file ownership,
+link count, modes and exact member set. Source cache bytes/non-atime metadata and
+a private synthetic Qoder configuration sentinel must remain unchanged. Existing
+or harness-created conflict destinations are retained unchanged. A failed deploy
+may leave executable partial files; this lane neither cleans nor retries them.
+The UI keeps its last submitted outcome as session history, not a fresh file-state
+assertion or ownership/cleanup authority.
+
+This lane verifies actual AgentDeck UI → native IPC → filesystem deployment,
+**not Qoder execution, login, runtime compatibility, PATH activation or service
+access**. The harness never launches Qoder. The separate mandatory CLI private
+deployment lane retains its `strace` exec assertions; that trace does not cover the
+WebKit GUI process tree. WebKit sandbox overrides remain prohibited. Synthetic
+offline harness regressions are not substitutes for this real GUI gate.
+
+真实界面新增七阶段固定 Qoder 1.1.85 私有部署验收：预览取消、输入变化废弃确认、
+目标被外部占用后拒绝旧确认、单次确认部署、既有目标拒绝、清除保留文件、导航废弃未
+提交预览。严格比较源缓存及自建配置的字节/元数据；新目标完整校验官方载荷及0700权限。
+缓存本身仍是0600数据，部署不是激活或运行，也不授予自动清理、升级或所有权认领权限。
+独立CLI验收保留强制exec跟踪，但不把该跟踪范围说成GUI进程树；没有执行Qoder或关闭
+WebKit沙箱。任何失败不重放写操作，也不以离线合成回归冒充真实GUI通过。
