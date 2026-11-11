@@ -204,3 +204,19 @@ fn inspect(prefix: &Path, node: &Path) -> Result<CodexStaticObservation> {
 }
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+mod linux;
+
+/// Linux x86_64 observation of one explicit prefix, never runtime or ownership evidence.
+pub fn inspect_codex_linux_static(prefix: &Path, node: &Path) -> Result<CodexStaticObservation> {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        linux::inspect(prefix, node)
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    {
+        let _ = (prefix, node);
+        Err(StaticObservationError)
+    }
+}

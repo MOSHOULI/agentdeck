@@ -72,6 +72,101 @@ class Tests(unittest.TestCase):
         (paths['prefix'] / 'bin/codex').symlink_to('../lib/node_modules/@openai/codex/bin/codex.js')
         return paths, root_records, native_records
 
+    def test_production_static_parser_command_and_closed_output_contract(self):
+        paths = {'prefix': Path('/synthetic/prefix'), 'home': Path('/synthetic/home')}
+        good = json.dumps(subject.STATIC_OBSERVATION).encode()
+        with patch.object(subject, 'bounded_process', return_value=(good, b'')) as process:
+            self.assertEqual(subject.static_observation(Path('/trusted/aisync'), paths, Path('/trusted/node'), {}), subject.STATIC_OBSERVATION)
+            process.assert_called_once_with([str(Path('/trusted/aisync')), 'codex-static-linux', '--prefix', str(paths['prefix']), '--node', str(Path('/trusted/node'))], paths['home'], {}, seconds=30, output_limits=(4096, 0))
+        malformed = [b'x' * 4097, b'[]', good + good, good[:-1] + b',\"schemaVersion\":1}', good.replace(b'bin/codex', b'codex.cmd'), b'not-json', b'{}', good[:-1] + b',"extra":true}',
+                     good.replace(b'"schemaVersion": 1', b'"schemaVersion": true'),
+                     good.replace(b'"applySupported": false', b'"applySupported": 0'),
+                     good.replace(b'runtime_not_run', b'installed')]
+        for output in malformed:
+            with self.subTest(output=output), patch.object(subject, 'bounded_process', return_value=(output, b'')):
+                with self.assertRaises(subject.Failure): subject.static_observation(Path('parser'), paths, Path('node'), {})
+        with patch.object(subject, 'bounded_process', return_value=(good, b'private-output')):
+            with self.assertRaisesRegex(subject.Failure, '^production_static_output_rejected$'):
+                subject.static_observation(Path('parser'), paths, Path('node'), {})
+        with patch.object(subject, 'bounded_process', side_effect=subject.Failure('npm_process_failed')):
+            with self.assertRaisesRegex(subject.Failure, '^production_static_process_failed$'):
+                subject.static_observation(Path('parser'), paths, Path('node'), {})
+
+    def test_static_parser_requires_native_absolute_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parser = Path(tmp) / 'aisync'; parser.write_bytes(b'\x7fELFauthored-never-executed'); parser.chmod(0o700)
+            self.assertEqual(subject.parser_tool(parser), parser.resolve())
+            for mode in (0o600, 0o722, 0o4700):
+                parser.chmod(mode)
+                with self.assertRaisesRegex(subject.Failure, 'static_parser_permissions_rejected'):
+                    subject.parser_tool(parser)
+            parser.chmod(0o700)
+            parser.write_bytes(b'not-native')
+            with self.assertRaises(subject.Failure): subject.parser_tool(parser)
+            with self.assertRaises(subject.Failure): subject.parser_tool(Path('relative'))
+
+    def test_hardlinked_build_requires_independent_identical_copy(self):
+        import shutil
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'aisync'; source.write_bytes(b'\x7fELFtrusted-build-fixture-never-executed'); source.chmod(0o700)
+            os.link(source, root / 'deps')
+            self.assertEqual(source.stat().st_nlink, 2)
+            with self.assertRaisesRegex(subject.Failure, '^unsafe_regular_file$'):
+                subject.parser_tool(source)
+            copied = root / 'verifier'; shutil.copyfile(source, copied); copied.chmod(0o700)
+            self.assertEqual(copied.stat().st_nlink, 1)
+            self.assertEqual(copied.stat().st_size, source.stat().st_size)
+            self.assertEqual(hashlib.sha256(copied.read_bytes()).digest(), hashlib.sha256(source.read_bytes()).digest())
+            self.assertEqual(subject.parser_tool(copied), copied.resolve())
+
+    def test_static_process_enforces_capture_limits(self):
+        for code in ['print("x" * 4097)', 'import sys; sys.stderr.write("x")']:
+            with self.assertRaisesRegex(subject.Failure, 'npm_output_limit'):
+                subject.bounded_process([sys.executable, '-c', code], self.root,
+                                        {}, seconds=5, output_limits=(4096, 0))
+
+    def test_bridge_requires_complete_checks_before_and_after(self):
+        paths, roots, native = self.installed()
+        events = []
+        real_verify = subject.verify_install
+        def verify(*args):
+            events.append('verify')
+            return real_verify(*args)
+        def observe(*args):
+            events.append('static')
+            return subject.STATIC_OBSERVATION
+        with patch.object(subject, 'toolchain', return_value=(Path('/node'), Path('/npm'))), \
+                patch.object(subject, 'parser_tool', return_value=Path('/parser')), \
+                patch.object(subject, 'prepare', return_value=paths), \
+                patch.object(subject, 'download'), \
+                patch.object(subject, 'inventory', side_effect=[roots, native] * 3), \
+                patch.object(subject, 'bounded_process') as npm, \
+                patch.object(subject, 'verify_install', side_effect=verify), \
+                patch.object(subject, 'static_observation', side_effect=observe) as static:
+            result = subject.run(Path('/node'), Path('/npm'), Path('/parser'))
+            self.assertTrue(result['production_static_parser_verified'])
+            self.assertEqual(events, ['verify', 'static', 'verify'])
+            self.assertEqual(npm.call_count, 1)
+            def mutate(*args):
+                (paths['home'] / '.codex').mkdir()
+                return subject.STATIC_OBSERVATION
+            static.side_effect = mutate
+            with self.assertRaisesRegex(subject.Failure, 'configuration_side_effect'):
+                subject.run(Path('/node'), Path('/npm'), Path('/parser'))
+            static.reset_mock()
+            with self.assertRaisesRegex(subject.Failure, 'configuration_side_effect'):
+                subject.run(Path('/node'), Path('/npm'), Path('/parser'))
+            static.assert_not_called()
+
+    def test_parser_is_mandatory_before_any_install(self):
+        with patch.object(sys, 'argv', ['verifier', '--node', '/node', '--npm', '/npm',
+                                      '--evidence', str(self.root / 'missing-parser.json')]), \
+                patch.object(subject, 'run') as run:
+            with self.assertRaises(SystemExit): subject.main()
+            run.assert_not_called()
+        self.assertFalse((self.root / 'missing-parser.json').exists())
+
     def test_pins_are_fixed_platform_and_version(self):
         self.assertEqual(subject.ROOT.version, '0.167.0')
         self.assertEqual(subject.NATIVE.version, '0.167.0-linux-x64')
@@ -180,13 +275,14 @@ class Tests(unittest.TestCase):
 
     def test_main_failure_evidence_is_fixed_and_does_not_claim_install(self):
         evidence = self.root / 'result.json'
-        argv = ['codex_official_install.py', '--node', '/node', '--npm', '/npm', '--evidence', str(evidence)]
+        argv = ['codex_official_install.py', '--node', '/node', '--npm', '/npm', '--parser', '/parser', '--evidence', str(evidence)]
         with patch.object(sys, 'argv', argv), patch.object(subject, 'run', side_effect=RuntimeError('SECRET-OUTPUT')):
             self.assertEqual(subject.main(), 1)
         result = json.loads(evidence.read_text())
         self.assertEqual(result['failure_code'], 'installation_verification_failed')
         self.assertFalse(result['real_npm_filesystem_install_verified'])
         self.assertFalse(result['codex_executed'])
+        self.assertFalse(result['production_static_parser_verified'])
         self.assertNotIn('SECRET-OUTPUT', evidence.read_text())
         with patch.object(sys, 'argv', argv), patch.object(subject, 'run') as run:
             with self.assertRaises(FileExistsError): subject.main()
