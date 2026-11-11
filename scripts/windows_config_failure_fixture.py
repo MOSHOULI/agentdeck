@@ -62,13 +62,34 @@ def setup(root, node, home):
     return result
 
 
+def prepare_hardlinks(m):
+    """After malformed-marker stages, author valid content and aliases while App is stopped."""
+    targets = list(m['configurationTargets'])
+    aliases = []
+    for _, _, _, instruction in AGENTS:
+        target = Path(m['home']) / instruction
+        safe_file(target, 65536)
+        alias = Path(m['root']) / (target.parent.name + '-instructions-alias.md')
+        if os.path.lexists(alias):
+            raise ValueError('alias_exists')
+        target.write_bytes(b'# Valid authored instructions\r\nPreserve this shared file.\r\n')
+        os.link(target, alias)
+        os.utime(target, ns=(946684800000000000, 946684800000000000))
+        aliases.append(str(alias))
+    m['configurationTargets'] = targets + aliases
+    m['hardlinkAliases'] = aliases
+    return m
+
+
 def snapshot(paths):
     result = []
     for value in paths:
         path = Path(value)
-        data = safe_file(path, 65536)
-        s = path.stat()
-        if not s.st_ino or s.st_nlink != 1:
+        s = path.lstat()
+        if not stat.S_ISREG(s.st_mode) or s.st_size > 65536 or getattr(s, 'st_file_attributes', 0) & 0x400:
+            raise ValueError('unsafe_configuration_fixture')
+        data = path.read_bytes()
+        if not s.st_ino or s.st_nlink not in (1, 2):
             raise ValueError('file_identity_unavailable')
         result.append(dict(hash=hashlib.sha256(data).hexdigest(), size=s.st_size,
                            device=s.st_dev, fileId=s.st_ino, links=s.st_nlink,
@@ -94,7 +115,7 @@ def verify(m):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('action', choices=('prepare', 'snapshot', 'verify'))
+    p.add_argument('action', choices=('prepare', 'prepare-hardlinks', 'snapshot', 'verify'))
     p.add_argument('--root', type=Path)
     p.add_argument('--node', type=Path)
     p.add_argument('--home', type=Path)
@@ -106,7 +127,12 @@ def main():
         print(setup(args.root, args.node, args.home))
     else:
         m = json.loads(safe_file(args.manifest, 65536))
-        print(json.dumps(snapshot(m['configurationTargets']) if args.action == 'snapshot' else verify(m)))
+        if args.action == 'prepare-hardlinks':
+            m = prepare_hardlinks(m)
+            args.manifest.write_text(json.dumps(m), encoding='utf-8')
+            print(json.dumps({'prepared': True}))
+        else:
+            print(json.dumps(snapshot(m['configurationTargets']) if args.action == 'snapshot' else verify(m)))
 
 
 if __name__ == '__main__':

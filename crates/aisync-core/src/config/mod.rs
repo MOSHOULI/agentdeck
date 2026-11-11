@@ -15,6 +15,7 @@ pub mod codex_animations;
 pub mod codex_animations_fs;
 pub mod codex_animations_observation;
 mod codex_preview;
+mod destination;
 pub use codex_preview::{
     CodexConfigurationPreview, CodexConfigurationTarget, preview_codex_configuration,
 };
@@ -140,6 +141,7 @@ fn expand_home(path: &str) -> PathBuf {
 }
 
 fn backup_file_in(path: &Path, home: &Path) -> crate::Result<Option<PathBuf>> {
+    destination::check(path)?;
     if !path.is_file() {
         return Ok(None);
     }
@@ -161,6 +163,7 @@ fn backup_file_in(path: &Path, home: &Path) -> crate::Result<Option<PathBuf>> {
 }
 
 fn backup_file(path: &Path) -> crate::Result<Option<PathBuf>> {
+    destination::check(path)?;
     if !path.is_file() {
         return Ok(None);
     }
@@ -173,11 +176,12 @@ fn write_file(path: &Path, content: &str) -> crate::Result<()> {
 }
 
 fn write_bytes(path: &Path, content: &[u8]) -> crate::Result<()> {
+    destination::check(path)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let temporary = path.with_file_name(format!(".agentdeck-{}.tmp", uuid::Uuid::new_v4()));
-    let result = (|| -> std::io::Result<()> {
+    let result = (|| -> crate::Result<()> {
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -188,6 +192,7 @@ fn write_bytes(path: &Path, content: &[u8]) -> crate::Result<()> {
         file.write_all(content)?;
         file.sync_all()?;
         drop(file);
+        destination::check(path)?;
         #[cfg(windows)]
         {
             use std::os::windows::ffi::OsStrExt;
@@ -195,12 +200,15 @@ fn write_bytes(path: &Path, content: &[u8]) -> crate::Result<()> {
             let src: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
             let dst: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
             if unsafe { MoveFileExW(src.as_ptr(), dst.as_ptr(), MOVEFILE_REPLACE_EXISTING) } == 0 {
-                return Err(std::io::Error::last_os_error());
+                return Err(std::io::Error::last_os_error().into());
             }
             Ok(())
         }
         #[cfg(not(windows))]
-        fs::rename(&temporary, path)
+        {
+            fs::rename(&temporary, path)?;
+            Ok(())
+        }
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
@@ -304,6 +312,7 @@ fn merge_toml_tables(target: &mut toml_edit::Table, additions: &toml_edit::Table
 
 /// 合并 TOML section（不产生重复段，不触碰其他内容）
 fn patch_toml_section(target: &Path, section_text: &str) -> crate::Result<()> {
+    destination::check(target)?;
     let mut doc: toml_edit::Document = if target.exists() {
         let content = fs::read_to_string(target)?;
         content
@@ -321,6 +330,7 @@ fn patch_toml_section(target: &Path, section_text: &str) -> crate::Result<()> {
 }
 
 fn merge_yaml(target: &Path, additions: &str) -> crate::Result<()> {
+    destination::check(target)?;
     let base: Value = if target.exists() {
         let text = fs::read_to_string(target)?;
         if text.trim().is_empty() {
@@ -356,6 +366,7 @@ fn inject_with_backup(
     content: &str,
     _backup: Option<PathBuf>,
 ) -> crate::Result<()> {
+    destination::check(target_path)?;
     let result = match format {
         Format::PlainText => write_file(target_path, content),
         Format::JsonMerge | Format::JsoncMerge => {
@@ -443,6 +454,7 @@ const INSTRUCTIONS_END: &str = "<!-- agentdeck:personalization:end -->";
 /// Replace only our managed block; never replace user-authored instructions.
 fn managed_instructions(target: &Path, template: &str) -> crate::Result<String> {
     validate_instruction_template(template)?;
+    destination::check(target)?;
     let existing = match fs::read_to_string(target) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -548,6 +560,7 @@ fn inject_journaled(
     target_home: Option<&Path>,
     committed: &mut Vec<(PathBuf, Option<Vec<u8>>)>,
 ) -> crate::Result<()> {
+    destination::check(target)?;
     let before = match fs::read(target) {
         Ok(bytes) => Some(bytes),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -632,6 +645,15 @@ fn inject_for_agent_apply(
     })
 }
 
+fn rollback_target(path: &Path, before: Option<Vec<u8>>) -> crate::Result<()> {
+    destination::check(path)?;
+    match before {
+        Some(bytes) => write_bytes(path, &bytes),
+        None if path.is_file() => fs::remove_file(path).map_err(crate::Error::from),
+        None => Ok(()),
+    }
+}
+
 /// Journal only completed replacements. Validation failures and skipped adapters
 /// must not cause an untouched destination to be rewritten during rollback.
 fn inject_for_agent_with_home(
@@ -645,11 +667,7 @@ fn inject_for_agent_with_home(
     if let Err(error) = result {
         let mut failures = Vec::new();
         for (path, before) in committed.into_iter().rev() {
-            let restore = match before {
-                Some(bytes) => write_bytes(&path, &bytes),
-                None if path.is_file() => fs::remove_file(&path).map_err(crate::Error::from),
-                None => Ok(()),
-            };
+            let restore = rollback_target(&path, before);
             if let Err(e) = restore {
                 failures.push(format!("{}: {}", path.display(), e));
             }
@@ -691,7 +709,8 @@ mod tests {
             .as_nanos();
         let dir = std::env::temp_dir().join(format!("agentdeck-{}-{}", tag, nanos));
         fs::create_dir_all(&dir).unwrap();
-        dir
+        // macOS temporary directories can have platform-owned linked ancestors.
+        fs::canonicalize(dir).unwrap()
     }
 
     fn temp_home_target(tag: &str, file_name: &str) -> (PathBuf, PathBuf) {
@@ -1047,6 +1066,162 @@ mod tests {
             report.model_config,
             Some(InjectStatus::Skipped("缺少配置内容源".into()))
         );
+    }
+
+    #[test]
+    fn linked_destination_hardlinks_refused_before_backup() {
+        let home = temp_dir("linked-destination");
+        let target = home.join("instructions.md");
+        let alias = home.join("alias.md");
+        fs::write(&target, "user instructions").unwrap();
+        fs::hard_link(&target, &alias).unwrap();
+        let before = fs::symlink_metadata(&target).unwrap();
+        let result = inject_in_home(Format::PlainText, &target, "replacement", &home);
+        assert!(result.is_err(), "linked destination must be refused");
+        assert_untouched(&target, &before, b"user instructions");
+        assert_eq!(fs::read(&alias).unwrap(), b"user instructions");
+        assert!(!home.join(".agentdeck/backups").exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn linked_destination_agents_preserve_valid_hardlinks() {
+        let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        for id in ["claude-code", "gemini-cli", "codex"] {
+            let home = temp_dir("linked-agent");
+            let source = profile_source_dir_in(&home).unwrap();
+            let agent = doc.agents.get(id).unwrap();
+            let target = expand_home_in(
+                &agent.config_inject.personalization.as_ref().unwrap().target,
+                &home,
+            );
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(&target, "valid user instructions").unwrap();
+            let alias = home.join("alias.md");
+            fs::hard_link(&target, &alias).unwrap();
+            let before = fs::symlink_metadata(&target).unwrap();
+            let error = inject_for_agent_in_home(agent, &source, &home).unwrap_err();
+            assert!(error.to_string().contains("Manage it with the tool"));
+            assert_untouched(&target, &before, b"valid user instructions");
+            assert_eq!(fs::read(&alias).unwrap(), b"valid user instructions");
+            assert!(!home.join(".agentdeck/backups").exists());
+            fs::remove_dir_all(home).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_destination_symlink_dangling_and_parent_are_refused() {
+        use std::os::unix::fs::symlink;
+        for kind in ["leaf", "dangling", "parent"] {
+            let home = temp_dir("linked-path");
+            let original = home.join("original");
+            let target = if kind == "parent" {
+                fs::create_dir(&original).unwrap();
+                fs::write(original.join("instructions.md"), "user instructions").unwrap();
+                symlink(&original, home.join("parent")).unwrap();
+                home.join("parent/instructions.md")
+            } else {
+                if kind == "leaf" {
+                    fs::write(&original, "user instructions").unwrap();
+                }
+                symlink(&original, home.join("instructions.md")).unwrap();
+                home.join("instructions.md")
+            };
+            assert!(inject_in_home(Format::PlainText, &target, "replacement", &home).is_err());
+            assert!(!home.join(".agentdeck/backups").exists());
+            if kind == "parent" {
+                assert!(home.join("parent").is_symlink());
+                assert_eq!(
+                    fs::read(original.join("instructions.md")).unwrap(),
+                    b"user instructions"
+                );
+            } else {
+                assert_eq!(fs::read_link(&target).unwrap(), original);
+                if kind == "leaf" {
+                    assert_eq!(fs::read(&original).unwrap(), b"user instructions");
+                } else {
+                    assert!(!original.exists());
+                }
+            }
+            fs::remove_dir_all(home).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_destination_missing_then_parent_traversal_is_refused() {
+        use std::os::unix::fs::symlink;
+        let home = temp_dir("linked-parent-traversal");
+        let original = home.join("original");
+        fs::create_dir(&original).unwrap();
+        let original_file = original.join("instructions.md");
+        fs::write(&original_file, "user instructions").unwrap();
+        symlink(&original, home.join("linked-parent")).unwrap();
+        let target = home.join("missing/../linked-parent/instructions.md");
+        let before = fs::symlink_metadata(&original_file).unwrap();
+        assert!(inject_in_home(Format::PlainText, &target, "replacement", &home).is_err());
+        assert!(write_bytes(&target, b"replacement").is_err());
+        assert_untouched(&original_file, &before, b"user instructions");
+        assert_eq!(fs::read_link(home.join("linked-parent")).unwrap(), original);
+        assert!(!home.join("missing").exists());
+        assert!(!home.join(".agentdeck/backups").exists());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn linked_destination_write_and_rollback_primitive_refuse_new_links() {
+        let home = temp_dir("linked-recheck");
+        let target = home.join("instructions.md");
+        write_bytes(&target, b"first write").unwrap();
+        let alias = home.join("alias.md");
+        fs::hard_link(&target, &alias).unwrap();
+        let before = fs::symlink_metadata(&target).unwrap();
+        assert!(write_bytes(&target, b"original rollback bytes").is_err());
+        assert!(rollback_target(&target, Some(b"original rollback bytes".to_vec())).is_err());
+        assert!(rollback_target(&target, None).is_err());
+        assert_untouched(&target, &before, b"first write");
+        assert_eq!(fs::read(&alias).unwrap(), b"first write");
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn linked_destination_skipped_template_and_adapter_are_not_inspected() {
+        let doc = crate::registry::parse_registry(REGISTRY_JSON).unwrap();
+        for id in ["claude-code", "gemini-cli", "opencode", "codex"] {
+            let home = temp_dir("linked-skipped");
+            let source = profile_source_dir_in(&home).unwrap();
+            let mut agent = doc.agents.get(id).unwrap().clone();
+            let p = agent.config_inject.personalization.as_ref().unwrap();
+            let target = expand_home_in(&p.target, &home);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(&target, "user instructions").unwrap();
+            fs::hard_link(&target, home.join("alias")).unwrap();
+            fs::remove_file(
+                source
+                    .join("personalization")
+                    .join(&p.template)
+                    .join("AGENTS.md"),
+            )
+            .unwrap();
+            agent.config_inject.model_config = Some(crate::registry::ModelConfigInject {
+                file: p.target.clone(),
+                format: "unknown".into(),
+            });
+            let before = fs::symlink_metadata(&target).unwrap();
+            let report = inject_for_agent_in_home(&agent, &source, &home).unwrap();
+            assert!(matches!(
+                report.personalization,
+                Some(InjectStatus::Skipped(_))
+            ));
+            assert!(matches!(
+                report.model_config,
+                Some(InjectStatus::Skipped(_))
+            ));
+            assert_untouched(&target, &before, b"user instructions");
+            assert!(!home.join(".agentdeck/backups").exists());
+            fs::remove_dir_all(home).unwrap();
+        }
     }
 
     fn assert_untouched(path: &Path, before: &fs::Metadata, bytes: &[u8]) {
