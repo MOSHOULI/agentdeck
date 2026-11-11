@@ -324,10 +324,10 @@ export const MemoryPanel: React.FC = () => {
           </select>
           <button className="button" data-testid="memory-export-load" disabled={writeDisabled} onClick={() => void loadExport()}>读取已保存选择</button>
         </div>
-        <p className="muted">当前导出目标：{agentLabel(target)} · ~/.agentdeck/memory/{target}.md · 手动最多 200 条，最终最多 500 条；超限会报错，不会截断。读取不会采集会话。</p>
+        <p className="muted">{`当前导出目标：${agentLabel(target)} · ~/.agentdeck/memory/${target}.md · 手动最多 200 条，最终最多 500 条；超限会报错，不会截断。读取不会采集会话。`}</p>
         {readOnly && <p>导出编辑仅在桌面后端可用，浏览器与演示模式不会写入。</p>}
         {!snapshot && <p data-testid="memory-export-unread">请读取当前目标的已保存选择后编辑。当前草稿不能提交。</p>}
-        {snapshot && <p data-testid="memory-export-saved">已保存手动 {snapshot.manualEntries.length} 条；目标自动导出 {snapshot.automaticEntries.length} 条。{!snapshot.databaseExists && '本地记忆库尚不存在。'}</p>}
+        {snapshot && <p data-testid="memory-export-saved">{`已保存手动 ${snapshot.manualEntries.length} 条；目标自动导出 ${snapshot.automaticEntries.length} 条。${!snapshot.databaseExists ? '本地记忆库尚不存在。' : ''}`}</p>}
         <h3>手动选择草稿（{draft.length} / 200）</h3>
         <p className="muted">独立于下方最多 50 条的查询结果。添加或移除仅修改草稿。</p>
         <ul className="memory-entries" aria-label="手动选择草稿" data-testid="memory-export-draft">
@@ -346,7 +346,7 @@ export const MemoryPanel: React.FC = () => {
         <p className="muted">清空手动选择仍保留自动导出、数据库、其他目标及采集设置。重置或取消不会写入。</p>
         {preview && <section className="memory-export-preview" aria-label="导出替换预览" data-testid="memory-export-preview-result">
           <h3>{agentLabel(preview.agentId)} 替换预览</h3>
-          <p>手动 {preview.manualEntries.length} 条 + 自动 {preview.automaticEntries.length} 条，去重后 {preview.outputEntries.length} 条。</p>
+          <p>{`手动 ${preview.manualEntries.length} 条 + 自动 ${preview.automaticEntries.length} 条，去重后 ${preview.outputEntries.length} 条。`}</p>
           <p>确认将替换此目标之前的全部手动选择。{preview.manualEntries.length === 0 && '本次清空手动选择，自动导出仍保留。'}</p>
           <ul className="memory-entries" aria-label="最终导出内容">{preview.outputEntries.map(row => <li key={row.id} className="memory-entry"><div>{agentLabel(row.agentId)} · #{row.id}</div><p className="memory-entry-content">{row.content}</p></li>)}</ul>
           <div className="toolbar">
@@ -361,7 +361,7 @@ export const MemoryPanel: React.FC = () => {
       <section className="panel memory-library" aria-labelledby="memory-library-title">
         <div className="panel-heading">
           <h2 id="memory-library-title"><Icon name="search" />检索记忆</h2>
-          {submittedQuery !== null && <span className="status-badge">本次查询 {results.length} 条</span>}
+          {submittedQuery !== null && <span className="status-badge">{`本次查询 ${results.length} 条`}</span>}
         </div>
         <form className="memory-search" onSubmit={(event) => { event.preventDefault(); void onSearch(); }}>
           <div className="field memory-search-field">

@@ -528,3 +528,49 @@ it('reports uncertain automatic-export rollback honestly and requires an export 
   expect(screen.getByTestId('memory-export-preview')).toBeDisabled();
   expect(bridge.replaceMemoryExport).not.toHaveBeenCalled();
 });
+
+
+function expectSingleTextNode(element: HTMLElement, text: string) {
+  expect(element.textContent).toBe(text);
+  expect(element.childNodes).toHaveLength(1);
+  expect(element.firstChild?.nodeType).toBe(Node.TEXT_NODE);
+  expect(element.firstChild?.textContent).toBe(text);
+}
+
+it.each([
+  {target: 'codex', label: 'Codex'},
+  {target: 'claude-code', label: 'Claude'},
+  {target: 'opencode', label: 'OpenCode'},
+])('keeps the $target target summary as one unchanged native-accessibility text node', async ({target, label}) => {
+  render(<MemoryPanel />);
+  fireEvent.change(screen.getByLabelText('导出目标'), {target: {value: target}});
+  const text = `当前导出目标：${label} · ~/.agentdeck/memory/${target}.md · 手动最多 200 条，最终最多 500 条；超限会报错，不会截断。读取不会采集会话。`;
+  expectSingleTextNode(screen.getByText(text), text);
+  await waitFor(() => expect(screen.getByRole('checkbox', {name: /允许每小时自动采集/})).toBeEnabled());
+});
+
+it.each([false, true])('keeps saved/preview counts as single text nodes when databaseExists=%s', async databaseExists => {
+  const automatic = {...exportRow, autoInject: true};
+  const selected = {...exportRow, id: '99'};
+  const manualEntries = databaseExists ? [automatic, selected] : [];
+  const automaticEntries = databaseExists ? [automatic] : [];
+  vi.mocked(bridge.readMemoryExport).mockResolvedValue({...snapshot, databaseExists, manualEntries, automaticEntries});
+  vi.mocked(bridge.previewMemoryExport).mockResolvedValue({...preview, manualEntries, automaticEntries, outputEntries: manualEntries});
+  render(<MemoryPanel />);
+  await loadSelection();
+  expectSingleTextNode(screen.getByTestId('memory-export-saved'), databaseExists
+    ? '已保存手动 2 条；目标自动导出 1 条。'
+    : '已保存手动 0 条；目标自动导出 0 条。本地记忆库尚不存在。');
+  fireEvent.click(screen.getByTestId('memory-export-preview'));
+  await screen.findByTestId('memory-export-confirm');
+  const text = databaseExists ? '手动 2 条 + 自动 1 条，去重后 2 条。' : '手动 0 条 + 自动 0 条，去重后 0 条。';
+  expectSingleTextNode(screen.getByText(text), text);
+});
+
+it.each([0, 50])('keeps the query count %s as one native-accessibility text node', async count => {
+  vi.mocked(bridge.searchMemory).mockResolvedValue(Array.from({length: count}, (_, index) => ({...entry, id: String(index + 1)})));
+  render(<MemoryPanel />);
+  fireEvent.click(screen.getByRole('button', {name: '搜索'}));
+  const text = `本次查询 ${count} 条`;
+  expectSingleTextNode(await screen.findByText(text), text);
+});
