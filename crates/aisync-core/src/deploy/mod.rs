@@ -11,7 +11,8 @@ mod process_guard;
 pub mod residual;
 pub use inspection::{
     CodexStaticObservation, InstallPreview, InstallationDetails, InstallationInstance,
-    InstallationSource, StaticObservationError, inspect_codex_windows_static, inspect_installation,
+    InstallationSource, StaticObservationError, inspect_codex_linux_static,
+    inspect_codex_windows_static, inspect_installation,
 };
 
 use std::process::{Child, Command};

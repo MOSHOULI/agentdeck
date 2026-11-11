@@ -34,6 +34,13 @@ enum Commands {
         #[arg(long)]
         node: PathBuf,
     },
+    /// Linux x86_64 selected-prefix static association; never execute npm, Node or Codex.
+    CodexStaticLinux {
+        #[arg(long)]
+        prefix: PathBuf,
+        #[arg(long)]
+        node: PathBuf,
+    },
     /// List supported agents and installation capabilities (does not run installers).
     Agents,
     /// Inspect DSH manifests or fixed offline evidence without executing or changing it.
@@ -524,6 +531,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::CodexStatic { prefix, node } => {
             let observation = deploy::inspect_codex_windows_static(&prefix, &node)?;
+            println!("{}", serde_json::to_string(&observation)?);
+        }
+        Commands::CodexStaticLinux { prefix, node } => {
+            let observation = deploy::inspect_codex_linux_static(&prefix, &node)?;
             println!("{}", serde_json::to_string(&observation)?);
         }
         Commands::Agents => {

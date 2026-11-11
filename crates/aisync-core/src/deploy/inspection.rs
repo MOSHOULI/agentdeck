@@ -17,7 +17,8 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 mod codex_static;
 mod installation;
 pub use codex_static::{
-    CodexStaticObservation, StaticObservationError, inspect_codex_windows_static,
+    CodexStaticObservation, StaticObservationError, inspect_codex_linux_static,
+    inspect_codex_windows_static,
 };
 pub use installation::InstallPreview;
 pub(super) use installation::{
@@ -566,11 +567,26 @@ fn inspect_package(
     if !manifest_target.starts_with(&package_root) {
         return Err("Package manifest escapes the package directory".into());
     }
-    let manifest: serde_json::Value = serde_json::from_slice(
-        &read_small(&manifest_path, FILE_LIMIT)
-            .map_err(|_| "Package manifest could not be read within its size limit")?,
-    )
-    .map_err(|_| "Package manifest is not valid JSON")?;
+    let bytes = read_small(&manifest_path, FILE_LIMIT)
+        .map_err(|_| "Package manifest could not be read within its size limit")?;
+    inspect_package_manifest(root, package, executable, &bytes)
+}
+
+// Shared package parser. Static inspection supplies bytes through the audited reader.
+fn inspect_package_manifest(
+    root: &Path,
+    package: &str,
+    executable: &str,
+    bytes: &[u8],
+) -> Result<(PathBuf, PathBuf, String), String> {
+    let package_path = root.join(package);
+    let package_root = canonical_file_or_dir(&package_path)
+        .map_err(|_| "Allowlisted npm package was not found")?;
+    if package_root != package_path || !package_root.starts_with(root) {
+        return Err("Linked or redirected npm packages are not supported source evidence".into());
+    }
+    let manifest: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|_| "Package manifest is not valid JSON")?;
     if manifest.get("name").and_then(|value| value.as_str()) != Some(package) {
         return Err("Package manifest name does not match the exact allowlisted package".into());
     }

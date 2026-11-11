@@ -143,6 +143,24 @@ impl NativeSelectedFileReader {
         Ok((format!("{:x}", hash.finalize()), size))
     }
 
+    /// Fixed native Node observation: header and digest come from the same audited handle.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    pub(crate) fn linux_node_observation(
+        &self,
+        path: &Path,
+    ) -> Result<(Vec<u8>, String, u64), InspectionIssue> {
+        use sha2::{Digest, Sha256};
+        let mut header = Vec::new();
+        let mut hash = Sha256::new();
+        let size = self.visit_named(path, "node", 256 * 1024 * 1024, |chunk| {
+            let needed = 64usize.saturating_sub(header.len());
+            header.extend_from_slice(&chunk[..chunk.len().min(needed)]);
+            hash.update(chunk);
+            Ok(())
+        })?;
+        Ok((header, format!("{:x}", hash.finalize()), size))
+    }
+
     /// Same audited source handle supplies both the private copy and its digest.
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     pub(crate) fn copy_archive(

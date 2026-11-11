@@ -48,9 +48,16 @@ partial temporary installation before cleanup; it is not a success claim.
 Run with trusted official developer tools and a **new** evidence path:
 
 ```sh
+cargo build --locked -p aisync-cli
+verifier_dir="$(mktemp -d /tmp/codex-static-verifier-XXXXXXXX)"
+# A private copy avoids Cargo's possible hardlink to its deps output.
+cp --no-clobber target/debug/aisync "$verifier_dir/aisync"
+chmod 700 "$verifier_dir/aisync"
+# Both SHA-256 values must match before continuing.
+sha256sum target/debug/aisync "$verifier_dir/aisync"
 python -B scripts/codex_official_install.py \
   --node "$(command -v node)" --npm "$(command -v npm)" \
-  --evidence /tmp/codex-install-evidence.json
+  --parser "$verifier_dir/aisync" --evidence /tmp/codex-install-evidence.json
 ```
 
 Offline regression checks:
@@ -58,6 +65,36 @@ Offline regression checks:
 ```sh
 python -B scripts/test_codex_official_install.py
 ```
+
+### Linux production selected-prefix static parsing
+
+The mandatory `--parser` is a trusted native `aisync` built from the same reviewed
+commit. After the real npm install passes the full 48-file inventory and exact
+`bin/codex` symlink check, the harness runs `aisync codex-static-linux --prefix
+ABS --node ABS`. This production entry point statically associates only the
+selected prefix and Node. It never executes Codex, its launcher, npm, or a version
+probe. The outer harness still runs real npm once to produce that installation.
+
+The parser has a 30-second process-group deadline, at most 4,096 bytes of stdout,
+no stderr, and an exact JSON key/value/type contract. Missing keys, extra keys,
+duplicate keys, malformed JSON, wrong types, nonzero exit and timeout fail the
+gate. The harness then repeats the complete unchanged file, link, permission,
+and empty-configuration verification before reporting success. Pins, file
+counts and byte counts remain unchanged. This is not an atomic snapshot against
+concurrent same-user writers.
+
+`production_static_parser_verified` and `production_static_observation` record
+only `selected_layout_matched`, `runtime_not_run`, `selected_prefix_only` and
+`selectedLauncher: bin/codex`; apply, upgrade and uninstall remain unsupported.
+`agentdeck_adapter_verified` remains false. This is not runtime, measured-version,
+configuration-loading, full PATH discovery or publisher-attestation evidence.
+The separate runtime isolation gates, including issue #22, remain unchanged.
+
+CI builds the exact checked-out `BUILD_SHA`, copies the CLI without overwriting
+into a new private directory, and compares size and SHA-256 to the build before
+passing `--parser`. Cargo may hardlink its top-level executable to `deps`; the
+harness still requires a single-link regular executable and never exempts Cargo
+output. All seven CI lanes remain in place; this adds no release publication.
 
 ### Not verified
 
@@ -93,6 +130,30 @@ npm 使用空 HOME、独立 prefix/cache/tmp、空 user/global npmrc，不继承
 不验证登录、模型调用或真实 AgentDeck 安装适配器。后者会运行已安装程序来检测版本，
 仍需要独立的运行隔离验收。本测试需要联网下载，不能当作“已实现网络隔离”；原本
 受阻的运行时隔离要求保持不变。无新安装包发布，其他平台、版本和 npm 布局不自动算通过。
+
+
+### Linux 生产静态解析接合
+
+必须提供 `--parser`，指定同一已审查提交构建的可信原生 `aisync`。真实 npm 安装后，
+先完整验证 48 个包文件及精确 `bin/codex` 符号链接，再调用
+`aisync codex-static-linux --prefix ABS --node ABS`。此生产入口只静态关联选定
+prefix 与 Node，不执行 Codex、启动器、npm 或版本探测；外层安装验收仍必须真实
+运行一次 npm，不以合成替身代替官方包。
+
+解析进程限时 30 秒，标准输出最多 4,096 字节，标准错误必须为空，JSON 的键、值、
+类型必须完全匹配。缺字段、多字段、重复键、错误类型、非零退出或超时均失败。
+调用后再次完整核对文件、链接、权限及空配置；不放宽固定版本、摘要、文件数和字节数。
+前后检查不构成对同用户并发写入的原子快照。
+
+新增证据 `production_static_parser_verified` 只表示指定布局关联成功，观察值明确
+记录未运行、仅指定 prefix、启动器为 `bin/codex`，应用、升级和卸载均不支持。
+`agentdeck_adapter_verified` 仍为 false，不代表运行成功、实测版本、配置读取、
+完整 PATH 搜索或发布者认证。包括 #22 在内的运行隔离门禁保持不变。
+
+CI 构建检出的精确 `BUILD_SHA`，在新的私有目录创建不覆盖已有文件的独立副本，
+核对大小和 SHA-256 一致后传入 `--parser`。Cargo 可能把顶层产物硬链接到 `deps`，
+验收仍要求普通、单链接、可执行文件，不为 Cargo 放宽规则。七条 CI 门禁全部保留，
+不发布新版本。Linux 运行命令及离线回归命令见上方示例。
 
 
 ## Windows x64 / Windows x64 官方包布局验收
