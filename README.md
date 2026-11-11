@@ -97,7 +97,9 @@ cargo run --locked -p aisync-cli -- restore <timestamp> --full --yes
 
 CLI 支持[只读同步计划](docs/SYNC-DRY-RUN.zh-CN.md)：`sync --tools codex,claude-code --dry-run` 输出目标与动作元数据，不执行探测、不初始化或修改文件；不是完整 diff，也不代表安装资格或应用已验证。
 
-四种固定原生依赖归档可用 `aisync dsh verify-native-package --package node-pty|koffi|koffi-linux-x64|koffi-win32-x64 --archive <绝对路径>` 静态核验。只检查归档、声明与来源快照，不解包或加载原生代码，不证明可安装；详见 [DSH 原生依赖核验](docs/DSH-NATIVE-ARCHIVES.md)。
+原生桌面 DSH 工作区可显式选择四种固定原生依赖包及归档绝对路径进行静态核验；清除或取消只废弃结果，读取结算前仍保持全局忙碌。浏览器/演示不模拟成功。
+
+四种固定原生依赖归档也可用 `aisync dsh verify-native-package --package node-pty|koffi|koffi-linux-x64|koffi-win32-x64 --archive <绝对路径>` 静态核验。只检查归档、声明与来源快照，不解包或加载原生代码，不证明可安装；详见 [DSH 原生依赖核验](docs/DSH-NATIVE-ARCHIVES.md)。
 
 ## 测试与发布
 

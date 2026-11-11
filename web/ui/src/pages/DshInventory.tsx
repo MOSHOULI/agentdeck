@@ -5,6 +5,7 @@ import type { DshInventoryReport, DshInspectionResult } from '../bridge';
 import type { DshIssue, DshManifestStatus } from '../dshContract';
 import { useWorkspaceActivityStore } from '../stores/workspaceActivity';
 import { DshDistribution } from './DshDistribution';
+import { DshNativeArchives } from './DshNativeArchives';
 import { Icon } from '../components/Icon';
 import './DshInventory.css';
 
@@ -134,5 +135,6 @@ export function DshInventory() {
     </section>}
     <p className="muted dsh-boundary-note">只读保证针对本次盘点，不代表整个桌面应用不写入自身数据。文件读取可能更新访问时间；文件系统检查不是对抗同权限并发修改的沙箱，也没有文件读取的硬超时。</p>
     <DshDistribution />
+    <DshNativeArchives />
   </div>;
 }

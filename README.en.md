@@ -96,6 +96,13 @@ The CLI supports a [read-only sync plan](docs/SYNC-DRY-RUN.md): `sync --tools co
 
 Four fixed native dependency archives can be checked with `aisync dsh verify-native-package --package node-pty|koffi|koffi-linux-x64|koffi-win32-x64 --archive <absolute-path>`. This verifies archive/declaration/source evidence without extraction or native loading, not install readiness. See [DSH native archive verification](docs/DSH-NATIVE-ARCHIVES.md).
 
+The native desktop DSH workspace now exposes explicit package selection and an
+absolute archive path for the same four fixed native dependency verifiers.
+Clear/cancel discards the result while retaining global busy ownership until the
+read settles. Browser/demo modes never simulate success. This is static archive
+evidence only, not installation, dependency closure or runtime readiness. See
+[the native archive guide](docs/DSH-NATIVE-ARCHIVES.md).
+
 ## Tests and releases
 
 ```powershell
