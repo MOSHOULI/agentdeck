@@ -18,6 +18,35 @@ exit code of zero means the selected archive passed static verification, not tha
 DSH or its native dependencies are installed or working. It does not probe the
 host or claim that the selected package matches this machine.
 
+## Native desktop UI
+
+The DSH inventory workspace also exposes these same four verifiers in its
+**fixed native dependency archive** panel. Explicitly select the package, enter
+its exact archive's absolute path, then request read-only verification. Package
+selection is initially empty and is never inferred from host OS/architecture.
+Existing manifest inventory and root-archive verification remain separate.
+Browser and demo modes cannot invoke or simulate native archive success.
+
+The Tauri command `verify_dsh_native_package` accepts only a fixed package ID and
+bounded absolute path, delegates to the existing core verifier, and returns a
+compact static report with path-free error codes. The frontend checks every
+report field against compact constants pinned by tests to `artifacts.json`,
+including the selected ID, version, length, hashes, member count and all false
+readiness/execution claims. Full member/source records do not enter the UI bundle.
+There are no version, URL, hash or size override controls.
+
+Changing the path/package, clearing, cancelling the result or leaving the view
+invalidates that outcome, including late failures. Cancellation discards the
+result; it does **not** cancel underlying filesystem I/O. The request keeps its
+global workspace owner until settlement, even after unmount/remount, so another
+read or workspace operation cannot overlap simply by navigating away. Changing
+package also clears the path to avoid an accidental cross-package selection.
+
+Offline frontend tests use mocked IPC; native command tests use inert mismatched
+bytes. They test boundaries and UI lifecycle, not real native loading or DSH
+runtime behavior. No installer release or dependency installation is introduced
+by this panel. File access times and filesystem-I/O limits remain as below.
+
 ## Reviewed official sources (2026-11-11)
 
 The production-declaration path from DSH to node-pty and Koffi is documented in

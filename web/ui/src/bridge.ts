@@ -1,3 +1,4 @@
+import { requireDshNativePackage, dshNativeEvidence, validateDshNativeVerification, type DshNativePackage } from './dshNativeContract';
 import { requireQoderRelease, type QoderRelease } from './qoderReleases';
 import { validQoderDeploymentPath, validQoderDeploymentToken, validateQoderDeploymentPreview, validateQoderDeploymentOutcome } from "./qoderDeploymentContract";
 import { validSessionRef, parseResidual } from './codexResidualContract';
@@ -697,4 +698,18 @@ export async function deployQoderPrivate(source: string, destination: string, to
   useDemo(true);
   if (!confirmed || !validQoderDeploymentPath(source) || !validQoderDeploymentPath(destination) || !validQoderDeploymentToken(token)) throw new Error('请重新预览并确认。');
   return validateQoderDeploymentOutcome(await invoke<unknown>('deploy_qoder_private', { source, destination, token, confirmed: true, release }), release);
+}
+
+// Static verification only. No demo success, package resolution or execution.
+export async function verifyDshNativePackage(packageId: DshNativePackage, archivePath: string) {
+  useDemo(true);
+  requireDshNativePackage(packageId);
+  if (typeof archivePath !== 'string' || !archivePath.trim() ||
+      new TextEncoder().encode(archivePath).length > 4096 || /[\x00-\x1f\x7f-\x9f]/.test(archivePath) ||
+      !/^(?:\/(?!\/)|[a-zA-Z]:[\\/])/.test(archivePath) ||
+      archivePath.split(/[\\/]/).includes('..') ||
+      archivePath.split(/[\\/]/).slice(-1)[0] !== dshNativeEvidence[packageId].archive_name) {
+    throw new Error('DSH_NATIVE_INVALID_PATH');
+  }
+  return validateDshNativeVerification(await invoke<unknown>('verify_dsh_native_package', {packageId, archivePath}), packageId);
 }

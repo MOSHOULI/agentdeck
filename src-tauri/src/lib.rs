@@ -22,6 +22,7 @@ pub fn run() {
             commands::dsh::inspect_dsh_profile,
             commands::dsh_distribution::dsh_distribution_plan,
             commands::dsh_distribution::verify_dsh_package,
+            commands::dsh_distribution::verify_dsh_native_package,
             commands::qwen::inspect_qwen_settings,
             commands::qwen::preview_qwen_vim,
             commands::qwen::inspect_qwen_vim_recovery,
