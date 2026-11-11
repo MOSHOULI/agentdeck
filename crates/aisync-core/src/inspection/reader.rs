@@ -92,6 +92,24 @@ impl NativeSelectedFileReader {
         Ok(bytes)
     }
 
+    /// One fixed reviewed DSH archive, without relaxing the settings read limit.
+    pub(crate) fn read_dsh_subprocess_archive(
+        &self,
+        path: &Path,
+    ) -> Result<Vec<u8>, InspectionIssue> {
+        let mut bytes = Vec::new();
+        self.visit_named(
+            path,
+            "dsh-subprocess-local-0.2.2-rc.1.tgz",
+            77_649,
+            |chunk| {
+                bytes.extend_from_slice(chunk);
+                Ok(())
+            },
+        )?;
+        Ok(bytes)
+    }
+
     /// Dedicated archive hashing; callers cannot enlarge settings inspection limits.
     pub(crate) fn hash_archive(
         &self,

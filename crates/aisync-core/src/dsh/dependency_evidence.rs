@@ -21,6 +21,15 @@ struct Snapshot {
     sha256: &'static str,
 }
 
+const SDK: Snapshot = Snapshot {
+    package: "@deepseek-ai/dsh-sdk-minimal",
+    version: "0.2.2-rc.1",
+    source: "https://registry.npmjs.org/@deepseek-ai%2fdsh-sdk-minimal/0.2.2-rc.1",
+    bytes: include_bytes!(
+        "../../../../docs/upstream/dsh/dependency-evidence/dsh-sdk-minimal-0.2.2-rc.1.json"
+    ),
+    sha256: "c38cf52c6f73815f3a5796afd7095ff8c2e680ce09aca60d158878dbc0717f24",
+};
 const SAMPLES: [Snapshot; 3] = [
     Snapshot {
         package: "@deepseek-ai/dsh-subprocess-local",
@@ -131,6 +140,9 @@ pub struct DependencyEvidenceReport {
     pub reviewed: &'static str,
     pub root: RootEvidence,
     pub illustrative_exact_metadata: Vec<MetadataEvidence>,
+    pub sdk_minimal_metadata: MetadataEvidence,
+    pub production_paths: Vec<ProductionPath>,
+    pub reachability_reviewed: &'static str,
     pub sample_scope: &'static str,
     pub closure_complete: bool,
     pub install_ready: bool,
@@ -142,6 +154,56 @@ pub struct DependencyEvidenceReport {
     pub limitations: Vec<&'static str>,
 }
 
+/// Frozen declared production edges, not an installed or resolved dependency graph.
+#[derive(Debug, Serialize)]
+pub struct ProductionPath {
+    pub packages: Vec<&'static str>,
+    pub versions: Vec<&'static str>,
+    pub edge_kind: &'static str,
+    pub evidence: &'static str,
+}
+fn require_edge(parent: &Metadata, child: &Metadata) -> Result<(), EvidenceError> {
+    if parent
+        .declarations
+        .dependencies
+        .as_ref()
+        .and_then(|d| d.get(&child.name))
+        != Some(&child.version)
+    {
+        return Err(EvidenceError);
+    }
+    Ok(())
+}
+fn production_paths(
+    root: &Metadata,
+    sdk: &Metadata,
+    subprocess: &Metadata,
+    pty: &Metadata,
+    koffi: &Metadata,
+) -> Result<Vec<ProductionPath>, EvidenceError> {
+    for (parent, child) in [
+        (root, sdk),
+        (sdk, subprocess),
+        (subprocess, pty),
+        (subprocess, koffi),
+    ] {
+        require_edge(parent, child)?;
+    }
+    Ok([("node-pty", "1.2.0-beta.15"), ("koffi", "3.1.1")]
+        .into_iter()
+        .map(|(name, version)| ProductionPath {
+            packages: vec![distribution::NAME, SDK.package, SAMPLES[0].package, name],
+            versions: vec![
+                distribution::VERSION,
+                SDK.version,
+                SAMPLES[0].version,
+                version,
+            ],
+            edge_kind: "dependencies_exact_declaration",
+            evidence: "embedded_root_archive_manifest_and_exact_version_registry_metadata",
+        })
+        .collect())
+}
 #[derive(Debug, thiserror::Error)]
 #[error("Embedded DSH dependency evidence failed validation; no report produced")]
 pub struct EvidenceError;
@@ -203,54 +265,18 @@ pub fn report() -> Result<DependencyEvidenceReport, EvidenceError> {
     {
         return Err(EvidenceError);
     }
-    let mut samples = Vec::new();
-    for snapshot in &SAMPLES {
-        let metadata = parse_metadata(
-            snapshot.bytes,
-            snapshot.sha256,
-            snapshot.package,
-            snapshot.version,
-        )?;
-        let lifecycle = metadata
-            .declarations
-            .scripts
-            .iter()
-            .flatten()
-            .filter(|(name, _)| {
-                matches!(
-                    name.as_str(),
-                    "preinstall"
-                        | "install"
-                        | "postinstall"
-                        | "prepublish"
-                        | "preprepare"
-                        | "prepare"
-                        | "postprepare"
-                )
-            })
-            .map(|(name, script)| (name.clone(), script.clone()))
-            .collect();
-        samples.push(MetadataEvidence {
-            package: snapshot.package,
-            version: snapshot.version,
-            state: "registry_metadata_observed",
-            provenance: Provenance {
-                source: snapshot.source,
-                source_kind: "exact_version_registry_response",
-                reviewed: REVIEWED,
-                snapshot_bytes: snapshot.bytes.len(),
-                snapshot_sha256: snapshot.sha256,
-            },
-            registry_dist_declaration: metadata.dist.ok_or(EvidenceError)?,
-            declarations: metadata.declarations,
-            declared_lifecycle_scripts: lifecycle,
-            dependency_archive_verified: false,
-            metadata_archive_agreement: "unchecked",
-            full_implicit_lifecycle_assessed: false,
-        });
-    }
+    let sdk = parse_metadata(SDK.bytes, SDK.sha256, SDK.package, SDK.version)?;
+    let parsed: Vec<_> = SAMPLES
+        .iter()
+        .map(|s| parse_metadata(s.bytes, s.sha256, s.package, s.version))
+        .collect::<Result<_, _>>()?;
+    let paths = production_paths(&root, &sdk, &parsed[0], &parsed[1], &parsed[2])?;
+    let samples = SAMPLES
+        .iter()
+        .map(|s| metadata_evidence(s, REVIEWED))
+        .collect::<Result<_, _>>()?;
     Ok(DependencyEvidenceReport {
-        schema_version: 1,
+        schema_version: 2,
         mode: "fixed_offline_dependency_evidence",
         reviewed: REVIEWED,
         root: RootEvidence {
@@ -275,7 +301,10 @@ pub fn report() -> Result<DependencyEvidenceReport, EvidenceError> {
             full_implicit_lifecycle_assessed: false,
         },
         illustrative_exact_metadata: samples,
-        sample_scope: "Three illustrative metadata snapshots, not all direct or transitive dependencies. Root reachability is not established by these samples; only their original declared edges are shown.",
+        sdk_minimal_metadata: metadata_evidence(&SDK, "2026-11-11")?,
+        production_paths: paths,
+        reachability_reviewed: "2026-11-11",
+        sample_scope: "Four metadata snapshots establish two exact declared production paths through sdk-minimal and subprocess-local to node-pty and koffi, not a resolved or complete dependency closure.",
         closure_complete: false,
         install_ready: false,
         dependencies_resolved: false,
@@ -299,3 +328,80 @@ pub fn report() -> Result<DependencyEvidenceReport, EvidenceError> {
 
 #[cfg(test)]
 mod tests;
+
+fn metadata_evidence(
+    snapshot: &Snapshot,
+    reviewed: &'static str,
+) -> Result<MetadataEvidence, EvidenceError> {
+    let metadata = parse_metadata(
+        snapshot.bytes,
+        snapshot.sha256,
+        snapshot.package,
+        snapshot.version,
+    )?;
+    let lifecycle = metadata
+        .declarations
+        .scripts
+        .iter()
+        .flatten()
+        .filter(|(name, _)| {
+            matches!(
+                name.as_str(),
+                "preinstall"
+                    | "install"
+                    | "postinstall"
+                    | "prepublish"
+                    | "preprepare"
+                    | "prepare"
+                    | "postprepare"
+            )
+        })
+        .map(|(name, script)| (name.clone(), script.clone()))
+        .collect();
+    Ok(MetadataEvidence {
+        package: snapshot.package,
+        version: snapshot.version,
+        state: "registry_metadata_observed",
+        provenance: Provenance {
+            source: snapshot.source,
+            source_kind: "exact_version_registry_response",
+            reviewed,
+            snapshot_bytes: snapshot.bytes.len(),
+            snapshot_sha256: snapshot.sha256,
+        },
+        registry_dist_declaration: metadata.dist.ok_or(EvidenceError)?,
+        declarations: metadata.declarations,
+        declared_lifecycle_scripts: lifecycle,
+        dependency_archive_verified: false,
+        metadata_archive_agreement: "unchecked",
+        full_implicit_lifecycle_assessed: false,
+    })
+}
+
+pub(super) fn validate_subprocess_manifest(bytes: &[u8]) -> Result<(), EvidenceError> {
+    let manifest = parse_metadata(
+        bytes,
+        "48d50b0e9d019954a8689b39af2bc20b03ce68abe5dde3351b2e9e27ee842b9f",
+        SAMPLES[0].package,
+        SAMPLES[0].version,
+    )?;
+    let registry = parse_metadata(
+        SAMPLES[0].bytes,
+        SAMPLES[0].sha256,
+        SAMPLES[0].package,
+        SAMPLES[0].version,
+    )?;
+    let dist = registry.dist.as_ref().ok_or(EvidenceError)?;
+    if dist.tarball
+        != "https://registry.npmjs.org/@deepseek-ai/dsh-subprocess-local/-/dsh-subprocess-local-0.2.2-rc.1.tgz"
+        || dist.integrity != super::subprocess_archive::INTEGRITY
+    {
+        return Err(EvidenceError);
+    }
+    if serde_json::to_value(manifest.declarations).map_err(|_| EvidenceError)?
+        != serde_json::to_value(registry.declarations).map_err(|_| EvidenceError)?
+    {
+        return Err(EvidenceError);
+    }
+    Ok(())
+}

@@ -294,6 +294,11 @@ fn parse_qwen_manifest(value: &str) -> Result<PathBuf, String> {
 
 #[derive(Subcommand)]
 enum DshAction {
+    /// Verify an explicit fixed subprocess-local tgz and static contents, never install or execute.
+    VerifySubprocessPackage {
+        #[arg(long, value_name = "ABSOLUTE_TGZ")]
+        archive: PathBuf,
+    },
     /// Fixed offline dependency evidence, not a resolved tree or installation plan.
     #[command(
         long_about = "Emit a fixed, reviewed dependency-evidence snapshot as JSON. Reads only embedded fixtures: no network, local discovery, package execution or installation. Root archive verification is historical; illustrative dependency metadata is not artifact verification or a complete closure. Exit 0 means a report was produced, not that DSH is installable. No version, source, target or path overrides are accepted."
@@ -512,6 +517,18 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     }
                 );
             }
+        }
+        Commands::Dsh {
+            action: DshAction::VerifySubprocessPackage { archive },
+        } => {
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&dsh::subprocess_archive::verify_subprocess_package(
+                    &archive
+                )?)?
+            )?;
         }
         Commands::Dsh {
             action: DshAction::DependencyEvidence,

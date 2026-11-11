@@ -84,11 +84,28 @@ jobs:
       - run: python scripts/run-isolated.py cargo test --locked -p aisync-core -p aisync-cli
       - name: DSH pinned root archive downloader (offline safety regressions)
         run: python -B scripts/test_dsh_distribution_smoke.py
+      - name: DSH subprocess archive offline safety regressions
+        run: python -B scripts/test_dsh_subprocess_smoke.py
       - name: Build real DSH inspection CLI
         run: cargo build --locked -p aisync-cli
       - name: Verify official DSH root archive without installation or execution
         timeout-minutes: 5
         run: python -B scripts/dsh_distribution_smoke.py --cli "$PWD/target/debug/aisync" --destination "$RUNNER_TEMP/dsh-root-package-smoke"
+      - name: Install official exec tracer for DSH static acceptance
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y strace
+          test -x /usr/bin/strace
+      - name: Verify reachable DSH subprocess archive without lifecycle execution
+        timeout-minutes: 5
+        run: python -B scripts/dsh_subprocess_smoke.py --cli "$PWD/target/debug/aisync" --destination "$RUNNER_TEMP/dsh-subprocess-package-smoke" | tee "$RUNNER_TEMP/dsh-subprocess-evidence.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DSH-subprocess-verification-${{ env.BUILD_SHA }}
+          path: ${{ runner.temp }}/dsh-subprocess-evidence.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Codex animations Linux filesystem metadata guards
         run: python scripts/run-isolated.py cargo test --locked -p aisync-core --test codex_animations_fs_metadata -- --ignored
       - name: Qwen owned setting rejects extended POSIX ACLs

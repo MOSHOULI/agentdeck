@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn fixed_report_preserves_all_root_edges_without_resolving_ranges() {
     let report = report().unwrap();
-    assert_eq!(report.schema_version, 1);
+    assert_eq!(report.schema_version, 2);
     assert_eq!(report.root.direct_dependency_count, 90);
     assert_eq!(report.root.direct_exact_version_declaration_count, 82);
     assert_eq!(report.root.direct_unresolved_ranges.len(), 8);
@@ -36,7 +36,7 @@ fn illustrative_samples_preserve_lifecycle_peers_and_optional_specs() {
     assert!(
         report
             .sample_scope
-            .contains("Root reachability is not established")
+            .contains("not a resolved or complete dependency closure")
     );
     let subprocess = &samples[0];
     assert_eq!(subprocess.package, "@deepseek-ai/dsh-subprocess-local");
@@ -151,4 +151,67 @@ fn serialization_is_deterministic_and_preserves_undeclared_fields_as_null() {
     assert!(first["root"]["declarations"]["peerDependenciesMeta"].is_null());
     assert!(first["root"]["declarations"]["scripts"].is_null());
     assert_eq!(first["root"]["declarations"]["engines"]["node"], ">=24.9.0");
+}
+
+#[test]
+fn sdk_minimal_establishes_declared_paths_but_never_closure() {
+    let r = report().unwrap();
+    assert_eq!(r.production_paths.len(), 2);
+    assert_eq!(
+        r.sdk_minimal_metadata.package,
+        "@deepseek-ai/dsh-sdk-minimal"
+    );
+    for path in &r.production_paths {
+        assert_eq!(path.packages.len(), 4);
+        assert_eq!(path.versions.len(), 4);
+        assert_eq!(path.packages[0], distribution::NAME);
+        assert_eq!(path.packages[1], SDK.package);
+        assert_eq!(path.packages[2], SAMPLES[0].package);
+        assert_eq!(path.edge_kind, "dependencies_exact_declaration");
+    }
+    assert!(!r.closure_complete && !r.install_ready && !r.dependencies_resolved);
+}
+#[test]
+fn production_edge_rejects_missing_wrong_version_and_peer_or_optional_impersonation() {
+    for snapshot in [&SDK, &SAMPLES[0], &SAMPLES[1], &SAMPLES[2]] {
+        let child = parse_metadata(
+            snapshot.bytes,
+            snapshot.sha256,
+            snapshot.package,
+            snapshot.version,
+        )
+        .unwrap();
+        let parent_value = serde_json::json!({"name":"parent","version":"0.0.0","dependencies": {snapshot.package: snapshot.version}});
+        let parent: Metadata = serde_json::from_value(parent_value.clone()).unwrap();
+        assert!(require_edge(&parent, &child).is_ok());
+        for field in [
+            "peerDependencies",
+            "optionalDependencies",
+            "devDependencies",
+        ] {
+            let mut v = parent_value.clone();
+            v[field] = v["dependencies"].take();
+            let parent: Metadata = serde_json::from_value(v).unwrap();
+            assert!(require_edge(&parent, &child).is_err());
+        }
+        for version in ["*", "^0.2.2-rc.1", "0.2.2", "1.0.0", ""] {
+            let mut v = parent_value.clone();
+            v["dependencies"][snapshot.package] = serde_json::json!(version);
+            let parent: Metadata = serde_json::from_value(v).unwrap();
+            assert!(require_edge(&parent, &child).is_err());
+        }
+        let mut v = parent_value;
+        v["dependencies"] = serde_json::json!({"wrong-name":snapshot.version});
+        assert!(require_edge(&serde_json::from_value(v).unwrap(), &child).is_err());
+    }
+}
+#[test]
+fn actual_subprocess_manifest_matches_reviewed_registry_declarations() {
+    let bytes = include_bytes!(
+        "../../../../../docs/upstream/dsh/dependency-evidence/subprocess-package-0.2.2-rc.1.json"
+    );
+    validate_subprocess_manifest(bytes).unwrap();
+    let mut modified = bytes.to_vec();
+    modified[0] = b' ';
+    assert!(validate_subprocess_manifest(&modified).is_err());
 }

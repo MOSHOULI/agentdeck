@@ -1,0 +1,253 @@
+{
+  "source": "https://registry.npmjs.org/@deepseek-ai/dsh-subprocess-local/-/dsh-subprocess-local-0.2.2-rc.1.tgz",
+  "archive_bytes": 77649,
+  "archive_sha256": "ac2aae27078f34ccc068c62371672da84fb83bf9230bc26b24e1ecaee9d4ae97",
+  "tar_bytes": 279040,
+  "members": [
+    {
+      "path": "package/LICENSE",
+      "size": 1065,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be"
+    },
+    {
+      "path": "package/lib/index.js",
+      "size": 62333,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "2964d94d6aa735f79e5cd5f54035a9d73b371e8060dda7e3bf666593428c04f4"
+    },
+    {
+      "path": "package/lib/output.js",
+      "size": 9173,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "4f77ef6da608d36df168c99177e9b527e7145df1418845eba567635e64a4c2a3"
+    },
+    {
+      "path": "package/lib/runner-launch-B2zsQ1Dz.js",
+      "size": 57475,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "6df08adc4a27f278878a5f4cde8b551b51e647b922ac7d6591fd62d272ced153"
+    },
+    {
+      "path": "package/lib/runner.js",
+      "size": 13483,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "4e21528dfdb3e92bdce2340945dc4dcb202e4a4af0bbeb8b97585f67735d30c1"
+    },
+    {
+      "path": "package/locale/de.json",
+      "size": 165,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "c3cff46f5f5cc745b2730164e39b1dbd8c01ce62e37315a368d3ccec22716436"
+    },
+    {
+      "path": "package/locale/en.json",
+      "size": 52,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "06bacd3af14eb50d1a4bdd63dd18e57188a6da43bbb4dcfbb43bcf3d566d3163"
+    },
+    {
+      "path": "package/locale/es.json",
+      "size": 172,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "55536426cac719a34c9fc077ec0969dcab075d8c6a57ce2c4b39f823f42b14dc"
+    },
+    {
+      "path": "package/locale/fr.json",
+      "size": 183,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "44f3e45774ea88bd92c5a95262b9ad350b0b809aff8cb304669b71c0883d10f3"
+    },
+    {
+      "path": "package/locale/ja.json",
+      "size": 179,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "7ef20b81a2be3761e86c263eba4c265a717270a9d9ba4389bd4848a96be1e11c"
+    },
+    {
+      "path": "package/package.json",
+      "size": 1726,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "48d50b0e9d019954a8689b39af2bc20b03ce68abe5dde3351b2e9e27ee842b9f"
+    },
+    {
+      "path": "package/locale/pt.json",
+      "size": 172,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "509e91115a11ebe20516415498a60207b0c52f431f016cb132370fe9e8bc81fa"
+    },
+    {
+      "path": "package/locale/ru.json",
+      "size": 298,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "c67252e0f6c902897ed0bf400dc6be87be61eca44ad089bdd7b7e8b8caa1f9b6"
+    },
+    {
+      "path": "package/locale/zh.json",
+      "size": 134,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "e8c1329cd69b2a75aded5dad32f4c4008e3f96922e9e4c952afa4cfb5eec793b"
+    },
+    {
+      "path": "package/README.md",
+      "size": 21949,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "b94d3cf048a15a67d1bee7f0b2d801c6f96316e12341a403dbe36cb61efeac34"
+    },
+    {
+      "path": "package/README.zh.md",
+      "size": 20685,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "1c45b980b8e4a87eef73c71084e744aa16b38a4dfeafe079909fe5634b3d0038"
+    },
+    {
+      "path": "package/scripts/ensure-spawn-helper.mjs",
+      "size": 572,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "ca5509febf1e6ec1356df121835ebe5ed2f9cace4bdc2ba6d83d41c7e45e0f1b"
+    },
+    {
+      "path": "package/lib/types/bin.d.ts",
+      "size": 345,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "da66652fbef2bbd57b20551684c146a564c7eb824872a4d7823706243f113809"
+    },
+    {
+      "path": "package/lib/types/control-spawn.d.ts",
+      "size": 1083,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "c00d2d7216f097d33b7788be44ac30096783891f069186148acefbd6d15454ee"
+    },
+    {
+      "path": "package/lib/types/index.d.ts",
+      "size": 3499,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "f7c3279ab13dbe3354a4f267fce16e0c7b65c404baf2c988d5eca400c34e813c"
+    },
+    {
+      "path": "package/lib/types/linux-execve.d.ts",
+      "size": 575,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "d617e4f932c4d780005037f806c2daa4e29aee33d66edfa0ec47fe47aeec153e"
+    },
+    {
+      "path": "package/lib/types/linux-scope-selector.d.ts",
+      "size": 3206,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "1639ab5fbbd1cbc762ead0aad5bc4fcd7fe171afb16a923a2a0409a01dde938c"
+    },
+    {
+      "path": "package/lib/types/linux-scope.d.ts",
+      "size": 6852,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "fd879946c6249e7ecc918a9d93d9660c3c33574000976882e1a37731e1b6ff4d"
+    },
+    {
+      "path": "package/lib/types/managed-owner.d.ts",
+      "size": 1827,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "5d6c543c864b477ddb64ae4327d828f0a84696caf14cd83929123fa987a1033b"
+    },
+    {
+      "path": "package/lib/types/output.d.ts",
+      "size": 6339,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "e055570766060901a849c3347770ae149f366ed342b0f849183e98b354c8d520"
+    },
+    {
+      "path": "package/lib/types/process-inspector.d.ts",
+      "size": 6332,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "03fd7af1b4ac530a1e4d95ecdb98b96d5aa15fff84c4811615ba78d6633650e1"
+    },
+    {
+      "path": "package/lib/types/runner-launch.d.ts",
+      "size": 4141,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "6c6cfd1779e0baba81630aba14c83652238cc34ed36d119b0a3890186e4f342d"
+    },
+    {
+      "path": "package/lib/types/runner-protocol.d.ts",
+      "size": 4408,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "fc0c7b8e296cde29316580dd3ddde33087da4fac04a0224e208ea8519176a7c9"
+    },
+    {
+      "path": "package/lib/types/shell-activity.d.ts",
+      "size": 1834,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "84f90ec23fd00b1ddbba78093b772e1137a998f6c60d155316d9808cd29be8e2"
+    },
+    {
+      "path": "package/lib/types/spawn-runner.d.ts",
+      "size": 2149,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "e28cbc01b73407985b3640a96ae64a1a43d47763578ed776115c1dc84d1e1623"
+    },
+    {
+      "path": "package/lib/types/spawn.d.ts",
+      "size": 4693,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "2ddf544cf6d49fddc1ba942f41971502a6ac7f24c741b99b294e5f1766b2c7f3"
+    },
+    {
+      "path": "package/lib/types/terminal.d.ts",
+      "size": 3821,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "208f4714ced982f1a5d9cdbfc95aa3a54bf13ccc5d2632ee7523c2385431fbc7"
+    },
+    {
+      "path": "package/lib/types/windows-inspector.d.ts",
+      "size": 4063,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "4b1881eb70caa2695f883e8b82640da362681d78a05ebf23fd05ac109a8d2722"
+    },
+    {
+      "path": "package/lib/types/windows-job.d.ts",
+      "size": 1701,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "4c3e0f9dbb8f919328968f0244c6a627e7b55d98822d20218ba03c1d5a234b09"
+    },
+    {
+      "path": "package/README.i18n.yaml",
+      "size": 2755,
+      "type": "regular",
+      "mode": "0644",
+      "sha256": "27d8d8512756258c7cd6021475813e063770441f33068eb47b35551577dbf3b8"
+    }
+  ]
+}

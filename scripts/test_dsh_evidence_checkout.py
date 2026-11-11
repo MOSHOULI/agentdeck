@@ -14,6 +14,15 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 PINNED = {
+    'docs/upstream/dsh/dependency-evidence/dsh-sdk-minimal-0.2.2-rc.1.json':
+        'c38cf52c6f73815f3a5796afd7095ff8c2e680ce09aca60d158878dbc0717f24',
+    'docs/upstream/dsh/dependency-evidence/subprocess-package-0.2.2-rc.1.json':
+        '48d50b0e9d019954a8689b39af2bc20b03ce68abe5dde3351b2e9e27ee842b9f',
+    'docs/upstream/dsh/dependency-evidence/ensure-spawn-helper-0.2.2-rc.1.mjs':
+        'ca5509febf1e6ec1356df121835ebe5ed2f9cace4bdc2ba6d83d41c7e45e0f1b',
+    'docs/upstream/dsh/subprocess-archive-layout-0.2.2-rc.1.json':
+        '0ccccffe051afe15679f1ae92c4834df3d2891dd73d7d0b74c3f8363205f53e3',
+
     "docs/upstream/qoder/manifest-1.1.85.json":
         "a78234316fe2065cdae6fc17ac425bbc2ae11006d04b6ab5216fd6093597e4de",
     "docs/upstream/qoder/manifest-1.1.86.json":
@@ -85,7 +94,8 @@ class EvidenceCheckoutTests(unittest.TestCase):
     def test_windows_style_checkout_preserves_every_pinned_snapshot(self):
         fixtures = {path.relative_to(ROOT).as_posix()
                     for folder in ("docs/upstream/dsh", "docs/upstream/qoder")
-                    for path in (ROOT / folder).rglob("*.json")}
+                    for path in (ROOT / folder).rglob("*")
+                    if path.suffix in (".json", ".mjs")}
         self.assertEqual(fixtures, set(PINNED), "Review and pin any added evidence fixtures")
         original, checked_out = self.checkout((ROOT / ".gitattributes").read_bytes())
         for name, expected in PINNED.items():
@@ -96,6 +106,9 @@ class EvidenceCheckoutTests(unittest.TestCase):
     def test_missing_attributes_reproduce_dsh_and_qoder_multiline_digest_failures(self):
         original, checked_out = self.checkout(b"")
         for name in [
+            'docs/upstream/dsh/dependency-evidence/subprocess-package-0.2.2-rc.1.json',
+            'docs/upstream/dsh/dependency-evidence/ensure-spawn-helper-0.2.2-rc.1.mjs',
+            'docs/upstream/dsh/subprocess-archive-layout-0.2.2-rc.1.json',
             "docs/upstream/qoder/manifest-1.1.85.json",
             "docs/upstream/qoder/manifest-1.1.86.json",
             "docs/upstream/dsh/root-0.2.2-rc.1.json",
