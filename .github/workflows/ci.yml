@@ -159,8 +159,25 @@ jobs:
       - name: Install pinned official Codex package layout (never execute agent)
         timeout-minutes: 10
         run: |
+          set -euo pipefail
+          cargo build --locked -p aisync-cli
           mkdir -m 700 "$RUNNER_TEMP/codex-install-evidence"
-          python -B scripts/codex_official_install.py --node "$(command -v node)" --npm "$(command -v npm)" --evidence "$RUNNER_TEMP/codex-install-evidence/result.json"
+          verifier_dir="$(mktemp -d "$RUNNER_TEMP/codex-static-verifier-XXXXXXXX")"
+          # Cargo may hardlink its output to deps. Copy to a new private inode.
+          python - "$PWD/target/debug/aisync" "$verifier_dir/aisync" <<'PY'
+          import hashlib, pathlib, shutil, sys
+          source, target = map(pathlib.Path, sys.argv[1:])
+          with source.open('rb') as src, target.open('xb') as dst:
+              shutil.copyfileobj(src, dst)
+          target.chmod(0o700)
+          def digest(path):
+              with path.open('rb') as stream:
+                  return hashlib.file_digest(stream, 'sha256').digest()
+          if (target.stat().st_nlink != 1 or source.stat().st_size != target.stat().st_size
+                  or digest(source) != digest(target)):
+              raise SystemExit('Trusted parser copy mismatch')
+          PY
+          python -B scripts/codex_official_install.py --node "$(command -v node)" --npm "$(command -v npm)" --parser "$verifier_dir/aisync" --evidence "$RUNNER_TEMP/codex-install-evidence/result.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
