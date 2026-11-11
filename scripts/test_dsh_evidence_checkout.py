@@ -14,6 +14,10 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 PINNED = {
+    "docs/upstream/qoder/manifest-1.1.85.json":
+        "a78234316fe2065cdae6fc17ac425bbc2ae11006d04b6ab5216fd6093597e4de",
+    "docs/upstream/qoder/manifest-1.1.86.json":
+        "f323905da3f75088b1e9ae4cf9b0fef6f117879f4f6942b609e92228a533fa78",
     "docs/upstream/dsh/root-0.2.2-rc.1.json":
         "e23a5772276c9a7709ffb2daeaa5b2d6099a431a4bb9f48cf8c87c5a2517539e",
     "docs/upstream/dsh/dependency-evidence/root-package-0.2.2-rc.1.json":
@@ -80,7 +84,8 @@ class EvidenceCheckoutTests(unittest.TestCase):
 
     def test_windows_style_checkout_preserves_every_pinned_snapshot(self):
         fixtures = {path.relative_to(ROOT).as_posix()
-                    for path in (ROOT / "docs/upstream/dsh").rglob("*.json")}
+                    for folder in ("docs/upstream/dsh", "docs/upstream/qoder")
+                    for path in (ROOT / folder).rglob("*.json")}
         self.assertEqual(fixtures, set(PINNED), "Review and pin any added evidence fixtures")
         original, checked_out = self.checkout((ROOT / ".gitattributes").read_bytes())
         for name, expected in PINNED.items():
@@ -88,9 +93,11 @@ class EvidenceCheckoutTests(unittest.TestCase):
                 self.assertEqual(checked_out[name], original[name])
                 self.assertEqual(hashlib.sha256(checked_out[name]).hexdigest(), expected)
 
-    def test_missing_attributes_reproduce_both_multiline_digest_failures(self):
+    def test_missing_attributes_reproduce_dsh_and_qoder_multiline_digest_failures(self):
         original, checked_out = self.checkout(b"")
         for name in [
+            "docs/upstream/qoder/manifest-1.1.85.json",
+            "docs/upstream/qoder/manifest-1.1.86.json",
             "docs/upstream/dsh/root-0.2.2-rc.1.json",
             "docs/upstream/dsh/dependency-evidence/root-package-0.2.2-rc.1.json",
         ]:
