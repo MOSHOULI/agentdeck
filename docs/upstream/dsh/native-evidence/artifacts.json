@@ -1,0 +1,1096 @@
+{
+  "schema_version": 1,
+  "reviewed": "2026-11-11",
+  "source_kind": "exact_npm_archives_and_registry_metadata",
+  "artifacts": [
+    {
+      "id": "node-pty",
+      "package": "node-pty",
+      "version": "1.2.0-beta.15",
+      "metadata_url": "https://registry.npmjs.org/node-pty/1.2.0-beta.15",
+      "metadata_sha256": "371717f3c9568b63681e11555eeb100e65dc51f02ee6e30e13f8444773bf13aa",
+      "archive_url": "https://registry.npmjs.org/node-pty/-/node-pty-1.2.0-beta.15.tgz",
+      "archive_name": "node-pty-1.2.0-beta.15.tgz",
+      "archive_bytes": 7150506,
+      "archive_sha256": "114ac80c3fe075eff76217a4122d135576582695f49c03a5da3835cdfc2f89c5",
+      "integrity": "sha512-vORSzHXi4Ofl7HemVWpuudLqCPdaQb4LfpRCUpE5HPxhp4JYscl8zZwxh11p26v2wvW24WMwnMfLjhRLixrfxA==",
+      "tar_bytes": 26915840,
+      "content_bytes": 26877238,
+      "members": [
+        {
+          "path": "package/LICENSE",
+          "size": 3326,
+          "mode": 420,
+          "sha256": "a3d60eaf32d2fb09c9d82ef39f14bd6e2c0f3ca7de30daa827486c0d6f8b6e9f"
+        },
+        {
+          "path": "package/prebuilds/darwin-arm64/spawn-helper",
+          "size": 50480,
+          "mode": 493,
+          "sha256": "08bc83a084651d095645010d34783f94b9af443614747e953e66d6578027e999"
+        },
+        {
+          "path": "package/prebuilds/darwin-x64/spawn-helper",
+          "size": 9248,
+          "mode": 493,
+          "sha256": "a3bed36ae3ed83b2ac2fce475bd578c51f5b536041f0b2dfe116987f565e9758"
+        },
+        {
+          "path": "package/src/win/conpty_console_list.cc",
+          "size": 1368,
+          "mode": 420,
+          "sha256": "9eb316fb370652d9141027a43172508287de322dbfb9bad1c8262f80d9721e17"
+        },
+        {
+          "path": "package/src/win/conpty.cc",
+          "size": 20967,
+          "mode": 420,
+          "sha256": "800d10d36e888ade40cdb63382a87ae05df208620717d237407ff622d5aaa9d4"
+        },
+        {
+          "path": "package/src/win/path_util.cc",
+          "size": 2607,
+          "mode": 420,
+          "sha256": "54a6041c38bf714893c1d18db3d2888f42089d0209c3d1dc8d444ac6dbf46a0b"
+        },
+        {
+          "path": "package/src/unix/pty.cc",
+          "size": 23090,
+          "mode": 420,
+          "sha256": "5809f87b15122f335017b0b3020071df4c6205c7827186a2c5a9e0edc9ef59b2"
+        },
+        {
+          "path": "package/src/unix/spawn-helper.cc",
+          "size": 494,
+          "mode": 420,
+          "sha256": "22195de1710b574d5904fc89be5624c25e531de20d5e17e5998a2fd19d86e0e6"
+        },
+        {
+          "path": "package/prebuilds/win32-arm64/conpty/conpty.dll",
+          "size": 106528,
+          "mode": 420,
+          "sha256": "b3a9f975c51d5b9b96d290bf784e990e3f85203b063c21614457353f566266ff"
+        },
+        {
+          "path": "package/prebuilds/win32-x64/conpty/conpty.dll",
+          "size": 110152,
+          "mode": 420,
+          "sha256": "3319b484b80bb53d1f4d0a9eb0ea60fd0f61da69db7280ca43b84215f19245ff"
+        },
+        {
+          "path": "package/third_party/conpty/1.25.260303002/win10-arm64/conpty.dll",
+          "size": 106528,
+          "mode": 420,
+          "sha256": "b3a9f975c51d5b9b96d290bf784e990e3f85203b063c21614457353f566266ff"
+        },
+        {
+          "path": "package/third_party/conpty/1.25.260303002/win10-x64/conpty.dll",
+          "size": 110152,
+          "mode": 420,
+          "sha256": "3319b484b80bb53d1f4d0a9eb0ea60fd0f61da69db7280ca43b84215f19245ff"
+        },
+        {
+          "path": "package/prebuilds/win32-arm64/conpty/OpenConsole.exe",
+          "size": 1110560,
+          "mode": 420,
+          "sha256": "7fa560be0c9b6c81db5d1b855a4a6e0f3ee5a2ea75d36eebb3ae44443b8d4866"
+        },
+        {
+          "path": "package/prebuilds/win32-x64/conpty/OpenConsole.exe",
+          "size": 1062472,
+          "mode": 420,
+          "sha256": "7f68c840226505004215c0b82d4e502c24b5bc3f4b93c4baaaa19bd679c0def8"
+        },
+        {
+          "path": "package/third_party/conpty/1.25.260303002/win10-arm64/OpenConsole.exe",
+          "size": 1110560,
+          "mode": 420,
+          "sha256": "7fa560be0c9b6c81db5d1b855a4a6e0f3ee5a2ea75d36eebb3ae44443b8d4866"
+        },
+        {
+          "path": "package/third_party/conpty/1.25.260303002/win10-x64/OpenConsole.exe",
+          "size": 1062472,
+          "mode": 420,
+          "sha256": "7f68c840226505004215c0b82d4e502c24b5bc3f4b93c4baaaa19bd679c0def8"
+        },
+        {
+          "path": "package/binding.gyp",
+          "size": 4657,
+          "mode": 420,
+          "sha256": "60087f9bc86f372a5ad49d15d7854140c29fac959aaa1fb2c8ffd0dc021595dd"
+        },
+        {
+          "path": "package/src/win/conpty.h",
+          "size": 1727,
+          "mode": 420,
+          "sha256": "32b74fe493b4435bc2f8362cfa4bcb4f49a290438002cc4a369e9379c7728d3c"
+        },
+        {
+          "path": "package/src/win/path_util.h",
+          "size": 695,
+          "mode": 420,
+          "sha256": "f877c15389b7794f1c25a0f3b05101a0fde92ccf8b0a351500ebd5b7922c3bff"
+        },
+        {
+          "path": "package/lib/shared/conout.js",
+          "size": 322,
+          "mode": 420,
+          "sha256": "1573129ede3b54a32a4dc3be122566eae0b1979b4513d31329bbd115a4a0e85f"
+        },
+        {
+          "path": "package/lib/worker/conoutSocketWorker.js",
+          "size": 878,
+          "mode": 420,
+          "sha256": "241ff80c89ab6aaf01a7f98b9ae5d865cd3f76850b1eb5ba8a0aa30fbbe5ab2d"
+        },
+        {
+          "path": "package/lib/conpty_console_list_agent.js",
+          "size": 932,
+          "mode": 420,
+          "sha256": "6fc8e611a9f547e03c24ffd25a18ea82010fbadbf3921e6324c69bc0356d900d"
+        },
+        {
+          "path": "package/lib/eventEmitter2.js",
+          "size": 1600,
+          "mode": 420,
+          "sha256": "f1c14613aa90c10def4ca7238329270871997eb26f919f7074dc25533e3e75dd"
+        },
+        {
+          "path": "package/lib/index.js",
+          "size": 1942,
+          "mode": 420,
+          "sha256": "17e79806518ab350cd7d729dcc94154c5d770ea03e38e53684c5a8618065f99c"
+        },
+        {
+          "path": "package/lib/interfaces.js",
+          "size": 233,
+          "mode": 420,
+          "sha256": "56e4173f09aad26173f9d4c79800fda0b808c34424f987ef8d671cc931119a0a"
+        },
+        {
+          "path": "package/scripts/post-install.js",
+          "size": 2401,
+          "mode": 420,
+          "sha256": "98b3f6379debdab20eea21f216e0d09fa38c7757ddc3411f1a743eae7f5be14a"
+        },
+        {
+          "path": "package/scripts/prebuild.js",
+          "size": 1172,
+          "mode": 420,
+          "sha256": "7e604b10f7769d7dc95947d3481c00513b9e3bb6c561d5264506350a16a0381a"
+        },
+        {
+          "path": "package/lib/terminal.js",
+          "size": 7499,
+          "mode": 420,
+          "sha256": "771f5388103c3eb7bc698b589f41c08f06044d96de609eec45c9a79e4ee4fc00"
+        },
+        {
+          "path": "package/lib/types.js",
+          "size": 228,
+          "mode": 420,
+          "sha256": "408bf8287717b6322cc380ea66caf1b5e366dcf697707ae2f3cc454e08f3b151"
+        },
+        {
+          "path": "package/lib/unixTerminal.js",
+          "size": 13921,
+          "mode": 420,
+          "sha256": "63b605fb25c4e6d237493cd1799b01a8d880d89c78850108aae1853d04b4cdf0"
+        },
+        {
+          "path": "package/lib/utils.js",
+          "size": 1548,
+          "mode": 420,
+          "sha256": "807bc62c8b702377d591136862309718ba48fb2b9eca54f4b25fbe43838c8fc6"
+        },
+        {
+          "path": "package/lib/windowsConoutConnection.js",
+          "size": 6443,
+          "mode": 420,
+          "sha256": "c87159520fc74cb0745f273260cc701cdb9e4c01ab0bae12cb4bd8d7f6e2f7c9"
+        },
+        {
+          "path": "package/lib/windowsPtyAgent.js",
+          "size": 13941,
+          "mode": 420,
+          "sha256": "4f503c377b11cbd113e1f32b3932fdc35e8132b0e647f4c6b70dc84224127c53"
+        },
+        {
+          "path": "package/lib/windowsTerminal.js",
+          "size": 8422,
+          "mode": 420,
+          "sha256": "b05d53d49cf9f422c2836029676ac2829f59cc14f5bbbbfaafa08382ff044267"
+        },
+        {
+          "path": "package/package.json",
+          "size": 1694,
+          "mode": 420,
+          "sha256": "f4a19bbc7cf4c2e35c081e6a18a3d11d21c54c2f3cc25bfe48142742a781b71d"
+        },
+        {
+          "path": "package/README.md",
+          "size": 8104,
+          "mode": 420,
+          "sha256": "e2be297b0919196300e637fd2efb0cd039ee7f994515f45a0dd8eac112ec1eaf"
+        },
+        {
+          "path": "package/prebuilds/win32-arm64/conpty_console_list.node",
+          "size": 122368,
+          "mode": 420,
+          "sha256": "327cf47db8b524a75813c98871037bc60f0a08660e75635897aed957a059b690"
+        },
+        {
+          "path": "package/prebuilds/win32-x64/conpty_console_list.node",
+          "size": 134656,
+          "mode": 420,
+          "sha256": "d46800643f90fc56b9fd67398f04a04a871521de0e825211c8382d187859d3ed"
+        },
+        {
+          "path": "package/prebuilds/win32-arm64/conpty.node",
+          "size": 279040,
+          "mode": 420,
+          "sha256": "6da15dc84b864bb4630d95faef97da5f323a078b53d73f395b5efd6f7952c3e0"
+        },
+        {
+          "path": "package/prebuilds/win32-x64/conpty.node",
+          "size": 291328,
+          "mode": 420,
+          "sha256": "ec2fd8545c30e051ee3fa17d26127f7e615919814879c7f746cf4c80845226e0"
+        },
+        {
+          "path": "package/prebuilds/darwin-arm64/pty.node",
+          "size": 86904,
+          "mode": 420,
+          "sha256": "0aae85518beb134a666f8e415f78bf528b2e9d40b47498af97433dc459661366"
+        },
+        {
+          "path": "package/prebuilds/darwin-x64/pty.node",
+          "size": 58576,
+          "mode": 420,
+          "sha256": "811f4a357e260fc0e520c250a3de5990483761d82afd635effbdf4b793b8a0e9"
+        },
+        {
+          "path": "package/prebuilds/linux-arm64/pty.node",
+          "size": 69112,
+          "mode": 420,
+          "sha256": "5a3b8930d62535edabec2eac79fe8eca70a178d93fbb76b1ae875dd60ee8f825"
+        },
+        {
+          "path": "package/prebuilds/linux-x64/pty.node",
+          "size": 75976,
+          "mode": 420,
+          "sha256": "123792d8f22f36d519b21dfb6f4b716f9b18b9e579085ea2840d0773d88d35fd"
+        },
+        {
+          "path": "package/prebuilds/win32-arm64/conpty_console_list.pdb",
+          "size": 4231168,
+          "mode": 420,
+          "sha256": "21a3b6dc0600e4db43e1f1e3149daab199e333c064a65714fd61d5205a52ebfa"
+        },
+        {
+          "path": "package/prebuilds/win32-x64/conpty_console_list.pdb",
+          "size": 4321280,
+          "mode": 420,
+          "sha256": "eedbd0fb50293fff4532465ac6e7d765c0d543923ae11e6b1a05b5ae55fe3476"
+        },
+        {
+          "path": "package/prebuilds/win32-arm64/conpty.pdb",
+          "size": 5918720,
+          "mode": 420,
+          "sha256": "e1b9db81b9b10f8b8b7eb3ad5c9375d4adb328933d8dbd830eaeea4ce447fa4b"
+        },
+        {
+          "path": "package/prebuilds/win32-x64/conpty.pdb",
+          "size": 6311936,
+          "mode": 420,
+          "sha256": "9275fecdca50f646579134e44604ba0ce81b184cea8edfc7c9fa53e59b475013"
+        },
+        {
+          "path": "package/typings/node-pty.d.ts",
+          "size": 6811,
+          "mode": 420,
+          "sha256": "5e2960f29b6d3ca6b8a438cca419e0485d046cb7d9acf67471d5627803ad8db0"
+        }
+      ],
+      "snapshots": [
+        {
+          "member": "package/package.json",
+          "file": "node-pty/package.json.txt",
+          "bytes": 1694,
+          "sha256": "f4a19bbc7cf4c2e35c081e6a18a3d11d21c54c2f3cc25bfe48142742a781b71d"
+        },
+        {
+          "member": "package/scripts/prebuild.js",
+          "file": "node-pty/scripts__prebuild.js.txt",
+          "bytes": 1172,
+          "sha256": "7e604b10f7769d7dc95947d3481c00513b9e3bb6c561d5264506350a16a0381a"
+        },
+        {
+          "member": "package/scripts/post-install.js",
+          "file": "node-pty/scripts__post-install.js.txt",
+          "bytes": 2401,
+          "sha256": "98b3f6379debdab20eea21f216e0d09fa38c7757ddc3411f1a743eae7f5be14a"
+        },
+        {
+          "member": "package/lib/utils.js",
+          "file": "node-pty/lib__utils.js.txt",
+          "bytes": 1548,
+          "sha256": "807bc62c8b702377d591136862309718ba48fb2b9eca54f4b25fbe43838c8fc6"
+        },
+        {
+          "member": "package/lib/unixTerminal.js",
+          "file": "node-pty/lib__unixTerminal.js.txt",
+          "bytes": 13921,
+          "sha256": "63b605fb25c4e6d237493cd1799b01a8d880d89c78850108aae1853d04b4cdf0"
+        },
+        {
+          "member": "package/src/unix/pty.cc",
+          "file": "node-pty/src__unix__pty.cc.txt",
+          "bytes": 23090,
+          "sha256": "5809f87b15122f335017b0b3020071df4c6205c7827186a2c5a9e0edc9ef59b2"
+        },
+        {
+          "member": "package/LICENSE",
+          "file": "node-pty/LICENSE.txt",
+          "bytes": 3326,
+          "sha256": "a3d60eaf32d2fb09c9d82ef39f14bd6e2c0f3ca7de30daa827486c0d6f8b6e9f"
+        }
+      ],
+      "declarations": {
+        "dependencies": {
+          "node-addon-api": "^7.1.0"
+        },
+        "optionalDependencies": null,
+        "peerDependencies": null,
+        "peerDependenciesMeta": null,
+        "scripts": {
+          "build": "tsc -b ./src/tsconfig.json",
+          "watch": "tsc -b -w ./src/tsconfig.json",
+          "lint": "eslint src/",
+          "install": "node scripts/prebuild.js || node-gyp rebuild",
+          "postinstall": "node scripts/post-install.js",
+          "compileCommands": "node scripts/gen-compile-commands.js",
+          "test": "cross-env NODE_ENV=test mocha -R spec --exit lib/*.test.js",
+          "posttest": "npm run lint",
+          "prepare": "npm run build",
+          "prepublishOnly": "npm run build"
+        },
+        "engines": null,
+        "os": null,
+        "cpu": null,
+        "libc": null,
+        "gypfile": null
+      }
+    },
+    {
+      "id": "koffi",
+      "package": "koffi",
+      "version": "3.1.1",
+      "metadata_url": "https://registry.npmjs.org/koffi/3.1.1",
+      "metadata_sha256": "10daa36c7aba172d929aa632773419a72b575dfaed8dc680cbe757e1a5e843c7",
+      "archive_url": "https://registry.npmjs.org/koffi/-/koffi-3.1.1.tgz",
+      "archive_name": "koffi-3.1.1.tgz",
+      "archive_bytes": 302173,
+      "archive_sha256": "d6e3cb95f5d155d16cfe40f39ce09be18568c7f84dfb0b0722820a0da9e03b17",
+      "integrity": "sha512-mRX6AMeeKCxSOeOopqAcLAl5jcNvge7NAG8l7rF/8gGJATI0tdHFYjteIdE0mGOtWdsrJOij+PjnP8Q9c1gwgA==",
+      "tar_bytes": 1848832,
+      "content_bytes": 1784682,
+      "members": [
+        {
+          "path": "package/vendor/node-api-headers/LICENSE",
+          "size": 1064,
+          "mode": 420,
+          "sha256": "a553508f516031c91f3af1148d44970cb81bbae6c4f091be6835d39cc252238c"
+        },
+        {
+          "path": "package/src/koffi/src/abi/arm64_asm.asm",
+          "size": 4016,
+          "mode": 420,
+          "sha256": "58053bbdc192f2191fceaba048798d9862f2fffbca992cd09ad1bbed8c61d4d2"
+        },
+        {
+          "path": "package/src/koffi/src/abi/x64win_asm.asm",
+          "size": 4822,
+          "mode": 420,
+          "sha256": "227e656e5099b48550cee7f16efa9a2dfe2c58f3c46ae71e2f1ab9d80146ead0"
+        },
+        {
+          "path": "package/src/koffi/src/abi/x86_asm.asm",
+          "size": 3969,
+          "mode": 420,
+          "sha256": "3e59a94cb4ee78165f0545a68ce6c397103a106516fb7fe0c2f1e46471315767"
+        },
+        {
+          "path": "package/src/koffi/src/abi/arm64.cc",
+          "size": 51950,
+          "mode": 420,
+          "sha256": "7c017aa1dbf8cfe1d89062a2244966cafab9ec2c2c832877966af6f5bdc5fa0a"
+        },
+        {
+          "path": "package/lib/native/base/base.cc",
+          "size": 316379,
+          "mode": 420,
+          "sha256": "b0fde2f2e68158cc496392a63ae3b84d88eac798ac0713f8acd1f897d936791f"
+        },
+        {
+          "path": "package/src/koffi/src/call.cc",
+          "size": 69095,
+          "mode": 420,
+          "sha256": "e6eb347b2c2444f932daa4f00624421722edea94ac0cb9c1119c5daae12d373c"
+        },
+        {
+          "path": "package/src/koffi/src/ffi.cc",
+          "size": 108101,
+          "mode": 420,
+          "sha256": "7da0f340eaa0aad0a09e67fe054a65c8ee05bacdcf6d9d015bfed5289013fd99"
+        },
+        {
+          "path": "package/src/koffi/src/abi/loong64.cc",
+          "size": 273,
+          "mode": 420,
+          "sha256": "dc53190f98c24d8f909358f23a20ce861d58124a232e87e8e2aeb3566ae02088"
+        },
+        {
+          "path": "package/src/koffi/src/parser.cc",
+          "size": 6271,
+          "mode": 420,
+          "sha256": "fdb030e06ffd83d3e5e0a1c037ad669c2e7d2fde8a831da1f35cd53df623adb1"
+        },
+        {
+          "path": "package/src/koffi/src/abi/riscv64.cc",
+          "size": 49435,
+          "mode": 420,
+          "sha256": "11a039d84a5f160fa7ebfeda4411904dcf36ce416aa0f0da79a0e5ef593408a7"
+        },
+        {
+          "path": "package/src/koffi/src/type.cc",
+          "size": 22882,
+          "mode": 420,
+          "sha256": "b6ff93584362e61a73314b81fe468eb35985d28587461ff4a7ba19fdd8ab6f34"
+        },
+        {
+          "path": "package/src/koffi/src/util.cc",
+          "size": 36273,
+          "mode": 420,
+          "sha256": "ab92522bf324140f3fe9e3032c3cb6770412d743b06746675afe7fe49716ba50"
+        },
+        {
+          "path": "package/src/koffi/src/uv.cc",
+          "size": 6388,
+          "mode": 420,
+          "sha256": "1da9e82cef92232daa4090415c66fba6c3584ee901550cc83978e363dcdd5c7c"
+        },
+        {
+          "path": "package/src/koffi/src/win32.cc",
+          "size": 5776,
+          "mode": 420,
+          "sha256": "3bfa4a499afd5b1933882d09004f6168bb3ccf25ac0e42ce321d12dae67d8d6f"
+        },
+        {
+          "path": "package/src/koffi/src/abi/x64sysv.cc",
+          "size": 52530,
+          "mode": 420,
+          "sha256": "9b0d0128b739f9fc6761b8d00ddc075be385f8542bb24bfaddc67152b8642251"
+        },
+        {
+          "path": "package/src/koffi/src/abi/x64win.cc",
+          "size": 39661,
+          "mode": 420,
+          "sha256": "f92cbee859064c255be527ee826457d8e29cc5b47a3269f213cf73ecd28b4ff6"
+        },
+        {
+          "path": "package/src/koffi/src/abi/x86.cc",
+          "size": 44078,
+          "mode": 420,
+          "sha256": "9cb692230e073c56857b16f05b2237854b35df5b66897d7066475324fb710d48"
+        },
+        {
+          "path": "package/cnoke.cjs",
+          "size": 29837,
+          "mode": 493,
+          "sha256": "d0547e34c211e4c01914418b514bba0f141359324fe1369734660bd75f7ffafc"
+        },
+        {
+          "path": "package/index.cjs",
+          "size": 50,
+          "mode": 420,
+          "sha256": "a200e15ec168d00cb3155794808a98243051c61dd7f6989c23c57ee220c918b9"
+        },
+        {
+          "path": "package/src/koffi/index.cjs",
+          "size": 10502,
+          "mode": 420,
+          "sha256": "cfd8708a7016740afb0e9f0a1c669485ccf8be98e3f2ef0fd6a4be76f4986f03"
+        },
+        {
+          "path": "package/indirect.cjs",
+          "size": 53,
+          "mode": 420,
+          "sha256": "f36c7fd3caa9c43da3db45e1ee272892087b4001b6f575fffb76dd80574829b1"
+        },
+        {
+          "path": "package/src/koffi/indirect.cjs",
+          "size": 10436,
+          "mode": 420,
+          "sha256": "379433ba1c4e79a90e6e599cf8d6ebe9f9a85fc272a635356f2cca62a93cc96c"
+        },
+        {
+          "path": "package/src/koffi/src/static.cjs",
+          "size": 2747,
+          "mode": 420,
+          "sha256": "25dff303c876cfdb531e2d9590ecbbb4928c8e60453c484faad66b2a3abd1556"
+        },
+        {
+          "path": "package/src/koffi/src/trampolines.cjs",
+          "size": 2033,
+          "mode": 493,
+          "sha256": "82895e2a78b911b297e7497d9d6033ab87a0afe64f4904615dacfa318d83adfa"
+        },
+        {
+          "path": "package/vendor/node-api-headers/def/js_native_api.def",
+          "size": 2734,
+          "mode": 420,
+          "sha256": "77653a554fbb27f6c5666f4ba05f87d26f0de72bc3d0439961ac030030c2be66"
+        },
+        {
+          "path": "package/vendor/node-api-headers/def/node_api.def",
+          "size": 3550,
+          "mode": 420,
+          "sha256": "e0d5e3da0520a42e26b563f6321291081bd15bdd20821d46818e5f47900f77d6"
+        },
+        {
+          "path": "package/src/koffi/src/uv.def",
+          "size": 134,
+          "mode": 420,
+          "sha256": "4a40dc700dc66214fc1c464db8c4b78b82845e3b7b4e6103418ac519346ca4d2"
+        },
+        {
+          "path": "package/vendor/node-api-headers/include/js_native_api_types.h",
+          "size": 6744,
+          "mode": 420,
+          "sha256": "21eebde05d2ee59d315ac27d4aa82434ca88508a0b2cf5819802a00ca523831d"
+        },
+        {
+          "path": "package/vendor/node-api-headers/include/js_native_api.h",
+          "size": 31081,
+          "mode": 420,
+          "sha256": "0953395662ea63697cd7a77a9320d94aa2829f9c9569abf3a74272b7a2923ce8"
+        },
+        {
+          "path": "package/vendor/node-addon-api/napi-inl.deprecated.h",
+          "size": 6323,
+          "mode": 420,
+          "sha256": "b66ed1e565e735bbfabcc2f72d466ab7c5414d3ef8851d1af440b81be7f2375c"
+        },
+        {
+          "path": "package/vendor/node-addon-api/napi-inl.h",
+          "size": 242214,
+          "mode": 420,
+          "sha256": "384d2f7934e898e324560443a0cb76f6c1cfa086f0f6fdfdc643396177025bd1"
+        },
+        {
+          "path": "package/vendor/node-addon-api/napi.h",
+          "size": 124039,
+          "mode": 420,
+          "sha256": "5b41d4d85e183e5c69b0e5dab5801dc1fb00fb72579f9b278bb7f70d412d8d38"
+        },
+        {
+          "path": "package/vendor/node-api-headers/include/node_api_types.h",
+          "size": 1930,
+          "mode": 420,
+          "sha256": "a25356630d3058f0a0c8937d9f297e9471e037fda58c2696d8a505c2bd99cb00"
+        },
+        {
+          "path": "package/vendor/node-api-headers/include/node_api.h",
+          "size": 10370,
+          "mode": 420,
+          "sha256": "2d4560831e525b47b060ec8a0864ab73993df9e20215ce9f0fe7b24cd31af32a"
+        },
+        {
+          "path": "package/lib/native/base/base.hh",
+          "size": 173566,
+          "mode": 420,
+          "sha256": "4da7737d98bdc8a0e85127d2b7b20c709b60aaf62975bada7c2b01e514c3ff33"
+        },
+        {
+          "path": "package/src/koffi/src/call.hh",
+          "size": 5513,
+          "mode": 420,
+          "sha256": "b202e8daad46c6734f9b566394179e53aded86983a4f0fe31ac0d8797f7ac1dd"
+        },
+        {
+          "path": "package/src/koffi/src/ffi.hh",
+          "size": 11077,
+          "mode": 420,
+          "sha256": "3ca1bb69f226dca6a992c434581ca7b4684635cb5c9d42a6345dbbc2e5d43879"
+        },
+        {
+          "path": "package/src/koffi/src/parser.hh",
+          "size": 1253,
+          "mode": 420,
+          "sha256": "cfd9e374884cdc0f60716de41bbe110d361bc10d0a8539942e37d34c86b525ae"
+        },
+        {
+          "path": "package/src/koffi/src/type.hh",
+          "size": 2102,
+          "mode": 420,
+          "sha256": "691479b990ddf7364c5f316d0a653d32f13181c1f5f68ad55d1db3ccb58f9b24"
+        },
+        {
+          "path": "package/src/koffi/src/util.hh",
+          "size": 14412,
+          "mode": 420,
+          "sha256": "4aab905947a127652107e20016880d2d34ae46e3290705d8a485e01abd864360"
+        },
+        {
+          "path": "package/src/koffi/src/uv.hh",
+          "size": 2536,
+          "mode": 420,
+          "sha256": "6ad3aeceec4070cbf5fe1f9e54a75b58dc57c2686174c654b341ff9215d70aca"
+        },
+        {
+          "path": "package/src/koffi/src/win32.hh",
+          "size": 3690,
+          "mode": 420,
+          "sha256": "eeec401597da546109b9729113ccb635c61db325f2d394f883c2293955f119a5"
+        },
+        {
+          "path": "package/src/koffi/src/errno.inc",
+          "size": 8776,
+          "mode": 420,
+          "sha256": "f2fea4a329fbf7aa7e5a6c52daacc480d70d782344e37fd7e62019f6b914201a"
+        },
+        {
+          "path": "package/src/koffi/src/primitives.inc",
+          "size": 857,
+          "mode": 420,
+          "sha256": "34f524982a6e921a63c6766619b337b6d15f0a5cdefbf252481dda4b4369afda"
+        },
+        {
+          "path": "package/lib/native/base/unicode.inc",
+          "size": 36653,
+          "mode": 420,
+          "sha256": "a337b5e53a6c72534fcf093c58d7fbf12f7b1075f068ea83a09c91e34373b5a4"
+        },
+        {
+          "path": "package/index.js",
+          "size": 85,
+          "mode": 420,
+          "sha256": "34508972d2e18b79fd4a289943568a68bbaf18badd2e82a25c8deb1af27f6225"
+        },
+        {
+          "path": "package/src/koffi/index.js",
+          "size": 9147,
+          "mode": 420,
+          "sha256": "9c5a1590ca8ee32166477477b2639a55e91273674fa6d86da259d383918cd087"
+        },
+        {
+          "path": "package/indirect.js",
+          "size": 91,
+          "mode": 420,
+          "sha256": "5c5045c5b5ec2083535efdfdbd95f5212545ce29a4b7f33a683504a35e5b6a02"
+        },
+        {
+          "path": "package/src/koffi/indirect.js",
+          "size": 9091,
+          "mode": 420,
+          "sha256": "8d0f04482f762b6b460ec0f89f72dde9eff932a773ce71d43df0551c36fd2c80"
+        },
+        {
+          "path": "package/src/koffi/src/static.js",
+          "size": 2830,
+          "mode": 420,
+          "sha256": "3f2b291e2129181c2984e6508b51efa5be30775afbdbafe6c0f4ed076d80d9d1"
+        },
+        {
+          "path": "package/package.json",
+          "size": 2067,
+          "mode": 420,
+          "sha256": "c0473aeaf572a612e643489f49ac8e6d1fe26092cf69802567332dc57fdca4c1"
+        },
+        {
+          "path": "package/doc/benchmarks.md",
+          "size": 2898,
+          "mode": 420,
+          "sha256": "05f1b7b394380125a3d66b7bc05101f21980d8d78cf5c554d6e2c7f29120f5d8"
+        },
+        {
+          "path": "package/doc/callbacks.md",
+          "size": 7909,
+          "mode": 420,
+          "sha256": "f1e3f14a1d84a5b6d6d7d6d3015a9859043f4d3773b932d361bc49f08a240284"
+        },
+        {
+          "path": "package/CHANGELOG.md",
+          "size": 30835,
+          "mode": 420,
+          "sha256": "a306af803dde65098fa651c713450c18bbaf5fbff3e09811d1e16d86a569e487"
+        },
+        {
+          "path": "package/doc/composites.md",
+          "size": 16327,
+          "mode": 420,
+          "sha256": "7160ecf9e4796d172de3e62cadf7759a299ec94515b3e6993a494ca50b70f389"
+        },
+        {
+          "path": "package/doc/contribute.md",
+          "size": 5744,
+          "mode": 420,
+          "sha256": "72cecf31345e1d4e46d564bc4aa5020c5a445968cc2a818b337bf3a1019a4cbe"
+        },
+        {
+          "path": "package/doc/index.md",
+          "size": 2916,
+          "mode": 420,
+          "sha256": "c996303cff3c3665b85f88f1f2ffdb67390077c14546eabf9d78ed3cf443e412"
+        },
+        {
+          "path": "package/vendor/node-addon-api/LICENSE.md",
+          "size": 1150,
+          "mode": 420,
+          "sha256": "89024017b88a9f2b763f79b941a4f2db3b4428edfcacdc0b23866b2da633ad0c"
+        },
+        {
+          "path": "package/doc/load.md",
+          "size": 7526,
+          "mode": 420,
+          "sha256": "7b9d19a90f00c1cc47537ac65742e577fad22ec2fd18d400d4485fe4e00022c4"
+        },
+        {
+          "path": "package/doc/migration.md",
+          "size": 8908,
+          "mode": 420,
+          "sha256": "b5b4d49ed4658000c6d406b6975c5a7eacce42f1ad3f94e936e1339890381bd3"
+        },
+        {
+          "path": "package/doc/misc.md",
+          "size": 3790,
+          "mode": 420,
+          "sha256": "df10e522dd8c9512c949073d243cb9cff4dceaea69139c98c773ababb067f4c3"
+        },
+        {
+          "path": "package/doc/output.md",
+          "size": 9366,
+          "mode": 420,
+          "sha256": "78a692be2e23954ad024345806b2d4937a45113be6c48cfc2fdd53dc49c32580"
+        },
+        {
+          "path": "package/doc/pointers.md",
+          "size": 15051,
+          "mode": 420,
+          "sha256": "628890dec2cbe8304e006effaaead83e36d5e6b3695f3b7bf7e8add1d26f513c"
+        },
+        {
+          "path": "package/doc/primitives.md",
+          "size": 7561,
+          "mode": 420,
+          "sha256": "3b4cab3721ecd6cad4ccc0ba251f9edae24e3b03bb94ac22234b5c8718a7f346"
+        },
+        {
+          "path": "package/README.md",
+          "size": 2436,
+          "mode": 420,
+          "sha256": "f6ca5fa22abb0a8740fc40789ec161d46373eab1867a7e4d72fbe34f0d709b80"
+        },
+        {
+          "path": "package/vendor/node-addon-api/README.md",
+          "size": 4994,
+          "mode": 420,
+          "sha256": "fa7f9a510c5dc46161e8216dae94e3857e466d7552059baed3b6fb36874a14ad"
+        },
+        {
+          "path": "package/vendor/node-api-headers/README.md",
+          "size": 2741,
+          "mode": 420,
+          "sha256": "63a4e81d19f02b164d51c4721ff3e88c81d410640de7e1d3520a2c406f0a7d83"
+        },
+        {
+          "path": "package/doc/start.md",
+          "size": 3008,
+          "mode": 420,
+          "sha256": "95c57729bd5b4477e39a8950fd4f1e6c8121cf5fba58907d16f2c8d5bdf92b8d"
+        },
+        {
+          "path": "package/doc/types.md",
+          "size": 2828,
+          "mode": 420,
+          "sha256": "d8a1acfcc5f416038f05b6f53a93445e80cba70755592d6ceaf5b9df9b3c5440"
+        },
+        {
+          "path": "package/doc/unions.md",
+          "size": 0,
+          "mode": 420,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "package/doc/values.md",
+          "size": 6324,
+          "mode": 420,
+          "sha256": "f712dc80674c1711b76edc64b1a55c06e5003e17b542afe071bc20cdfed161ba"
+        },
+        {
+          "path": "package/src/koffi/src/abi/arm64_asm.S",
+          "size": 4978,
+          "mode": 420,
+          "sha256": "9ef4d4095faddda9e5807137cbfbf40908ec2b373e6f0e2e3ee70e7b919d37b4"
+        },
+        {
+          "path": "package/src/koffi/src/abi/loong64_asm.S",
+          "size": 4496,
+          "mode": 420,
+          "sha256": "5df3967e737eadd1509812e76b6ce4dcbfd8672797158a3fc37ac5f3755d14de"
+        },
+        {
+          "path": "package/src/koffi/src/abi/riscv64_asm.S",
+          "size": 4221,
+          "mode": 420,
+          "sha256": "46f910cc423ca39305b19a38db13a1480061735258f189ee631237ea13fd2ba7"
+        },
+        {
+          "path": "package/src/koffi/src/abi/x64sysv_asm.S",
+          "size": 5198,
+          "mode": 420,
+          "sha256": "822fc8d707b9e7ffd4fb4899d9d7bad2b2ee732f9e3203b9fcd367e750e2a08f"
+        },
+        {
+          "path": "package/src/koffi/src/abi/x64win_asm.S",
+          "size": 3966,
+          "mode": 420,
+          "sha256": "dcfd393d8605f97064e69fa31f2d533e2f62f1e0d378a85be7251952c679f9fe"
+        },
+        {
+          "path": "package/src/koffi/src/abi/x86_asm.S",
+          "size": 4718,
+          "mode": 420,
+          "sha256": "d073e326858e5475575b66088a67f495b6fe26011e027b8ee86e4377872be25d"
+        },
+        {
+          "path": "package/index.d.ts",
+          "size": 12815,
+          "mode": 420,
+          "sha256": "afa9445e83a5832bb4a31ffb0358648cca02b1699fbd194a2c86f6e0d20c0a7c"
+        },
+        {
+          "path": "package/src/koffi/CMakeLists.txt",
+          "size": 9375,
+          "mode": 420,
+          "sha256": "99270ec05125659937f582c8bd4c2fc095fcc1a02b69bcbbebd7c6608a983749"
+        },
+        {
+          "path": "package/LICENSE.txt",
+          "size": 1117,
+          "mode": 420,
+          "sha256": "22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290"
+        }
+      ],
+      "snapshots": [
+        {
+          "member": "package/package.json",
+          "file": "koffi/package.json.txt",
+          "bytes": 2067,
+          "sha256": "c0473aeaf572a612e643489f49ac8e6d1fe26092cf69802567332dc57fdca4c1"
+        },
+        {
+          "member": "package/cnoke.cjs",
+          "file": "koffi/cnoke.cjs.txt",
+          "bytes": 29837,
+          "sha256": "d0547e34c211e4c01914418b514bba0f141359324fe1369734660bd75f7ffafc"
+        },
+        {
+          "member": "package/src/koffi/index.cjs",
+          "file": "koffi/src__koffi__index.cjs.txt",
+          "bytes": 10502,
+          "sha256": "cfd8708a7016740afb0e9f0a1c669485ccf8be98e3f2ef0fd6a4be76f4986f03"
+        },
+        {
+          "member": "package/LICENSE.txt",
+          "file": "koffi/LICENSE.txt.txt",
+          "bytes": 1117,
+          "sha256": "22bcbbbacd739b026a8dc484f62a31484ce4c4e31f3408b60b29b4e41d62b290"
+        }
+      ],
+      "declarations": {
+        "dependencies": null,
+        "optionalDependencies": {
+          "@koromix/koffi-linux-arm64": "3.1.1",
+          "@koromix/koffi-linux-ia32": "3.1.1",
+          "@koromix/koffi-linux-x64": "3.1.1",
+          "@koromix/koffi-linux-riscv64": "3.1.1",
+          "@koromix/koffi-freebsd-ia32": "3.1.1",
+          "@koromix/koffi-freebsd-x64": "3.1.1",
+          "@koromix/koffi-freebsd-arm64": "3.1.1",
+          "@koromix/koffi-openbsd-ia32": "3.1.1",
+          "@koromix/koffi-openbsd-x64": "3.1.1",
+          "@koromix/koffi-win32-ia32": "3.1.1",
+          "@koromix/koffi-win32-x64": "3.1.1",
+          "@koromix/koffi-win32-arm64": "3.1.1",
+          "@koromix/koffi-darwin-x64": "3.1.1",
+          "@koromix/koffi-darwin-arm64": "3.1.1",
+          "@koromix/koffi-linux-loong64": "3.1.1"
+        },
+        "peerDependencies": null,
+        "peerDependenciesMeta": null,
+        "scripts": {
+          "install": "node ./cnoke.cjs -P . -D src/koffi --prebuild --release"
+        },
+        "engines": null,
+        "os": null,
+        "cpu": null,
+        "libc": null,
+        "gypfile": null
+      }
+    },
+    {
+      "id": "koffi-linux-x64",
+      "package": "@koromix/koffi-linux-x64",
+      "version": "3.1.1",
+      "metadata_url": "https://registry.npmjs.org/@koromix%2fkoffi-linux-x64/3.1.1",
+      "metadata_sha256": "b471cb152f4254545bc6759af3a9db78142f468dab0b30d33fd4e53790334eb7",
+      "archive_url": "https://registry.npmjs.org/@koromix/koffi-linux-x64/-/koffi-linux-x64-3.1.1.tgz",
+      "archive_name": "koffi-linux-x64-3.1.1.tgz",
+      "archive_bytes": 614185,
+      "archive_sha256": "0b4038a46282a354aab77d6d05059ac8a8fccb0dfd231b4c18acb8623953d1fe",
+      "integrity": "sha512-pyTcX5fePeYbt7TZAwRby69wdlRx3PT+g15ra5IYdat/Pgh3qAKEYeZ+uu7WpPGOy43p/oSRqqZoa2kORzozlA==",
+      "tar_bytes": 2366464,
+      "content_bytes": 2362025,
+      "members": [
+        {
+          "path": "package/index.js",
+          "size": 318,
+          "mode": 420,
+          "sha256": "f4f316a915fc895dc5e6e0b7c5d83dd5b97cdd8ea815276fef5578f92873703b"
+        },
+        {
+          "path": "package/package.json",
+          "size": 644,
+          "mode": 420,
+          "sha256": "468c0748da5e9c74dfa58308dd23383c49505d29a911998bfac86edf9cba1d02"
+        },
+        {
+          "path": "package/README.md",
+          "size": 271,
+          "mode": 420,
+          "sha256": "015d314be8f33f63bc15d2272ce50ae00a3f2114787ef24a1fc469654572244f"
+        },
+        {
+          "path": "package/linux_x64/koffi.node",
+          "size": 1150432,
+          "mode": 420,
+          "sha256": "df687b8c68598c3ee83d06dcbc1d72fca032475e62b6108c4badfb5e43a3e7ff"
+        },
+        {
+          "path": "package/musl_x64/koffi.node",
+          "size": 1210360,
+          "mode": 420,
+          "sha256": "41adcb13df1a3ffac902dab2d3a1baef4f4dc1470964971ccfff1618c8aeb804"
+        }
+      ],
+      "snapshots": [
+        {
+          "member": "package/package.json",
+          "file": "koffi-linux-x64/package.json.txt",
+          "bytes": 644,
+          "sha256": "468c0748da5e9c74dfa58308dd23383c49505d29a911998bfac86edf9cba1d02"
+        },
+        {
+          "member": "package/index.js",
+          "file": "koffi-linux-x64/index.js.txt",
+          "bytes": 318,
+          "sha256": "f4f316a915fc895dc5e6e0b7c5d83dd5b97cdd8ea815276fef5578f92873703b"
+        }
+      ],
+      "declarations": {
+        "dependencies": null,
+        "optionalDependencies": null,
+        "peerDependencies": null,
+        "peerDependenciesMeta": null,
+        "scripts": null,
+        "engines": null,
+        "os": [
+          "linux"
+        ],
+        "cpu": [
+          "x64"
+        ],
+        "libc": null,
+        "gypfile": null
+      }
+    },
+    {
+      "id": "koffi-win32-x64",
+      "package": "@koromix/koffi-win32-x64",
+      "version": "3.1.1",
+      "metadata_url": "https://registry.npmjs.org/@koromix%2fkoffi-win32-x64/3.1.1",
+      "metadata_sha256": "bb7200748d1a4aa9010013c2dc677a345905ed920328c71360d17ffe979a0c60",
+      "archive_url": "https://registry.npmjs.org/@koromix/koffi-win32-x64/-/koffi-win32-x64-3.1.1.tgz",
+      "archive_name": "koffi-win32-x64-3.1.1.tgz",
+      "archive_bytes": 399006,
+      "archive_sha256": "b0be9b6a916b9f5de5b97fb5de844efe1121f7ed44cafb481a1479c7c90aec9b",
+      "integrity": "sha512-KqHPmvj6QILhNyI/To8QSihHsijeVGIYYPBOUnXEpcnH2LuLbargY4Hd6dDeTN3Z90uUUxN+1FWz1UnhVzFOiA==",
+      "tar_bytes": 1050624,
+      "content_bytes": 1045753,
+      "members": [
+        {
+          "path": "package/index.js",
+          "size": 206,
+          "mode": 420,
+          "sha256": "632ab5a01dfc1b519b06275f490d6790100a2f8d71d8f56957091d0fcc5b3e0b"
+        },
+        {
+          "path": "package/package.json",
+          "size": 644,
+          "mode": 420,
+          "sha256": "b38fcff8641d493656ef4153a37fd7389806ae621bb916aca536fd3bbc158690"
+        },
+        {
+          "path": "package/win32_x64/koffi.lib",
+          "size": 1688,
+          "mode": 420,
+          "sha256": "581078774d824496b8250bf436f47ef80e1694700c83955d9e9475fcfaebd980"
+        },
+        {
+          "path": "package/README.md",
+          "size": 271,
+          "mode": 420,
+          "sha256": "4fc87635ba2ce995d9f91401e96c68dd0600ca3db25dae419a9abc4e8e11fcd0"
+        },
+        {
+          "path": "package/win32_x64/koffi.node",
+          "size": 1042944,
+          "mode": 420,
+          "sha256": "eb0587c804bb76262968bf83028528da4dc2d4322f558845cce205c709e2ba20"
+        }
+      ],
+      "snapshots": [
+        {
+          "member": "package/package.json",
+          "file": "koffi-win32-x64/package.json.txt",
+          "bytes": 644,
+          "sha256": "b38fcff8641d493656ef4153a37fd7389806ae621bb916aca536fd3bbc158690"
+        },
+        {
+          "member": "package/index.js",
+          "file": "koffi-win32-x64/index.js.txt",
+          "bytes": 206,
+          "sha256": "632ab5a01dfc1b519b06275f490d6790100a2f8d71d8f56957091d0fcc5b3e0b"
+        }
+      ],
+      "declarations": {
+        "dependencies": null,
+        "optionalDependencies": null,
+        "peerDependencies": null,
+        "peerDependenciesMeta": null,
+        "scripts": null,
+        "engines": null,
+        "os": [
+          "win32"
+        ],
+        "cpu": [
+          "x64"
+        ],
+        "libc": null,
+        "gypfile": null
+      }
+    }
+  ]
+}

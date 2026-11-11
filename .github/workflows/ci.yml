@@ -86,6 +86,8 @@ jobs:
         run: python -B scripts/test_dsh_distribution_smoke.py
       - name: DSH subprocess archive offline safety regressions
         run: python -B scripts/test_dsh_subprocess_smoke.py
+      - name: DSH native archives offline safety regressions
+        run: python -B scripts/test_dsh_native_smoke.py
       - name: Build real DSH inspection CLI
         run: cargo build --locked -p aisync-cli
       - name: Verify official DSH root archive without installation or execution
@@ -104,6 +106,19 @@ jobs:
         with:
           name: DSH-subprocess-verification-${{ env.BUILD_SHA }}
           path: ${{ runner.temp }}/dsh-subprocess-evidence.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Verify four official DSH native archives without loading native code
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -B scripts/dsh_native_smoke.py --cli "$PWD/target/debug/aisync" --destination "$RUNNER_TEMP/dsh-native-package-smoke" | tee "$RUNNER_TEMP/dsh-native-evidence.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: DSH-native-verification-${{ env.BUILD_SHA }}
+          path: ${{ runner.temp }}/dsh-native-evidence.json
           if-no-files-found: error
           retention-days: 14
       - name: Codex animations Linux filesystem metadata guards

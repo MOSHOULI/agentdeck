@@ -110,6 +110,24 @@ impl NativeSelectedFileReader {
         Ok(bytes)
     }
 
+    /// Four reviewed native archives only; no general limit override and no
+    /// change to settings, root-package or subprocess-package read contracts.
+    pub(crate) fn read_dsh_native_archive(&self, path: &Path) -> Result<Vec<u8>, InspectionIssue> {
+        let (name, limit) = match path.file_name().and_then(|v| v.to_str()) {
+            Some("node-pty-1.2.0-beta.15.tgz") => ("node-pty-1.2.0-beta.15.tgz", 7_150_506),
+            Some("koffi-3.1.1.tgz") => ("koffi-3.1.1.tgz", 302_173),
+            Some("koffi-linux-x64-3.1.1.tgz") => ("koffi-linux-x64-3.1.1.tgz", 614_185),
+            Some("koffi-win32-x64-3.1.1.tgz") => ("koffi-win32-x64-3.1.1.tgz", 399_006),
+            _ => return Err(InspectionIssue::UnexpectedFileName),
+        };
+        let mut bytes = Vec::new();
+        self.visit_named(path, name, limit, |chunk| {
+            bytes.extend_from_slice(chunk);
+            Ok(())
+        })?;
+        Ok(bytes)
+    }
+
     /// Dedicated archive hashing; callers cannot enlarge settings inspection limits.
     pub(crate) fn hash_archive(
         &self,

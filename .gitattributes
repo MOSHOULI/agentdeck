@@ -13,3 +13,6 @@ scripts/fixtures/codex-windows-shims/*.txt -text
 # Static DSH lifecycle evidence is data, never executed.
 docs/upstream/dsh/dependency-evidence/*.mjs -text
 docs/upstream/dsh/subprocess-archive-layout-0.2.2-rc.1.json -text
+
+# Fixed native dependency metadata and unmodified source snippets are inert evidence.
+docs/upstream/dsh/native-evidence/** -text
