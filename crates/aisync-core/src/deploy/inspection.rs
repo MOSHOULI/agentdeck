@@ -22,8 +22,8 @@ pub use codex_static::{
 };
 pub use installation::InstallPreview;
 pub(super) use installation::{
-    can_install, install_agent, install_agent_from_preview, install_agent_from_preview_observed,
-    preview_install,
+    can_install, install_agent, install_agent_from_preview, install_agent_from_preview_guarded,
+    install_agent_from_preview_observed, preview_install,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

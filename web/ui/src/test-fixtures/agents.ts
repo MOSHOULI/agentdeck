@@ -71,7 +71,7 @@ export const agentCatalog: AgentInfo[] = [
 ];
 
 // Authored passive DTO: native guard returns no runtime/source evidence.
-export const suppressedCodexMessage = '本进程中 Codex 安装完成状态未确认，已暂停自动版本探测。刷新或切换页面不会为此条目执行 Codex 或 npm；未清理残留。此保护不跨应用重启。';
+export const suppressedCodexMessage = 'Codex 安装保护未通过检查，已暂停此条目的主动探测。刷新或切换页面不会为此条目执行 Codex 或 npm；重启不代表安全恢复。未清理残留。';
 export const suppressedCodexAgent: AgentInfo = {
   ...notDetectedAgent, id: 'codex', name: 'Codex', installed: false,
   installationStatus: 'error', installationMessage: suppressedCodexMessage,

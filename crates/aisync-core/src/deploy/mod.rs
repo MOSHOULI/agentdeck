@@ -7,6 +7,7 @@
 use crate::registry::AgentDefinition;
 
 mod inspection;
+pub mod install_protection;
 mod process_guard;
 pub mod residual;
 pub use inspection::{
@@ -121,6 +122,19 @@ pub fn install_agent_from_preview_observed(
     on_installer_start: impl FnOnce(),
 ) -> crate::Result<()> {
     inspection::install_agent_from_preview_observed(agent, revision, on_installer_start)
+}
+
+/// Fallible pre-dispatch gate for desktop durable installation protection.
+/// Receives the backend-rebuilt, double-checked preview immediately before
+/// installer dispatch. Returning an error prevents the subprocess. It must not
+/// re-enter installation. The caller must hold its protection lease until this
+/// whole operation and its postchecks return, and treat panic as uncertain.
+pub fn install_agent_from_preview_guarded(
+    agent: &AgentDefinition,
+    revision: &str,
+    before_dispatch: impl FnOnce(&InstallPreview) -> Result<(), String>,
+) -> crate::Result<()> {
+    inspection::install_agent_from_preview_guarded(agent, revision, before_dispatch)
 }
 
 /// Direct CLI/core installation retains caller-managed explicit confirmation.

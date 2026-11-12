@@ -493,4 +493,117 @@ class WrongRootFixtureTests(unittest.TestCase):
         self.assertIn('install_gui.assert_wrong_root_coverage(wrong_root_records)',source)
         self.assertIn("'wrong_root_install_gui_verified': passed and",source)
 
+class DurableRecoveryFixtureTests(unittest.TestCase):
+    setUp=WrongRootFixtureTests.setUp
+    install=WrongRootFixtureTests.install
+    def create_state(self,home,phase='failed_returned'):
+        import uuid
+        home.mkdir(mode=0o700,exist_ok=True)
+        product=home/'.agentdeck';product.mkdir(mode=0o700)
+        parent=product/'install-protection';parent.mkdir(mode=0o700)
+        directory=parent/'codex';directory.mkdir(mode=0o700)
+        subject.private_write(directory/'gate.lock','')
+        record={'schema':1,'platform':'linux','phase':phase,'attempt':str(uuid.uuid4()),'prefix':str(self.f['prefix']),'prefixIdentity':'test-only-identity'}
+        subject.private_write(directory/'state.json',json.dumps(record))
+        return record
+    def test_manual_relocation_preserves_prefix_ancestors_and_original_bytes(self):
+        self.install()
+        parents=[self.f['prefix'],self.f['bin'],self.f['global'],self.f['global'].parent]
+        identities=[(p.stat().st_dev,p.stat().st_ino) for p in parents]
+        payload=(self.f['package']/'bin/codex.js').read_bytes()
+        archive=subject.relocate_authored_residue(self.f)
+        self.assertEqual(identities,[(p.stat().st_dev,p.stat().st_ino) for p in parents])
+        self.assertEqual((archive/'codex-package/bin/codex.js').read_bytes(),payload)
+        self.assertFalse(self.f['package'].exists());self.assertFalse(os.path.lexists(self.f['bin']/'codex'))
+        self.install();subject.assert_wrong_root(self.f,attempts=2)
+        self.assertEqual((archive/'codex-package/bin/codex.js').read_bytes(),payload)
+    def test_configuration_allowlist_requires_exact_private_guard(self):
+        import install_protection_fixture as protection
+        home=self.root/'guard-home';self.create_state(home)
+        subject.assert_no_configuration(home)
+        (home/'.agentdeck/install-protection/codex/extra').write_bytes(b'not allowed')
+        with self.assertRaises(protection.Failure):subject.assert_no_configuration(home)
+        linked=self.root/'linked-home';linked.mkdir(mode=0o700);(linked/'.agentdeck').mkdir(mode=0o700)
+        (linked/'.agentdeck/install-protection').symlink_to(linked/'missing')
+        with self.assertRaises(protection.Failure):subject.assert_no_configuration(linked)
+    def test_offline_recovery_protocol_model_requires_each_confirmation(self):
+        # Real authored npm/file transitions; modeled UI/backend, not IPC proof.
+        self.install();home=self.root/'recovery-home';record=self.create_state(home)
+        state=home/'.agentdeck/install-protection/codex/state.json'
+        residue=subject.assert_wrong_root(self.f);before=subject.protection_snapshot(home,'failed_returned');queries=subject.query_counts(self.f)
+        owner=self
+        class Driver(OfflineDriver):
+            plan=None;cleared=False;error=False
+            def click(self,selector):
+                self.clicks.append(selector)
+                if selector==subject.RECOVERY_PREVIEW:
+                    self.plan='blocked' if self.fixture['package'].exists() else 'eligible'
+                elif selector==subject.RECOVERY_CANCEL:self.plan=None
+                elif selector==subject.RECOVERY_CONFIRM:
+                    self.plan=None
+                    if self.fixture['bin'].joinpath('codex').exists():self.error=True
+                    else:
+                        self.cleared=True;self.error=False
+                        state.write_text(json.dumps({'schema':1,'platform':'linux','phase':'clear','attempt':None,'prefix':None,'prefixIdentity':None}),encoding='utf-8')
+                elif selector==subject.PREVIEW:self.dialog=True
+                elif selector==subject.CONFIRM:
+                    self.dialog=False;owner.install();state.write_text(json.dumps(record),encoding='utf-8');self.cleared=False
+            def elements(self,selector):
+                if selector.startswith(subject.RECOVERY_RESULT):
+                    return [{}] if self.plan and (selector==subject.RECOVERY_RESULT or "@data-state='"+self.plan+"'" in selector) else []
+                if selector==subject.RECOVERY_CONFIRM:return [{}] if self.plan=='eligible' else []
+                return super().elements(selector)
+            def text(self,selector):
+                if selector.startswith(subject.RECOVERY_RESULT) and selector.endswith('/dd'):return 'missing'
+                if selector==subject.RECOVERY_RESULT:return '已记录安装位置：'+str(self.fixture['prefix'])+' 确认只解除探测保护；之后刷新可恢复 npm/Codex 查询。不安装、不删除，也不代表包真实性或运行验证。'
+                if selector=='//body' and self.error:return '恢复检查或确认未完成，保护状态未确认。请保留现有文件；不会自动重试。'
+                if selector=="//*[@aria-label='Agent 列表']":return subject.WRONG_ROOT_GUARD
+                return super().text(selector)
+        driver=Driver(self.f,self.install);records=[]
+        subject.exercise_recovery_after_restart(driver,self.f,home,records,lambda _:None,residue,before,queries)
+        self.assertEqual(records,[{'stage':stage,'verified':True} for stage in subject.RECOVERY_STAGES])
+        self.assertEqual(driver.clicks.count(subject.RECOVERY_CONFIRM),2)
+        self.assertEqual(driver.clicks.count(subject.RECOVERY_CANCEL),2)
+        self.assertEqual(driver.clicks.count(subject.CONFIRM),1)
+        self.assertEqual(self.f['calls'].read_bytes(),b'ii');self.assertEqual(self.f['versions'].read_bytes(),b'')
+    def test_synthetic_empty_slot_recovery_models_preserve_raw_records(self):
+        import install_protection_fixture as protection
+        self.install();source=self.root/'source-home';self.create_state(source)
+        subject.relocate_authored_residue(self.f)
+        original=protection.protection_snapshot(source)
+        class Driver(OfflineDriver):
+            plan=False
+            def click(self,selector):
+                self.clicks.append(selector)
+                if selector==subject.RECOVERY_PREVIEW:self.plan=True
+                elif selector==subject.RECOVERY_CANCEL:self.plan=False
+            def elements(self,selector):
+                if selector.startswith(subject.RECOVERY_RESULT):return [{}] if self.plan and self.case=='armed' else []
+                if selector=="//*[@data-testid='codex-recovery-error']":return [{}] if self.plan and self.case=='corrupt' else []
+                if selector==subject.RECOVERY_CONFIRM:return []
+                return super().elements(selector)
+            def text(self,selector):
+                if selector=="//*[@data-testid='codex-recovery-error']":return '恢复检查或确认未完成，保护状态未确认。请保留现有文件；不会自动重试。'
+                if selector=="//*[@aria-label='Agent 列表']":return subject.WRONG_ROOT_GUARD
+                return super().text(selector)
+        records=[]
+        for case in ('armed','corrupt'):
+            home=self.root/case;home.mkdir(mode=0o700)
+            before=protection.prepare_synthetic_protection(source,home,case)
+            driver=Driver(self.f,self.install);driver.case=case
+            subject.exercise_synthetic_recovery_blocked(driver,self.f,home,case,records,lambda _:None,before,subject.query_counts(self.f))
+            self.assertNotIn(subject.RECOVERY_CONFIRM,driver.clicks)
+            self.assertEqual(protection.protection_snapshot(source),original)
+        self.assertEqual(len(records),6)
+        self.assertTrue(all(row['testAuthoredState'] and not row['crashRecoveryVerified'] for row in records))
+
+    def test_native_restart_uses_same_home_path_and_stopped_synthetic_preparation(self):
+        source=Path(harness.__file__).read_text(encoding='utf-8')
+        self.assertIn('restart_for_home(original_wrong_home)',source)
+        self.assertIn("if env['PATH']!=wrong_fixture['path']",source)
+        method=source[source.index('        def restart_for_home'):source.index("        phase('durable_wrong_root_restart_same_home')")]
+        self.assertLess(method.index('process.wait(timeout=5)'),method.index('if prepare is not None:prepare()'))
+        self.assertLess(method.index('if prepare is not None:prepare()'),method.index('subprocess.Popen'))
+        self.assertIn("for case in ('armed','corrupt')",source)
+
 if __name__ == '__main__': unittest.main()

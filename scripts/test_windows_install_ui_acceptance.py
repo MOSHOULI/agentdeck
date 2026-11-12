@@ -1,5 +1,9 @@
 """Offline wiring checks only; not evidence of native Windows UI behavior."""
+import base64
+import json
 from pathlib import Path
+import shutil
+import subprocess
 import unittest
 ROOT = Path(__file__).resolve().parents[1]
 UI = (ROOT / 'scripts/windows-install-ui-acceptance.ps1').read_text(encoding='utf-8')
@@ -50,14 +54,15 @@ class Tests(unittest.TestCase):
         self.assertLess(flow.index("Click-Qwen '取消'"), flow.index("Click-Qwen '确认安装软件'"))
         self.assertIn("Check-Gui 'failed-reviewed-install-restart' -KeepOpen", flow)
         self.assertIn("Click-Qwen '刷新列表'", flow)
-        self.assertIn("Wait-InstallText '无法取得有效安装预览，请刷新后重新检查。' 'occupied-preview-error'", flow)
-        for stage in ('preview_cancel','confirmed_failure','refresh_no_retry','restart_no_retry','occupied_preview_rejected'):
+        self.assertIn("Open-BlockedRecovery", flow)
+        self.assertIn("Persistent partial failure allowed installation", flow)
+        for stage in ('preview_cancel','confirmed_failure','refresh_no_retry','restart_no_retry','persistent_recovery_blocked'):
             self.assertIn(stage, flow)
         for forbidden in ('Remove-Item', 'WriteAllText', '--stale', 'confirmInstall', 'Invoke-WebRequest'):
             self.assertNotIn(forbidden, flow)
         guard = UI[UI.index('function Assert-FailedInstallObservation'):UI.index('function Check-FailedReviewedInstall')]
         for check in ('installCalls -ne 1', 'versionProbes -ne 0', 'partialInstallRetained -ne $true',
-                      '$observedResidual -cne $residual', '(Get-CodexSnapshot) -cne $baseline',
+                      '$observedResidual -cne $residual', '(Get-InstallConfigurationSnapshot) -cne $baseline',
                       'Assert-InstallNoConfirmation', "Contains('软件安装操作已完成')"):
             self.assertIn(check, guard)
         self.assertEqual(flow.count('Assert-FailedInstallObservation $fixture $manifest $baseline $residual'), 5)
@@ -76,7 +81,7 @@ class Tests(unittest.TestCase):
         guard = UI[UI.index('function Assert-FailedInstallObservation'):UI.index('function Check-FailedReviewedInstall')]
         self.assertIn("throw ('Failed installation residual changed: ' + $stage)", guard)
         self.assertIn("checkpoint = $stage; changes = $difference", guard)
-        for stage in ('initial', 'settled', 'refresh', 'restart', 'occupied-preview'):
+        for stage in ('initial', 'settled', 'refresh', 'restart', 'recovery-blocked'):
             self.assertIn("Assert-FailedInstallObservation $fixture $manifest $baseline $residual '" + stage + "'", UI)
 
     def test_session_panel_is_native_readonly_and_not_persistent_recovery(self):
@@ -195,17 +200,20 @@ class Tests(unittest.TestCase):
         guard=UI[UI.index('function Assert-WrongRootInstallObservation'):UI.index('function Check-WrongRootReviewedInstall')]
         self.assertIn("'--mode', 'wrong-root'",method)
         self.assertEqual(method.count("Click-Qwen '确认安装软件'"),1)
-        self.assertEqual(method.count("Click-Qwen '刷新列表'"),1)
-        self.assertEqual(method.count('Check-Gui '),1)
+        self.assertEqual(method.count("Click-Qwen '刷新列表'"),2)
+        self.assertEqual(method.count('Check-Gui '),2)
         for stage in ('verification_rejected','automatic_refresh_unprobed','manual_refresh_unprobed','navigation_unprobed'):
             self.assertIn(stage,method)
         for item in ('installCalls -ne 1','versionProbes -ne 0','completeWrongRootRetained -ne $true',
-                     '$current -cne $residual','(Get-CodexSnapshot) -cne $baseline','Assert-InstallNoConfirmation',
+                     '$current -cne $residual','(Get-InstallConfigurationSnapshot) -cne $baseline','Assert-InstallNoConfirmation',
                      "'软件安装操作已完成'","'实测版本 1.2.3'"):
             self.assertIn(item,guard)
         self.assertIn("Activate-InstallWorkspace 'Qwen 配置检查'",method)
         self.assertIn("Activate-InstallWorkspace 'Agent 管理'",method)
-        self.assertIn('wrongRootSessionRestarted = $false',method)
+        self.assertIn('wrongRootSessionRestarted = $true',method)
+        self.assertIn("Check-Gui 'wrong-root-reviewed-install-restarted'",method)
+        self.assertIn('Open-BlockedRecovery',method)
+        self.assertIn('Check-ExplicitInstallRecovery $fixture $manifest',method)
         self.assertIn('authoredAgentExecuted = $false',method)
         self.assertIn("'probe-suppression'",guard)
         self.assertIn("@('installCalls','versionProbes','prefixQueries','rootQueries','metadataQueries')",guard)
@@ -214,6 +222,32 @@ class Tests(unittest.TestCase):
         self.assertIn('$action.Current.IsEnabled',guard)
         self.assertIn('    Check-WrongRootReviewedInstall',LIFECYCLE)
         self.assertLess(LIFECYCLE.index('    Check-FailedReviewedInstall'),LIFECYCLE.index('    Check-WrongRootReviewedInstall'))
+
+    def test_persistent_recovery_and_synthetic_cases_keep_explicit_boundaries(self):
+        recovery=UI[UI.index('function Check-ExplicitInstallRecovery'):UI.index('function Open-ReviewedInstallPlanAfterRecovery')]
+        synthetic=UI[UI.index('function Check-SyntheticUncertainProtection'):UI.index('function Check-ExplicitInstallRecovery')]
+        for token in ("'--relocate-owned'","'取消恢复检查'","'--conflict','create'","'--conflict','remove'",'Stale recovery cleared protection','Cancelled recovery changed protection',"'--protection','clear'",'Open-ReviewedInstallPlanAfterRecovery',"'--expected-attempts','2'",'testAuthoredResidueRelocation = $true','productCleanup = $false'):
+            self.assertIn(token,recovery)
+        self.assertEqual(recovery.count("Click-Qwen '确认恢复 Codex 探测'"),2) # stale once, fresh once
+        self.assertEqual(recovery.count("Click-Qwen '确认安装软件'"),1)
+        self.assertLess(recovery.index("'--protection','clear'"),recovery.index('Open-ReviewedInstallPlanAfterRecovery'))
+        for token in ("@('armed','corrupt')",'stateUnchanged = $true','actualCrashVerified = $false','emptySlots = $true','Assert-RecoveryNoExecution','Set-Acl -LiteralPath $target -AclObject $acl','Synthetic protection security did not match its source'):
+            self.assertIn(token,synthetic)
+        homes=UI[UI.index('function Invoke-InstallPrivateHome'):UI.index('function Open-BlockedRecovery')]
+        for token in ('finally {','Stop-App',"'HOME','USERPROFILE','AGENTDECK_TEST_HOME','APPDATA','LOCALAPPDATA'",'$script:homeDir = $savedHome'):
+            self.assertIn(token,homes)
+
+    @unittest.skipUnless(shutil.which('pwsh'),'actual PowerShell unavailable')
+    def test_recovery_target_matches_core_dos_verbatim_spelling_only(self):
+        function=UI[UI.index('function ConvertTo-ExpectedRecoveryPrefix'):UI.index('function Assert-RecoveryEligibleTarget')]
+        inputs=[r'\\?\C:\测试 空格\prefix',r'C:\测试 空格\prefix',r'\\?\c:\MixedCASE',r'\\?\UNC\server\share',r'\\.\C:\prefix',r'\\?\Volume{test}\prefix',r'C:relative',r'\\?\C:/prefix']
+        encoded=base64.b64encode(json.dumps(inputs,ensure_ascii=False).encode()).decode()
+        command=function+"\n$values=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+encoded+"')) | ConvertFrom-Json; $out=@(foreach($value in $values){try{ConvertTo-ExpectedRecoveryPrefix $value}catch{'REJECTED'}}); ConvertTo-Json -InputObject $out -Compress"
+        result=subprocess.run([shutil.which('pwsh'),'-NoProfile','-NonInteractive','-EncodedCommand',base64.b64encode(command.encode('utf-16le')).decode()],capture_output=True,text=True,timeout=15,check=True)
+        self.assertEqual(json.loads(result.stdout),[r'C:\测试 空格\prefix',r'C:\测试 空格\prefix',r'c:\MixedCASE',*['REJECTED']*5])
+        check=UI[UI.index('function Assert-RecoveryEligibleTarget'):UI.index('function Check-ExplicitInstallRecovery')]
+        self.assertIn("$names -cnotcontains ('已记录安装位置：' + $expectedPrefix)",check)
+        self.assertNotIn("$text.Contains('已记录安装位置：'",check)
 
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
@@ -228,7 +262,7 @@ class Tests(unittest.TestCase):
         self.assertLess(UI.index("'--stale', '--manifest'"), UI.index("Click-Qwen '确认安装软件'"))
         for text in ('preview_cancel', 'stale_revision', 'confirmed_install', 'observed_source', 'no_configuration',
                      'authoredNpmAndAgentCodeExecuted = $true', 'officialAgentExecuted = $false',
-                     '(Get-CodexSnapshot) -cne $baseline', 'Save-QwenEvidence', 'prefixQueries + 1', 'rootQueries + 1'):
+                     '(Get-InstallConfigurationSnapshot) -cne $baseline', 'Save-QwenEvidence', 'prefixQueries + 1', 'rootQueries + 1'):
             self.assertIn(text, UI)
         self.assertIn('$env:PATH = $savedPath; $env:PATHEXT = $savedExt', UI)
     def test_all_evidence_checks_names_and_values_before_persistence(self):

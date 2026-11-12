@@ -761,3 +761,16 @@ export async function replaceMemoryExport(agentId: string, previewToken: string,
   requireMemoryExportNative(agentId); exportTarget(agentId); exportToken(previewToken); exportIds(memoryIds);
   return validateExportReceipt(await invoke<unknown>('replace_memory_export', { agentId, previewToken, memoryIds }), agentId, memoryIds);
 }
+
+/** Explicit metadata-only persistent protection recovery; never accepts paths. */
+export async function previewCodexInstallRecovery() {
+  useDemo(true);
+  const { parseCodexInstallRecovery } = await import('./codexInstallRecoveryContract');
+  return parseCodexInstallRecovery(await invoke<unknown>('preview_codex_install_recovery'));
+}
+export async function confirmCodexInstallRecovery(revision: string): Promise<void> {
+  useDemo(true);
+  const { recoveryRevision } = await import('./codexInstallRecoveryContract');
+  if (!recoveryRevision(revision)) throw new Error('请先检查有效恢复预览。');
+  return invoke<void>('confirm_codex_install_recovery', { revision });
+}

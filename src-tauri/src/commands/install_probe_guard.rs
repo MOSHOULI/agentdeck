@@ -2,7 +2,10 @@
 //! std-only so synchronization tests can run without a desktop SDK.
 use std::sync::Mutex;
 
-pub const SUPPRESSED: &str = "本进程中 Codex 安装完成状态未确认，已暂停自动版本探测。刷新或切换页面不会为此条目执行 Codex 或 npm；未清理残留。此保护不跨应用重启。";
+#[cfg(any(target_os = "linux", windows))]
+pub const SUPPRESSED: &str = "Codex 安装保护未通过检查，已暂停此条目的主动探测。刷新或切换页面不会为此条目执行 Codex 或 npm；重启不代表安全恢复。未清理残留。";
+#[cfg(not(any(target_os = "linux", windows)))]
+pub const SUPPRESSED: &str = "当前平台未提供经过验证的 Codex 持久安装保护；此桌面条目的主动探测与安装已暂停，未执行 npm 或 Codex。";
 pub static CODEX: ProbeGuard = ProbeGuard::new();
 
 pub struct ProbeGuard {
@@ -45,9 +48,27 @@ impl ProbeGuard {
         self.inspect(id, action, || Err(SUPPRESSED.into()))
     }
 
+    // Explicit metadata-only recovery may inspect persistent evidence while
+    // process-local suppression is armed. Poison/contention still fail closed.
+    pub fn recovery<T>(
+        &self,
+        action: impl FnOnce() -> Result<T, String>,
+        release: bool,
+    ) -> Result<T, String> {
+        let mut blocked = self
+            .blocked
+            .try_lock()
+            .map_err(|_| SUPPRESSED.to_string())?;
+        let result = action();
+        if release && result.is_ok() {
+            *blocked = false;
+        }
+        result
+    }
+
     // Arm eagerly so panic/uncertain unwind fails closed. Only a returned error
     // before the core's typed mutation-start callback restores the clear state.
-    // Prior suppression refuses the action entirely; there is no reset endpoint.
+    // Prior suppression refuses installation; only verified explicit recovery can release it.
     pub fn install<T>(
         &self,
         id: &str,
@@ -118,6 +139,24 @@ mod tests {
         assert!(gate.inspect("other", || true, || false));
         gate.preview("other", || Ok(())).unwrap();
         gate.install("other", |_| Ok(())).unwrap();
+    }
+
+    #[test]
+    fn recovery_inspection_and_failure_cannot_clear_but_verified_success_can() {
+        let gate = ProbeGuard::new();
+        assert!(
+            gate.install::<()>("codex", |start| {
+                start();
+                Err("failed".into())
+            })
+            .is_err()
+        );
+        gate.recovery(|| Ok(()), false).unwrap();
+        assert!(!gate.inspect("codex", || true, || false));
+        assert!(gate.recovery::<()>(|| Err("stale".into()), true).is_err());
+        assert!(!gate.inspect("codex", || true, || false));
+        gate.recovery(|| Ok(()), true).unwrap();
+        assert!(gate.inspect("codex", || true, || false));
     }
 
     #[test]

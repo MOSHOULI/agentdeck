@@ -1,5 +1,16 @@
 # Real installed WebView + authored npm/Codex processes, NOT official agent runtime.
 # Requires disposable hosted runner guard and the existing UIAutomation helpers.
+function Get-InstallConfigurationSnapshot {
+    # Generic Codex read-only snapshots still include every protection byte.
+    # Installation itself legitimately transitions this one exact state subtree;
+    # fixture assertions separately validate its inventory/schema and native
+    # recovery assertions compare its bytes, identities and security descriptors.
+    $snapshot = Get-CodexSnapshot | ConvertFrom-Json
+    $protection = [IO.Path]::GetFullPath((Join-Path $homeDir '.agentdeck\install-protection'))
+    $prefix = $protection.TrimEnd('\') + '\'
+    $entries = @($snapshot.entries | Where-Object { $_.path -cne $protection -and -not $_.path.StartsWith($prefix,[StringComparison]::Ordinal) })
+    return ConvertTo-Json -InputObject @{ missing = @($snapshot.missing); entries = $entries } -Depth 5 -Compress
+}
 function Get-InstallAccessibleText {
     $condition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ProcessIdProperty, $script:running.Id)
     $window = [Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Children, $condition)
@@ -8,7 +19,7 @@ function Get-InstallAccessibleText {
     return (@($nodes | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) -join "`n")
 }
 function Wait-InstallText([string]$expected,
-    [ValidateSet('probe-suppression','session-boundary','residual-boundary','residual-unavailable','occupied-preview-error','authored-install-error','stale-error','install-complete','installed-version','version','source','package','global','prefix','manager')][string]$check) {
+    [ValidateSet('recovery-blocked','recovery-error','recovery-eligible','recovery-cleared','probe-suppression','session-boundary','residual-boundary','residual-unavailable','occupied-preview-error','authored-install-error','stale-error','install-complete','installed-version','version','source','package','global','prefix','manager')][string]$check) {
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
         if ((Get-InstallAccessibleText).Contains($expected)) { return }
@@ -122,13 +133,13 @@ function Check-ReviewedInstall {
         Set-QwenPath '搜索 Agent' 'Codex'
         $null = Wait-QwenControl '安装 OpenAI Codex' ([Windows.Automation.ControlType]::Button)
         Assert-InstallNoConfiguration
-        $baseline = Get-CodexSnapshot
+        $baseline = Get-InstallConfigurationSnapshot
         Open-ReviewedInstallPlan $fixture $manifest
         $null = Invoke-InstallFixture @('--assert', 'absent', '--manifest', $manifest)
         Click-Qwen '取消'
         Assert-InstallNoConfirmation
         $counts = Invoke-InstallFixture @('--assert', 'absent', '--manifest', $manifest) | ConvertFrom-Json
-        if ((Get-CodexSnapshot) -cne $baseline) { throw 'Cancelled installation changed configuration' }
+        if ((Get-InstallConfigurationSnapshot) -cne $baseline) { throw 'Cancelled installation changed configuration' }
         Save-QwenEvidence 'reviewed-install-cancel'
         Record 'reviewed-install-cancel' @{ fixtureCounts = $counts; configurationUnchanged = $true }
 
@@ -138,7 +149,7 @@ function Check-ReviewedInstall {
         Wait-InstallText '安装请求已发送，但完成状态未确认。' 'stale-error'
         Assert-InstallNoConfirmation
         $counts = Invoke-InstallFixture @('--assert', 'absent', '--manifest', $manifest) | ConvertFrom-Json
-        if ((Get-CodexSnapshot) -cne $baseline) { throw 'Stale installation changed configuration' }
+        if ((Get-InstallConfigurationSnapshot) -cne $baseline) { throw 'Stale installation changed configuration' }
         $null = Invoke-InstallFixture @('--restore-latest', '--manifest', $manifest)
         Save-QwenEvidence 'reviewed-install-stale'
         Record 'reviewed-install-stale' @{ fixtureCounts = $counts; configurationUnchanged = $true }
@@ -166,7 +177,7 @@ function Check-ReviewedInstall {
         Wait-InstallText $fixture.manager 'manager'
         $null = Invoke-InstallFixture @('--assert', 'no-config', '--manifest', $manifest)
         Assert-InstallNoConfiguration
-        if ((Get-CodexSnapshot) -cne $baseline) { throw 'Installation changed configuration' }
+        if ((Get-InstallConfigurationSnapshot) -cne $baseline) { throw 'Installation changed configuration' }
         Save-QwenEvidence 'reviewed-install-source'
         Record 'reviewed-install-complete' @{ fixtureCounts = $counts; stages = @('preview_cancel','stale_revision','confirmed_install','observed_source','no_configuration'); authoredNpmAndAgentCodeExecuted = $true; officialAgentExecuted = $false; realRegistryCompatibilityVerified = $false }
     } finally {
@@ -213,7 +224,7 @@ function Get-FailedStateDifference([string]$before, [string]$after) {
     return ,$changes
 }
 function Assert-FailedInstallObservation($fixture, [string]$manifest, [string]$baseline, [string]$residual,
-    [ValidateSet('initial','settled','refresh','restart','occupied-preview','session-observation','residual-inspection')][string]$stage) {
+    [ValidateSet('initial','settled','refresh','restart','recovery-blocked','session-observation','residual-inspection')][string]$stage) {
     $counts = Invoke-InstallFixture @('--assert', 'failed', '--manifest', $manifest) | ConvertFrom-Json
     if ($counts.installCalls -ne 1 -or $counts.versionProbes -ne 0 -or $counts.partialInstallRetained -ne $true) {
         throw 'Failed installation was retried, executed an agent or lost partial state'
@@ -224,7 +235,7 @@ function Assert-FailedInstallObservation($fixture, [string]$manifest, [string]$b
         Record 'failed-reviewed-install-residual-difference' @{ checkpoint = $stage; changes = $difference }
         throw ('Failed installation residual changed: ' + $stage)
     }
-    if ((Get-CodexSnapshot) -cne $baseline) { throw 'Failed installation changed configuration' }
+    if ((Get-InstallConfigurationSnapshot) -cne $baseline) { throw 'Failed installation changed configuration' }
     Assert-InstallNoConfiguration
     Assert-InstallNoConfirmation
     if ((Get-InstallAccessibleText).Contains('软件安装操作已完成')) { throw 'Failed installation displayed success' }
@@ -464,8 +475,175 @@ function Check-FailedInstallResidualInspection($fixture, [string]$manifest, [str
     Start-Sleep -Milliseconds 300
     Assert-ResidualResultAbsent
 }
+function Invoke-InstallPrivateHome([string]$name, [scriptblock]$action) {
+    # Isolate independent installation scenarios, but preserve each scenario's
+    # exact HOME and PATH across its own real restart. Never clear a product guard.
+    Stop-App
+    $savedHome = $script:homeDir; $savedSentinel = $script:sentinel
+    $saved = @{}
+    foreach ($key in @('HOME','USERPROFILE','AGENTDECK_TEST_HOME','APPDATA','LOCALAPPDATA')) { $saved[$key] = [Environment]::GetEnvironmentVariable($key) }
+    try {
+        $script:homeDir = Join-Path $root $name
+        New-Item -ItemType Directory -Path $script:homeDir | Out-Null
+        $env:HOME = $script:homeDir; $env:USERPROFILE = $script:homeDir; $env:AGENTDECK_TEST_HOME = $script:homeDir
+        $env:APPDATA = Join-Path $script:homeDir 'AppData\Roaming'; $env:LOCALAPPDATA = Join-Path $script:homeDir 'AppData\Local'
+        New-Item -ItemType Directory -Force -Path $env:APPDATA,$env:LOCALAPPDATA | Out-Null
+        $script:sentinel = Join-Path $script:homeDir '.agentdeck\acceptance-user-data.txt'
+        New-Item -ItemType Directory -Path (Split-Path $script:sentinel) | Out-Null
+        [IO.File]::WriteAllText($script:sentinel, $script:sentinelValue)
+        & $action
+    } finally {
+        Stop-App
+        $script:homeDir = $savedHome; $script:sentinel = $savedSentinel
+        foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }
+    }
+}
+function Open-BlockedRecovery {
+    Click-Qwen '检查恢复探测条件'
+    Wait-InstallText '当前条件不允许解除保护。保留文件并人工核对；不会执行 npm 或 Codex。' 'recovery-blocked'
+    if ($null -ne (Find-QwenControl '确认恢复 Codex 探测' ([Windows.Automation.ControlType]::Button))) { throw 'Blocked recovery exposed confirmation' }
+    Click-Qwen '取消恢复检查'
+}
+function Get-ProtectionDigest([string]$manifest, [string]$home = $homeDir) {
+    $digest = (Invoke-InstallFixture @('--protection','snapshot','--manifest',$manifest,'--home',$home) | ConvertFrom-Json).digest
+    $stateRoot = Join-Path $home '.agentdeck\install-protection'
+    $security = foreach ($path in @($stateRoot,(Join-Path $stateRoot 'codex'),(Join-Path $stateRoot 'codex\gate.lock'),(Join-Path $stateRoot 'codex\state.json'))) { (Get-Acl -LiteralPath $path).Sddl }
+    return ConvertTo-Json -InputObject @($digest,$security) -Depth 3 -Compress
+}
+function Assert-RecoveryNoExecution([string]$manifest, $expected) {
+    $current = Invoke-InstallFixture @('--assert','empty-owned','--manifest',$manifest) | ConvertFrom-Json
+    foreach ($key in @('installCalls','versionProbes','prefixQueries','rootQueries','metadataQueries')) {
+        if ($current.$key -ne $expected.$key) { throw 'Recovery check executed a fixture operation' }
+    }
+}
+function Check-SyntheticUncertainProtection([string]$manifest, $expected) {
+    # These are test-authored record mutations, not evidence of an actual crash.
+    # Slots are empty, so armed refusal cannot pass merely because residue exists.
+    foreach ($case in @('armed','corrupt')) {
+        Stop-App
+        $sourceHome = $script:homeDir
+        $destination = Join-Path $root ('Synthetic protection ' + $case)
+        New-Item -ItemType Directory -Path $destination | Out-Null
+        $null = Invoke-InstallFixture @('--synthetic-protection',$case,'--manifest',$manifest,'--destination-home',$destination)
+        # Clone only this user's already-private fixture protection descriptors;
+        # inherited default ACLs would make a synthetic armed test meaningless.
+        foreach ($relative in @('.agentdeck\install-protection','.agentdeck\install-protection\codex','.agentdeck\install-protection\codex\gate.lock','.agentdeck\install-protection\codex\state.json')) {
+            $source = Join-Path $sourceHome $relative; $target = Join-Path $destination $relative
+            $acl = Get-Acl -LiteralPath $source
+            Set-Acl -LiteralPath $target -AclObject $acl
+            if ((Get-Acl -LiteralPath $target).Sddl -cne $acl.Sddl) { throw 'Synthetic protection security did not match its source' }
+        }
+        $before = Get-ProtectionDigest $manifest $destination
+        $saved = @{}
+        foreach ($key in @('HOME','USERPROFILE','AGENTDECK_TEST_HOME','APPDATA','LOCALAPPDATA')) { $saved[$key] = [Environment]::GetEnvironmentVariable($key) }
+        try {
+            $script:homeDir = $destination
+            $env:HOME = $destination; $env:USERPROFILE = $destination; $env:AGENTDECK_TEST_HOME = $destination
+            $env:APPDATA = Join-Path $destination 'AppData\Roaming'; $env:LOCALAPPDATA = Join-Path $destination 'AppData\Local'
+            New-Item -ItemType Directory -Force -Path $env:APPDATA,$env:LOCALAPPDATA | Out-Null
+            Check-Gui ('synthetic-protection-' + $case) -KeepOpen
+            Set-QwenPath '搜索 Agent' 'Codex'
+            Wait-InstallText 'Codex 安装保护未通过检查，已暂停此条目的主动探测。' 'probe-suppression'
+            Click-Qwen '检查恢复探测条件'
+            if ($case -eq 'armed') {
+                Wait-InstallText '当前条件不允许解除保护。保留文件并人工核对；不会执行 npm 或 Codex。' 'recovery-blocked'
+            } else {
+                Wait-InstallText '恢复检查或确认未完成，保护状态未确认。请保留现有文件；不会自动重试。' 'recovery-error'
+            }
+            if ($null -ne (Find-QwenControl '确认恢复 Codex 探测' ([Windows.Automation.ControlType]::Button))) { throw 'Uncertain synthetic protection offered recovery' }
+            Click-Qwen '刷新列表'
+            $null = Wait-QwenControl '刷新列表' ([Windows.Automation.ControlType]::Button)
+            Start-Sleep -Milliseconds 1000
+            Assert-RecoveryNoExecution $manifest $expected
+            if ((Get-ProtectionDigest $manifest $destination) -cne $before) { throw 'Uncertain synthetic protection state changed' }
+            Save-QwenEvidence ('synthetic-protection-' + $case + '-retained')
+            Record ('synthetic-protection-' + $case + '-retained') @{ emptySlots = $true; noFixtureExecution = $true; stateUnchanged = $true; actualCrashVerified = $false }
+        } finally {
+            Stop-App; $script:homeDir = $sourceHome
+            foreach ($key in $saved.Keys) { [Environment]::SetEnvironmentVariable($key, $saved[$key]) }
+        }
+    }
+}
+function ConvertTo-ExpectedRecoveryPrefix([string]$value) {
+    # Match Store::normalize's one permitted Windows spelling conversion only.
+    # Do not resolve paths, fold case, accept UNC/device roots or fuzzy-match.
+    if ($value.StartsWith('\\?\',[StringComparison]::Ordinal)) {
+        $rest = $value.Substring(4)
+        if ($rest -cnotmatch '^[A-Za-z]:\\') { throw 'Unsupported recovery prefix spelling' }
+        return $rest
+    }
+    if ($value -cnotmatch '^[A-Za-z]:\\') { throw 'Unsupported recovery prefix spelling' }
+    return $value
+}
+function Assert-RecoveryEligibleTarget($fixture) {
+    $null = Wait-QwenControl '确认恢复 Codex 探测' ([Windows.Automation.ControlType]::Button)
+    $condition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ProcessIdProperty, $script:running.Id)
+    $window = [Windows.Automation.AutomationElement]::RootElement.FindFirst([Windows.Automation.TreeScope]::Children, $condition)
+    $regions = $window.FindAll([Windows.Automation.TreeScope]::Descendants,
+        [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::NameProperty, 'Codex 安装保护恢复检查'))
+    if ($regions.Count -ne 1) { throw 'Missing or ambiguous recovery preview' }
+    $nodes = $regions[0].FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+    $names = @($nodes | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
+    $text = $names -join "`n"
+    $expectedPrefix = ConvertTo-ExpectedRecoveryPrefix $fixture.prefix
+    if ($names -cnotcontains ('已记录安装位置：' + $expectedPrefix)) { throw 'Recovery preview target mismatch' }
+    foreach ($slot in @('package_directory','posix_launcher','cmd_launcher','powershell_launcher','exe_launcher','com_launcher','bat_launcher')) {
+        if ($names -cnotcontains $slot) { throw 'Recovery preview slot missing' }
+    }
+    if (@($names | Where-Object { $_ -ceq 'missing' }).Count -lt 7 -or $names -ccontains 'present' -or $names -ccontains 'blocked') { throw 'Recovery preview slots not absent' }
+    if (-not $text.Contains('确认只解除探测保护；之后刷新可恢复 npm/Codex 查询。不安装、不删除，也不代表包真实性或运行验证。')) { throw 'Recovery consent boundary missing' }
+}
+function Check-ExplicitInstallRecovery($fixture,[string]$manifest) {
+    $null = Invoke-InstallFixture @('--relocate-owned','--manifest',$manifest)
+    $expected = Invoke-InstallFixture @('--assert','empty-owned','--manifest',$manifest) | ConvertFrom-Json
+    Check-SyntheticUncertainProtection $manifest $expected
+    Check-Gui 'recovery-original-home-resumed' -KeepOpen
+    Set-QwenPath '搜索 Agent' 'Codex'
+    Wait-InstallText 'Codex 安装保护未通过检查，已暂停此条目的主动探测。' 'probe-suppression'
+    $before = Get-ProtectionDigest $manifest
+    Click-Qwen '检查恢复探测条件'
+    Assert-RecoveryEligibleTarget $fixture
+    Click-Qwen '取消恢复检查'
+    Assert-RecoveryNoExecution $manifest $expected
+    if ((Get-ProtectionDigest $manifest) -cne $before) { throw 'Cancelled recovery changed protection' }
+    Click-Qwen '检查恢复探测条件'
+    Assert-RecoveryEligibleTarget $fixture
+    $null = Invoke-InstallFixture @('--conflict','create','--manifest',$manifest)
+    Click-Qwen '确认恢复 Codex 探测'
+    Wait-InstallText '恢复检查或确认未完成，保护状态未确认。请保留现有文件；不会自动重试。' 'recovery-error'
+    if ((Get-ProtectionDigest $manifest) -cne $before) { throw 'Stale recovery cleared protection' }
+    $null = Invoke-InstallFixture @('--conflict','remove','--manifest',$manifest)
+    Assert-RecoveryNoExecution $manifest $expected
+    Click-Qwen '检查恢复探测条件'
+    Assert-RecoveryEligibleTarget $fixture
+    Click-Qwen '确认恢复 Codex 探测'
+    Wait-InstallText '已解除 Codex 探测保护，未安装或清理软件。' 'recovery-cleared'
+    $null = Invoke-InstallFixture @('--protection','clear','--manifest',$manifest)
+    # Active npm path queries may resume only now, after this explicit consent.
+    $counts = Invoke-InstallFixture @('--assert','empty-owned','--manifest',$manifest) | ConvertFrom-Json
+    if ($counts.installCalls -ne 1 -or $counts.versionProbes -ne 0) { throw 'Recovery installed or ran the authored Agent' }
+    Save-QwenEvidence 'reviewed-install-recovery-cleared'
+    Open-ReviewedInstallPlanAfterRecovery $fixture $manifest
+    Click-Qwen '确认安装软件'
+    Wait-InstallText '安装请求已发送，但完成状态未确认。' 'authored-install-error'
+    Wait-InstallText 'Codex 安装保护未通过检查，已暂停此条目的主动探测。' 'probe-suppression'
+    $counts = Invoke-InstallFixture @('--assert','wrong-root','--manifest',$manifest,'--expected-attempts','2') | ConvertFrom-Json
+    $null = Invoke-InstallFixture @('--protection','failed_returned','--manifest',$manifest)
+    Record 'reviewed-install-recovery-complete' @{ fixtureCounts = $counts; cancelUnchanged = $true; staleRejected = $true; explicitRecoveryConfirmed = $true; freshInstallationConfirmed = $true; testAuthoredResidueRelocation = $true; productCleanup = $false; secondWrongRootRejected = $true; authoredAgentExecuted = $false }
+}
+function Open-ReviewedInstallPlanAfterRecovery($fixture,[string]$manifest) {
+    # Original Open-ReviewedInstallPlan asserts a never-attempted fixture, whereas
+    # this fixture retains its first attempt's event log and archived residue.
+    Click-Qwen '安装 OpenAI Codex'
+    $null = Wait-QwenControl '确认安装软件' ([Windows.Automation.ControlType]::Button)
+    $names = Get-InstallPlanNames
+    foreach ($value in @('@openai/codex','1.2.3',$fixture.prefix,$fixture.package,$fixture.manager)) {
+        if ($names -cnotcontains $value) { throw 'Fresh post-recovery installation preview mismatch' }
+    }
+    $null = Invoke-InstallFixture @('--assert','empty-owned','--manifest',$manifest)
+}
 function Assert-WrongRootInstallObservation($fixture, [string]$manifest, [string]$baseline, [string]$residual,
-    [ValidateSet('initial','automatic-refresh','manual-refresh','navigation')][string]$stage, $expectedCounts = $null) {
+    [ValidateSet('initial','automatic-refresh','manual-refresh','navigation','restart')][string]$stage, $expectedCounts = $null) {
     $counts = Invoke-InstallFixture @('--assert', 'wrong-root', '--manifest', $manifest) | ConvertFrom-Json
     if ($counts.installCalls -ne 1 -or $counts.versionProbes -ne 0 -or $counts.completeWrongRootRetained -ne $true) {
         throw 'Wrong-root installation was probed, retried or lost its complete residue'
@@ -480,10 +658,10 @@ function Assert-WrongRootInstallObservation($fixture, [string]$manifest, [string
         Record 'wrong-root-install-residual-changed' @{ stage = $stage; differences = @(Get-FailedStateDifference $residual $current) }
         throw 'Wrong-root installation residual changed'
     }
-    if ((Get-CodexSnapshot) -cne $baseline) { throw 'Wrong-root installation changed configuration' }
+    if ((Get-InstallConfigurationSnapshot) -cne $baseline) { throw 'Wrong-root installation changed configuration' }
     Assert-InstallNoConfiguration
     Assert-InstallNoConfirmation
-    Wait-InstallText '本进程中 Codex 安装完成状态未确认，已暂停自动版本探测。刷新或切换页面不会为此条目执行 Codex 或 npm；未清理残留。此保护不跨应用重启。' 'probe-suppression'
+    Wait-InstallText 'Codex 安装保护未通过检查，已暂停此条目的主动探测。刷新或切换页面不会为此条目执行 Codex 或 npm；重启不代表安全恢复。未清理残留。' 'probe-suppression'
     $text = Get-InstallAccessibleText
     if ($text.Contains('软件安装操作已完成') -or $text.Contains('实测版本 1.2.3')) { throw 'Wrong-root installation displayed verified success' }
     foreach ($name in @('安装 OpenAI Codex','应用默认配置 OpenAI Codex')) {
@@ -493,6 +671,9 @@ function Assert-WrongRootInstallObservation($fixture, [string]$manifest, [string
     return $counts
 }
 function Check-WrongRootReviewedInstall {
+    Invoke-InstallPrivateHome 'Wrong root protected home' { Check-WrongRootReviewedInstallCase }
+}
+function Check-WrongRootReviewedInstallCase {
     $savedPath = $env:PATH; $savedExt = $env:PATHEXT
     $fixtureRoot = Join-Path $root 'Windows authored wrong root install fixture'
     $manifest = Invoke-InstallFixture @('--prepare', $fixtureRoot, '--node', $script:acceptanceNode, '--home', $homeDir, '--mode', 'wrong-root')
@@ -504,13 +685,13 @@ function Check-WrongRootReviewedInstall {
         Set-QwenPath '搜索 Agent' 'Codex'
         $null = Wait-QwenControl '安装 OpenAI Codex' ([Windows.Automation.ControlType]::Button)
         Assert-InstallNoConfiguration
-        $baseline = Get-CodexSnapshot
+        $baseline = Get-InstallConfigurationSnapshot
         Open-ReviewedInstallPlan $fixture $manifest
         Click-Qwen '确认安装软件'
         Wait-InstallText '安装请求已发送，但完成状态未确认。' 'authored-install-error'
         Assert-InstallNoConfirmation
         $null = Invoke-InstallFixture @('--assert', 'wrong-root', '--manifest', $manifest)
-        Wait-InstallText '本进程中 Codex 安装完成状态未确认，已暂停自动版本探测。刷新或切换页面不会为此条目执行 Codex 或 npm；未清理残留。此保护不跨应用重启。' 'probe-suppression'
+        Wait-InstallText 'Codex 安装保护未通过检查，已暂停此条目的主动探测。刷新或切换页面不会为此条目执行 Codex 或 npm；重启不代表安全恢复。未清理残留。' 'probe-suppression'
         $residual = Get-FailedInstallState $fixture
         $counts = Assert-WrongRootInstallObservation $fixture $manifest $baseline $residual 'initial'
         $initialCounts = $counts
@@ -528,15 +709,35 @@ function Check-WrongRootReviewedInstall {
         Activate-InstallWorkspace 'Agent 管理'
         $counts = Assert-WrongRootInstallObservation $fixture $manifest $baseline $residual 'navigation' $initialCounts
         Save-QwenEvidence 'wrong-root-reviewed-install-navigation'
-        Record 'wrong-root-reviewed-install-complete' @{ fixtureCounts = $counts; stages = @('verification_rejected','automatic_refresh_unprobed','manual_refresh_unprobed','navigation_unprobed'); residualUnchanged = $true; configurationUnchanged = $true; authoredNpmExitZero = $true; authoredAgentExecuted = $false; officialAgentExecuted = $false; processLocalOnly = $true; wrongRootSessionRestarted = $false; automaticRollbackObserved = $false; retryAttempted = $false }
+        $null = Invoke-InstallFixture @('--protection','failed_returned','--manifest',$manifest)
+        $protectionBefore = Get-ProtectionDigest $manifest
+        Stop-App
+        Check-Gui 'wrong-root-reviewed-install-restarted' -KeepOpen
+        Set-QwenPath '搜索 Agent' 'Codex'
+        $counts = Assert-WrongRootInstallObservation $fixture $manifest $baseline $residual 'restart' $initialCounts
+        Open-BlockedRecovery
+        $counts = Assert-WrongRootInstallObservation $fixture $manifest $baseline $residual 'restart' $initialCounts
+        if ((Get-ProtectionDigest $manifest) -cne $protectionBefore) { throw 'Restart or refused recovery changed persistent state' }
+        Click-Qwen '刷新列表'
+        $null = Wait-QwenControl '刷新列表' ([Windows.Automation.ControlType]::Button)
+        Start-Sleep -Milliseconds 1000
+        $counts = Assert-WrongRootInstallObservation $fixture $manifest $baseline $residual 'restart' $initialCounts
+        Activate-InstallWorkspace 'Qwen 配置检查'
+        Activate-InstallWorkspace 'Agent 管理'
+        $counts = Assert-WrongRootInstallObservation $fixture $manifest $baseline $residual 'restart' $initialCounts
+        Save-QwenEvidence 'wrong-root-persistent-restart-retained'
+        Record 'wrong-root-reviewed-install-complete' @{ fixtureCounts = $counts; stages = @('verification_rejected','automatic_refresh_unprobed','manual_refresh_unprobed','navigation_unprobed'); residualUnchanged = $true; configurationUnchanged = $true; authoredNpmExitZero = $true; authoredAgentExecuted = $false; officialAgentExecuted = $false; processLocalOnly = $false; wrongRootSessionRestarted = $true; automaticRollbackObserved = $false; retryAttempted = $false }
+        Check-ExplicitInstallRecovery $fixture $manifest
     } finally {
-        # The guard is process-local. Never restart with this complete wrong-root
-        # fixture on PATH or mistake a clean exit for persistent protection.
+        # Every restart above retains the same HOME/PATH and owned prefix.
         Stop-App
         $env:PATH = $savedPath; $env:PATHEXT = $savedExt
     }
 }
 function Check-FailedReviewedInstall {
+    Invoke-InstallPrivateHome 'Partial failure protected home' { Check-FailedReviewedInstallCase }
+}
+function Check-FailedReviewedInstallCase {
     $savedPath = $env:PATH; $savedExt = $env:PATHEXT
     $fixtureRoot = Join-Path $root 'Windows authored failed install fixture'
     $manifest = Invoke-InstallFixture @('--prepare', $fixtureRoot, '--node', $script:acceptanceNode, '--home', $homeDir, '--mode', 'fail')
@@ -548,13 +749,13 @@ function Check-FailedReviewedInstall {
         Set-QwenPath '搜索 Agent' 'Codex'
         $null = Wait-QwenControl '安装 OpenAI Codex' ([Windows.Automation.ControlType]::Button)
         Assert-InstallNoConfiguration
-        $baseline = Get-CodexSnapshot
+        $baseline = Get-InstallConfigurationSnapshot
         Open-ReviewedInstallPlan $fixture $manifest
         Click-Qwen '取消'
         Assert-InstallNoConfirmation
         $counts = Invoke-InstallFixture @('--assert', 'absent', '--manifest', $manifest) | ConvertFrom-Json
         if ($counts.installCalls -ne 0 -or $counts.versionProbes -ne 0) { throw 'Cancelled failure fixture executed installation' }
-        if ((Get-CodexSnapshot) -cne $baseline) { throw 'Cancelled failure fixture changed configuration' }
+        if ((Get-InstallConfigurationSnapshot) -cne $baseline) { throw 'Cancelled failure fixture changed configuration' }
         Save-QwenEvidence 'failed-reviewed-install-cancel'
         Record 'failed-reviewed-install-cancel' @{ fixtureCounts = $counts; configurationUnchanged = $true }
 
@@ -593,6 +794,9 @@ function Check-FailedReviewedInstall {
         Save-QwenEvidence 'failed-reviewed-install-session-navigation'
         Record 'failed-reviewed-install-session-navigation' @{ reviewedTargetPreserved = $true; noFixtureExecution = $true; persistentRecovery = $false }
 
+        $null = Invoke-InstallFixture @('--protection','failed_returned','--manifest',$manifest)
+        $partialProtectionBefore = Get-ProtectionDigest $manifest
+        $restartCounts = Invoke-InstallFixture @('--assert','failed','--manifest',$manifest) | ConvertFrom-Json
         Stop-App
         Check-Gui 'failed-reviewed-install-restart' -KeepOpen
         Set-QwenPath '搜索 Agent' 'Codex'
@@ -600,15 +804,20 @@ function Check-FailedReviewedInstall {
         Assert-InstallSessionAbsent
         $counts = Assert-FailedInstallObservation $fixture $manifest $baseline $residual 'restart'
         Save-QwenEvidence 'failed-reviewed-install-restarted'
-        # A partial package occupies the selected destination. A fresh preview
-        # must be rejected by production guards; never erase it to force a retry.
-        Click-Qwen '安装 OpenAI Codex'
-        Wait-InstallText '无法取得有效安装预览，请刷新后重新检查。' 'occupied-preview-error'
-        $counts = Assert-FailedInstallObservation $fixture $manifest $baseline $residual 'occupied-preview'
+        # Persistent protection keeps installation disabled after restart.
+        # Recovery must also reject occupied slots without erasing them.
+        Open-BlockedRecovery
+        $action = Find-QwenControl '安装 OpenAI Codex' ([Windows.Automation.ControlType]::Button)
+        if ($null -ne $action -and $action.Current.IsEnabled) { throw 'Persistent partial failure allowed installation' }
+        $counts = Assert-FailedInstallObservation $fixture $manifest $baseline $residual 'recovery-blocked'
         Assert-InstallSessionAbsent
-        Save-QwenEvidence 'failed-reviewed-install-occupied-preview'
-        Record 'failed-reviewed-install-occupied-preview' @{ fixtureCounts = $counts; confirmationAbsent = $true; residualUnchanged = $true }
-        Record 'failed-reviewed-install-complete' @{ fixtureCounts = $counts; stages = @('preview_cancel','confirmed_failure','refresh_no_retry','session_navigation_retained','explicit_residual_inspection','residual_unavailable_no_write','residual_dismiss_and_recheck','restart_no_retry','session_restart_absent','occupied_preview_rejected'); residualUnchanged = $true; configurationUnchanged = $true; authoredNpmExecuted = $true; authoredAgentExecuted = $false; officialAgentExecuted = $false; automaticRollbackObserved = $false; retryAttempted = $false }
+        foreach ($key in @('installCalls','versionProbes','prefixQueries','rootQueries','metadataQueries')) {
+            if ($counts.$key -ne $restartCounts.$key) { throw 'Persistent partial failure restart or recovery executed fixture operation' }
+        }
+        if ((Get-ProtectionDigest $manifest) -cne $partialProtectionBefore) { throw 'Partial failure restart or recovery changed protection' }
+        Save-QwenEvidence 'failed-reviewed-install-recovery-blocked'
+        Record 'failed-reviewed-install-recovery-blocked' @{ fixtureCounts = $counts; confirmationAbsent = $true; residualUnchanged = $true }
+        Record 'failed-reviewed-install-complete' @{ fixtureCounts = $counts; stages = @('preview_cancel','confirmed_failure','refresh_no_retry','session_navigation_retained','explicit_residual_inspection','residual_unavailable_no_write','residual_dismiss_and_recheck','restart_no_retry','session_restart_absent','persistent_recovery_blocked'); residualUnchanged = $true; configurationUnchanged = $true; authoredNpmExecuted = $true; authoredAgentExecuted = $false; officialAgentExecuted = $false; automaticRollbackObserved = $false; retryAttempted = $false }
     } finally {
         Stop-App
         $env:PATH = $savedPath; $env:PATHEXT = $savedExt

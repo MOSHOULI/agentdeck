@@ -1,3 +1,4 @@
+import { CodexInstallRecovery } from './CodexInstallRecovery';
 import { InstallSessionNote } from './InstallSessionNote';
 import { CodexAnimations } from "./CodexAnimations";
 import { CodexConfigurationPlan } from './CodexConfigurationPlan';
@@ -306,6 +307,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         </div>
       </div>
 
+      {agent.id === 'codex' && agent.installationStatus === 'error' && <CodexInstallRecovery active={active} reviewContext={reviewContext} agentContext={agent} selected={selected} dataStale={dataStale} />}
       <InstallSessionNote agentId={agent.id} active={active} />
       {agent.id === 'codex' && <CodexConfigurationPlan busy={busy || pending !== null || plan !== null} context={JSON.stringify([reviewContext, selected, agent.id, dataStale])} />}
       {agent.id === 'codex' && <CodexAnimations busy={busy || pending !== null || plan !== null} context={JSON.stringify([reviewContext, selected, agent.id, dataStale])} />}

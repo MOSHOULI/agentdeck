@@ -111,6 +111,40 @@ fn to_agent_info(agent: AgentDefinition, details: InstallationDetails) -> AgentI
     }
 }
 
+fn open_install_protection() -> Result<aisync_core::deploy::install_protection::Store, String> {
+    let home = aisync_core::home_dir()
+        .ok_or_else(|| super::install_probe_guard::SUPPRESSED.to_string())?;
+    aisync_core::deploy::install_protection::Store::open(&home)
+        .map_err(|_| super::install_probe_guard::SUPPRESSED.to_string())
+}
+
+fn open_existing_install_protection()
+-> Result<aisync_core::deploy::install_protection::Store, String> {
+    let home = aisync_core::home_dir()
+        .ok_or_else(|| super::install_probe_guard::SUPPRESSED.to_string())?;
+    aisync_core::deploy::install_protection::Store::open_existing(&home)
+        .map_err(|_| super::install_probe_guard::SUPPRESSED.to_string())
+}
+
+// The durable lease stays alive throughout the active action, including npm
+// metadata and version probes, so normal app instances cannot overlap mutation.
+fn with_clear_install_protection<T>(
+    id: &str,
+    action: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let store = if id == "codex" {
+        Some(open_install_protection()?)
+    } else {
+        None
+    };
+    if store.as_ref().is_some_and(|store| !store.is_clear()) {
+        return Err(super::install_probe_guard::SUPPRESSED.into());
+    }
+    let result = action();
+    drop(store);
+    result
+}
+
 fn suppressed_codex_details() -> InstallationDetails {
     let message = super::install_probe_guard::SUPPRESSED.to_string();
     InstallationDetails {
@@ -142,7 +176,12 @@ fn list_agents_with_status() -> Result<Vec<AgentInfo>, String> {
             std::thread::spawn(move || {
                 let details = super::install_probe_guard::CODEX.inspect(
                     &agent.id,
-                    || aisync_core::deploy::inspect_installation(&agent),
+                    || {
+                        with_clear_install_protection(&agent.id, || {
+                            Ok(aisync_core::deploy::inspect_installation(&agent))
+                        })
+                        .unwrap_or_else(|_| suppressed_codex_details())
+                    },
                     suppressed_codex_details,
                 );
                 (agent.id.clone(), details)
@@ -181,23 +220,35 @@ fn finalize_agent_list(
     mut infos: Vec<AgentInfo>,
     gate: &super::install_probe_guard::ProbeGuard,
 ) -> Vec<AgentInfo> {
+    if !infos.iter().any(|info| info.id == "codex") {
+        return infos;
+    }
+    let redact = |infos: &mut Vec<AgentInfo>| {
+        for info in infos.iter_mut().filter(|info| info.id == "codex") {
+            let details = suppressed_codex_details();
+            info.installed = false;
+            info.installation_status = details.probe.status;
+            info.installation_message = details.probe.message.clone();
+            info.installation_details = details;
+            info.install_source = "unknown";
+            info.version = None;
+            info.auth_verified = false;
+            info.can_configure = false;
+        }
+    };
+    let rows = std::cell::RefCell::new(&mut infos);
     gate.inspect(
         "codex",
-        || (),
         || {
-            for info in infos.iter_mut().filter(|info| info.id == "codex") {
-                let details = suppressed_codex_details();
-                info.installed = false;
-                info.installation_status = details.probe.status;
-                info.installation_message = details.probe.message.clone();
-                info.installation_details = details;
-                info.install_source = "unknown";
-                info.version = None;
-                info.auth_verified = false;
-                info.can_configure = false;
+            // Keep the durable lease through the final decision; any read/lock error
+            // means no evidence, never a presumed clear state.
+            if with_clear_install_protection("codex", || Ok(())).is_err() {
+                redact(&mut rows.borrow_mut());
             }
         },
+        || redact(&mut rows.borrow_mut()),
     );
+
     infos
 }
 
@@ -208,14 +259,16 @@ pub async fn preview_agent_install(
 ) -> Result<super::install_session::DesktopPreview, String> {
     tauri::async_runtime::spawn_blocking(move || {
         super::install_probe_guard::CODEX.preview(&id, || {
-            let mut slot = super::install_session::SESSION
-                .try_lock()
-                .map_err(|_| super::install_session::UNAVAILABLE.to_string())?;
-            *slot = None;
-            let agent = find_agent(&id).map_err(|e| e.to_string())?;
-            let preview =
-                aisync_core::deploy::preview_install(&agent).map_err(|e| e.to_string())?;
-            Ok(super::install_session::remember(&mut slot, preview))
+            with_clear_install_protection(&id, || {
+                let mut slot = super::install_session::SESSION
+                    .try_lock()
+                    .map_err(|_| super::install_session::UNAVAILABLE.to_string())?;
+                *slot = None;
+                let agent = find_agent(&id).map_err(|e| e.to_string())?;
+                let preview =
+                    aisync_core::deploy::preview_install(&agent).map_err(|e| e.to_string())?;
+                Ok(super::install_session::remember(&mut slot, preview))
+            })
         })
     })
     .await
@@ -235,11 +288,46 @@ pub async fn install_agent(
                 .try_lock()
                 .map_err(|_| super::install_session::UNAVAILABLE.to_string())?;
             super::install_session::submitted(&mut slot, &id, &revision, session_ref.as_deref());
-            let result = find_agent(&id).and_then(|agent| {
-                aisync_core::deploy::install_agent_from_preview_observed(&agent, &revision, started)
-            });
+            let mut store = if id == "codex" {
+                Some(open_install_protection()?)
+            } else {
+                None
+            };
+            if store.as_ref().is_some_and(|store| !store.is_clear()) {
+                return Err(super::install_probe_guard::SUPPRESSED.into());
+            }
+            let mut attempt = None;
+            let result = find_agent(&id)
+                .map_err(|e| e.to_string())
+                .and_then(|agent| {
+                    aisync_core::deploy::install_agent_from_preview_guarded(
+                        &agent,
+                        &revision,
+                        |actual| {
+                            if let Some(store) = store.as_mut() {
+                                attempt = Some(store.begin(actual)?);
+                            }
+                            started();
+                            Ok(())
+                        },
+                    )
+                    .map_err(|e| e.to_string())
+                });
+            let completion =
+                if let (Some(store), Some(attempt)) = (store.as_mut(), attempt.as_ref()) {
+                    if result.is_ok() {
+                        store.finish_success(attempt)
+                    } else {
+                        store.mark_failed(attempt)
+                    }
+                } else {
+                    Ok(())
+                };
+            let result = completion
+                .map_err(|_| super::install_probe_guard::SUPPRESSED.to_string())
+                .and(result);
             super::install_session::finished(&mut slot, result.is_ok());
-            result.map_err(|e| e.to_string())?;
+            result?;
             Ok(aisync_core::deploy::InstallOutcome {
                 warnings: Vec::new(),
             })
@@ -247,6 +335,32 @@ pub async fn install_agent(
     })
     .await
     .map_err(|_| super::install_session::UNAVAILABLE.to_string())?
+}
+
+/// Metadata-only recovery. No npm or Agent is executed, and no target is removed.
+#[tauri::command]
+pub async fn preview_codex_install_recovery()
+-> Result<aisync_core::deploy::install_protection::RecoveryPreview, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        super::install_probe_guard::CODEX.recovery(
+            || open_existing_install_protection()?.recovery_preview(),
+            false,
+        )
+    })
+    .await
+    .map_err(|_| super::install_probe_guard::SUPPRESSED.to_string())?
+}
+
+#[tauri::command]
+pub async fn confirm_codex_install_recovery(revision: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        super::install_probe_guard::CODEX.recovery(
+            || open_existing_install_protection()?.confirm_recovery(&revision),
+            true,
+        )
+    })
+    .await
+    .map_err(|_| super::install_probe_guard::SUPPRESSED.to_string())?
 }
 
 /// Explicit metadata inspection; accepts no frontend path. Lock excludes preview/install.

@@ -151,7 +151,9 @@ jobs:
       - name: Official Codex installation harness (offline safety regressions)
         run: python -B scripts/test_codex_official_install.py
       - name: Windows reviewed install fixture (offline safety regressions)
-        run: python -B scripts/test_windows_install_fixture.py
+        run: |
+          python -B scripts/test_install_protection_fixture.py
+          python -B scripts/test_windows_install_fixture.py
       - name: Windows reviewed install UI wiring (offline)
         run: python -B scripts/test_windows_install_ui_acceptance.py
       - name: Windows rejected configuration preserves untouched targets (offline)
@@ -364,7 +366,9 @@ jobs:
         with:
           node-version: 24
       - name: Windows reviewed install fixture (offline safety regressions)
-        run: python -B scripts/test_windows_install_fixture.py
+        run: |
+          python -B scripts/test_install_protection_fixture.py
+          python -B scripts/test_windows_install_fixture.py
       - name: Windows reviewed install UI wiring (offline)
         run: python -B scripts/test_windows_install_ui_acceptance.py
       - name: Windows rejected configuration preserves untouched targets (offline)
