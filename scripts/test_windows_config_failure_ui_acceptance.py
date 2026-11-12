@@ -107,6 +107,16 @@ class Tests(unittest.TestCase):
         self.assertIn("if (-not $sourceAutoInherited -or $sourceAutoInheritRequired) { throw 'Expected native auto-inherited DACL control shape missing' }", script)
         self.assertLess(script.index("throw 'Expected native auto-inherited DACL control shape missing'"), script.index('            Check-Gui'))
         self.assertIn('sourceAutoInherited = $sourceAutoInherited; sourceAutoInheritRequired = $sourceAutoInheritRequired;', script)
+        self.assertIn('$parentAcl = [Security.AccessControl.DirectorySecurity]::new()', script)
+        self.assertIn('$parentAcl.SetAccessRuleProtection($true, $false)', script)
+        self.assertIn('[Security.AccessControl.InheritanceFlags]::ObjectInherit -bor [Security.AccessControl.InheritanceFlags]::ContainerInherit', script)
+        self.assertIn('$childAcl.SetAccessRuleProtection($false, $false)', script)
+        self.assertIn('@($beforeAcl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])).Count -ne 0', script)
+        baseline_position = script.index('$inactiveBaseline = Get-InactiveConfigurationSnapshot')
+        self.assertLess(script.index('Set-Acl -LiteralPath $target -AclObject $childAcl'), baseline_position)
+        self.assertLess(script.index('Set-Acl -LiteralPath (Split-Path $target) -AclObject $parentAcl'), baseline_position)
+        self.assertNotIn('Set-Acl ', script[baseline_position:])
+
 
         self.assertIn("file = '.claude/CLAUDE.md'; protected = $true", script)
         self.assertIn("file = '.gemini/GEMINI.md'; protected = $false", script)

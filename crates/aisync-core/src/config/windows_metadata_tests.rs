@@ -195,13 +195,88 @@ fn windows_configuration_transaction_rollback_preserves_protected_dacl() {
 
 #[test]
 fn windows_configuration_inherited_dacl_survives_write_and_backup() {
-    let (home, target) = fixture("inherited");
+    let (home, old_target) = fixture("inherited");
+    // Do not assume the runner's temporary directory uses the modern model.
+    // The configuration parent is deliberately different from the backup parent;
+    // do not make their ACLs equal just to hide re-inheritance at backup creation.
+    fs::remove_file(&old_target).unwrap();
+    let parent = home.join("private-config");
+    fs::create_dir(&parent).unwrap();
+    set_protected_modern_dacl(&parent, &format!("D:P(A;OICI;FA;;;{})", current_user_sid()));
+    assert_eq!(acl(&parent).2, SE_DACL_PROTECTED | 0x0400);
+    assert_ne!(
+        acl(&parent).0,
+        acl(&home).0,
+        "configuration and backup parent policies must differ"
+    );
+    let target = parent.join("instructions.md");
+    fs::write(&target, b"original synthetic instructions").unwrap();
+    // Explicitly convert the child using an empty unprotected DACL. Windows
+    // populates it from the private parent's inheritable ACE, as .NET does.
+    set_modern_dacl(&target, "D:", false);
     let before = acl(&target);
     assert!(!before.1, "fixture must retain ordinary inheritance");
     assert_eq!(
         before.2, 0x0400,
         "ordinary fixture must have AI without P or AR"
     );
+    let ace_count = u16::from_le_bytes([before.0[4], before.0[5]]);
+    assert_eq!(ace_count, 1, "private parent's sole ACE must be inherited");
+    assert_eq!(
+        before.0[9] & 0x10,
+        0x10,
+        "child ACE must carry INHERITED_ACE"
+    );
+    let captured_security = windows_security::Security::read_path(&target).unwrap();
+    let backup = match backup_file_in(&target, &home) {
+        Ok(backup) => backup.unwrap(),
+        Err(error) => {
+            assert!(
+                fs::read(&target).is_ok_and(|bytes| bytes == b"original synthetic instructions"),
+                "failed writer changed original bytes"
+            );
+            assert!(
+                windows_security::Security::read_path(&target)
+                    .is_ok_and(|observed| observed == captured_security),
+                "failed writer changed original security"
+            );
+            // Separate empty staging under the actual default backup parent.
+            let diagnostic_parent = home.join(".agentdeck/backups");
+            fs::create_dir_all(&diagnostic_parent).unwrap();
+            let stage = diagnostic_parent.join("empty-dacl-only-diagnostic");
+            let output = windows_security::create(&stage).unwrap();
+            let (unprotected, api_success, exact, empty) =
+                captured_security.probe_dacl_only_empty_stage(&output);
+            drop(output);
+            fs::remove_file(&stage).unwrap();
+            let rendered = error.to_string();
+            let category = [
+                "staging DACL verification failed (ACL bytes and control flags)",
+                "staging DACL verification failed (control flags)",
+                "staging DACL verification failed (ACL bytes)",
+                "staging DACL verification failed (owner/group)",
+                "staging DACL application failed",
+                "staging owner/group differs from original",
+            ]
+            .into_iter()
+            .find(|category| rendered.contains(category))
+            .unwrap_or("other configuration failure");
+            // The real writer still fails this test, even if the alternate probe works.
+            panic!(
+                "real_writer_error={category}; original_preserved=true; dacl_only_stage_initially_unprotected={unprotected}; dacl_only_api_success={api_success}; dacl_only_exact_security={exact}; diagnostic_stage_empty={empty}"
+            );
+        }
+    };
+    assert_eq!(acl(&backup), before);
+    inject_in_home(Format::PlainText, &target, "updated", &home).unwrap();
+    assert_eq!(acl(&target), before);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn windows_configuration_runner_default_dacl_survives_write_and_backup() {
+    let (home, target) = fixture("runner-default");
+    let before = acl(&target);
     let backup = backup_file_in(&target, &home).unwrap().unwrap();
     assert_eq!(acl(&backup), before);
     inject_in_home(Format::PlainText, &target, "updated", &home).unwrap();
@@ -410,11 +485,19 @@ fn current_user_sid() -> String {
 }
 
 fn restrict_with_modern_file_api(path: &Path) {
-    use windows_sys::Win32::Security::Authorization::{SE_FILE_OBJECT, SetNamedSecurityInfoW};
-    let sddl: Vec<u16> = format!("D:P(A;;FA;;;{})", current_user_sid())
-        .encode_utf16()
-        .chain(Some(0))
-        .collect();
+    set_protected_modern_dacl(path, &format!("D:P(A;;FA;;;{})", current_user_sid()));
+}
+
+fn set_protected_modern_dacl(path: &Path, sddl: &str) {
+    set_modern_dacl(path, sddl, true);
+}
+
+fn set_modern_dacl(path: &Path, sddl: &str, protected: bool) {
+    use windows_sys::Win32::Security::{
+        Authorization::{SE_FILE_OBJECT, SetNamedSecurityInfoW},
+        UNPROTECTED_DACL_SECURITY_INFORMATION,
+    };
+    let sddl: Vec<u16> = sddl.encode_utf16().chain(Some(0)).collect();
     let mut descriptor = std::ptr::null_mut();
     assert_ne!(
         unsafe {
@@ -441,7 +524,12 @@ fn restrict_with_modern_file_api(path: &Path) {
         SetNamedSecurityInfoW(
             wide(path).as_ptr(),
             SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            DACL_SECURITY_INFORMATION
+                | if protected {
+                    PROTECTED_DACL_SECURITY_INFORMATION
+                } else {
+                    UNPROTECTED_DACL_SECURITY_INFORMATION
+                },
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             dacl,
@@ -454,8 +542,8 @@ fn restrict_with_modern_file_api(path: &Path) {
     assert_eq!(result, 0);
     assert_eq!(
         acl(path).2,
-        SE_DACL_PROTECTED | 0x0400,
-        "must reproduce protected+AUTO_INHERITED, without AR"
+        (if protected { SE_DACL_PROTECTED } else { 0 }) | 0x0400,
+        "must reproduce requested protection plus AUTO_INHERITED, without AR"
     );
 }
 

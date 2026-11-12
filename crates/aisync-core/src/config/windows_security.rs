@@ -206,6 +206,51 @@ impl Security {
         Ok(())
     }
 
+    /// Test-only comparison of the DACL-only API hypothesis on an empty handle.
+    /// No original file is mutated and no configuration bytes are written.
+    #[cfg(test)]
+    pub(super) fn probe_dacl_only_empty_stage(&self, file: &File) -> (bool, bool, bool, bool) {
+        let empty = file.metadata().is_ok_and(|metadata| metadata.len() == 0);
+        let unprotected =
+            Self::read(file).is_ok_and(|security| security.control & SE_DACL_PROTECTED == 0);
+        if !empty || !unprotected {
+            return (unprotected, false, false, empty);
+        }
+        let mut descriptor = self.descriptor.clone();
+        let mut present = 0;
+        let mut defaulted = 0;
+        let mut dacl = std::ptr::null_mut();
+        if unsafe {
+            GetSecurityDescriptorDacl(
+                descriptor.as_mut_ptr().cast(),
+                &mut present,
+                &mut dacl,
+                &mut defaulted,
+            )
+        } == 0
+            || present == 0
+            || dacl.is_null()
+            || defaulted != 0
+        {
+            return (unprotected, false, false, empty);
+        }
+        // Deliberately omit PROTECTED/UNPROTECTED flags, only in this diagnostic.
+        let api_success = unsafe {
+            SetSecurityInfo(
+                file.as_raw_handle() as HANDLE,
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                dacl,
+                std::ptr::null(),
+            )
+        } == 0;
+        let exact = Self::read(file).is_ok_and(|observed| observed == *self);
+        let still_empty = file.metadata().is_ok_and(|metadata| metadata.len() == 0);
+        (unprotected, api_success, exact, still_empty)
+    }
+
     pub(super) fn verify_file(&self, file: &File) -> crate::Result<()> {
         if Self::read(file)? != *self {
             return Err(failure("configuration handle security changed"));

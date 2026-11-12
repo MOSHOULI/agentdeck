@@ -83,9 +83,11 @@ function Check-ConfigurationDaclPreservation([string]$manifest) {
     try {
         $null = Invoke-ConfigurationFixture @('prepare-dacl', '--manifest', $manifest)
         $fixture = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
-        $inactiveBaseline = Get-InactiveConfigurationSnapshot $fixture $manifest
         $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
-        foreach ($agent in @(@{ id = 'claude'; name = 'Claude Code'; file = '.claude/CLAUDE.md'; protected = $true }, @{ id = 'gemini'; name = 'Gemini CLI'; file = '.gemini/GEMINI.md'; protected = $false })) {
+        $agents = @(@{ id = 'claude'; name = 'Claude Code'; file = '.claude/CLAUDE.md'; protected = $true }, @{ id = 'gemini'; name = 'Gemini CLI'; file = '.gemini/GEMINI.md'; protected = $false })
+        # Author every fixture ACL before taking the inactive baseline. Parent
+        # inheritance can legitimately update the synthetic settings file here.
+        foreach ($agent in $agents) {
             $target = Join-Path $fixture.home $agent.file
             # A protected current-user-only descriptor differs from the inherited
             # parent descriptor. Build it from scratch, not by preserving grants.
@@ -95,7 +97,23 @@ function Check-ConfigurationDaclPreservation([string]$manifest) {
                 $rule = [Security.AccessControl.FileSystemAccessRule]::new($owner, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow)
                 $acl.AddAccessRule($rule)
                 Set-Acl -LiteralPath $target -AclObject $acl
+            } else {
+                # A temporary directory's default DACL does not guarantee AI or
+                # inherited ACEs. Establish a genuine private inheritable parent.
+                $parentAcl = [Security.AccessControl.DirectorySecurity]::new()
+                $parentAcl.SetAccessRuleProtection($true, $false)
+                $inherit = [Security.AccessControl.InheritanceFlags]::ObjectInherit -bor [Security.AccessControl.InheritanceFlags]::ContainerInherit
+                $parentRule = [Security.AccessControl.FileSystemAccessRule]::new($owner, [Security.AccessControl.FileSystemRights]::FullControl, $inherit, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+                $parentAcl.AddAccessRule($parentRule)
+                Set-Acl -LiteralPath (Split-Path $target) -AclObject $parentAcl
+                $childAcl = [Security.AccessControl.FileSecurity]::new()
+                $childAcl.SetAccessRuleProtection($false, $false)
+                Set-Acl -LiteralPath $target -AclObject $childAcl
             }
+        }
+        $inactiveBaseline = Get-InactiveConfigurationSnapshot $fixture $manifest
+        foreach ($agent in $agents) {
+            $target = Join-Path $fixture.home $agent.file
             $beforeAcl = Get-Acl -LiteralPath $target
             $before = Get-ConfigurationDacl $target
             $beforeOwner = $beforeAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value
@@ -110,7 +128,7 @@ function Check-ConfigurationDaclPreservation([string]$manifest) {
             if ($agent.protected) {
                 $rules = @($beforeAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
                 if (-not $beforeAcl.AreAccessRulesProtected -or $rules.Count -ne 1 -or $rules[0].IdentityReference -ne $owner -or $otherParentGrants.Count -eq 0 -or $before -ceq (Get-ConfigurationDacl (Split-Path $target))) { throw 'Fixture does not contrast restrictive file DACL with broader parent' }
-            } elseif ($beforeAcl.AreAccessRulesProtected -or @($beforeAcl.GetAccessRules($false, $true, [Security.Principal.SecurityIdentifier])).Count -eq 0) { throw 'Ordinary inherited DACL fixture missing' }
+            } elseif ($beforeAcl.AreAccessRulesProtected -or @($beforeAcl.GetAccessRules($false, $true, [Security.Principal.SecurityIdentifier])).Count -eq 0 -or @($beforeAcl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])).Count -ne 0) { throw 'Ordinary inherited DACL fixture missing' }
             Check-Gui ("configuration-dacl-" + $agent.id + '-start') -KeepOpen
             Set-QwenPath '搜索 Agent' $agent.name
             $null = Wait-QwenControl ("应用默认配置 " + $agent.name) ([Windows.Automation.ControlType]::Button)
