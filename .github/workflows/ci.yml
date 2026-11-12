@@ -443,7 +443,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        qoder_release: ['1.1.85', '1.1.86']
+        qoder_release: ['1.1.85', '1.1.86', '1.1.87']
     steps:
       - uses: actions/checkout@v4
         with:
@@ -503,20 +503,25 @@ jobs:
             --archive "$RUNNER_TEMP/qoder-linux-official/qodercli-linux-x64-baseline.tar.gz" \
             --evidence "$RUNNER_TEMP/qoder-private-deploy-evidence"
       - name: Fetch legacy archive for cross-release rejection (never execute)
-        if: matrix.qoder_release == '1.1.86'
+        if: matrix.qoder_release == '1.1.87'
         timeout-minutes: 4
         run: python -B scripts/fetch_qoder_ui_archive.py --release 1.1.85 --destination "$RUNNER_TEMP/qoder-linux-legacy"
+      - name: Fetch intermediate archive for cross-release rejection (never execute)
+        if: matrix.qoder_release == '1.1.87'
+        timeout-minutes: 4
+        run: python -B scripts/fetch_qoder_ui_archive.py --release 1.1.86 --destination "$RUNNER_TEMP/qoder-linux-intermediate"
       - name: Real mixed-version receipt archive and payload rejection
-        if: matrix.qoder_release == '1.1.86'
+        if: matrix.qoder_release == '1.1.87'
         timeout-minutes: 12
         run: |
           python -B scripts/qoder_cross_release_acceptance.py \
             --cli "$PWD/target/debug/aisync" \
             --legacy-archive "$RUNNER_TEMP/qoder-linux-legacy/qodercli-linux-x64-baseline.tar.gz" \
-            --current-archive "$RUNNER_TEMP/qoder-linux-official/qodercli-linux-x64-baseline.tar.gz" \
+            --current-archive "$RUNNER_TEMP/qoder-linux-intermediate/qodercli-linux-x64-baseline.tar.gz" \
+            --additional-archive "$RUNNER_TEMP/qoder-linux-official/qodercli-linux-x64-baseline.tar.gz" \
             --evidence "$RUNNER_TEMP/qoder-cross-release-evidence"
       - uses: actions/upload-artifact@v4
-        if: always() && matrix.qoder_release == '1.1.86'
+        if: always() && matrix.qoder_release == '1.1.87'
         with:
           name: Qoder-cross-release-${{ env.BUILD_SHA }}
           path: ${{ runner.temp }}/qoder-cross-release-evidence/result.json

@@ -111,3 +111,23 @@ it('late old-release preview cannot restore confirmation after release changes',
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); expect(bridge.deployQoderPrivate).not.toHaveBeenCalled();
   preview(); await screen.findByRole('dialog'); expect(screen.getByText('固定版本：1.1.86；目标：linux-amd64-baseline')).toBeInTheDocument();
 });
+
+it('187 release changes discard completed previews and new confirmation is bound to selected release', async () => {
+  const { rerender } = render(<QoderPrivateDeployment />); fill(); preview(); await screen.findByRole('dialog');
+  rerender(<QoderPrivateDeployment release="1.1.87" />);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); expect(bridge.deployQoderPrivate).not.toHaveBeenCalled();
+  preview(); await screen.findByRole('dialog');
+  expect(bridge.previewQoderDeployment).toHaveBeenLastCalledWith('/cache with space', '/private/new', '1.1.87');
+  expect(screen.getByText('载荷字节：182466016；新文件权限：0700')).toBeInTheDocument();
+  confirm(); await screen.findByText('Qoder 私有可执行文件部署已完成；未激活、未运行。');
+  expect(bridge.deployQoderPrivate).toHaveBeenCalledExactlyOnceWith('/cache with space', '/private/new', token, true, '1.1.87');
+  expect(screen.getByText('实际提交版本：1.1.87')).toBeInTheDocument();
+});
+it('187 late old-release preview cannot restore confirmation after release changes', async () => {
+  const deferred = pending<{ token: string }>(); vi.mocked(bridge.previewQoderDeployment).mockReturnValueOnce(deferred.promise);
+  const { rerender } = render(<QoderPrivateDeployment />); fill(); preview();
+  rerender(<QoderPrivateDeployment release="1.1.87" />);
+  await act(async () => { deferred.resolve({ token }); await deferred.promise; });
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); expect(bridge.deployQoderPrivate).not.toHaveBeenCalled();
+  preview(); await screen.findByRole('dialog'); expect(screen.getByText('固定版本：1.1.87；目标：linux-amd64-baseline')).toBeInTheDocument();
+});

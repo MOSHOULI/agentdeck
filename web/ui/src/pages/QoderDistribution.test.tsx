@@ -326,3 +326,33 @@ it.each(['complete', 'unconfirmed'] as const)('navigation preserves submitted wr
   expect(screen.queryByRole('region', { name: 'Qoder 缓存写入结果' })).not.toBeInTheDocument();
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); expect(write).toHaveBeenCalledTimes(1); expect(useWorkspaceActivityStore.getState().busy.qoder).toBe(false);
 });
+
+it('187 release selector defaults old version and discards late read results on explicit switch', async () => {
+  const request = defer<typeof plan>(); vi.mocked(bridge.qoderDistributionPlan).mockReturnValueOnce(request.promise);
+  render(<QoderDistribution />); fill();
+  const selector = screen.getByLabelText('Qoder 已审阅版本'); expect(selector).toHaveValue('1.1.85');
+  fireEvent.click(screen.getByRole('button', { name: '查看 Qoder 分发计划' }));
+  fireEvent.change(selector, { target: { value: '1.1.87' } });
+  await act(async () => { request.resolve(plan); await request.promise; });
+  expect(screen.queryByRole('region', { name: 'Qoder 分发计划结果' })).not.toBeInTheDocument();
+  vi.mocked(bridge.qoderDistributionPlan).mockResolvedValue(validateQoderPlan(qoderRawPlan(plan.target, '1.1.87'), plan.target, '1.1.87'));
+  fireEvent.click(screen.getByRole('button', { name: '查看 Qoder 分发计划' }));
+  expect(await screen.findByRole('region', { name: 'Qoder 分发计划结果' })).toHaveTextContent('版本：1.1.87');
+  expect(bridge.qoderDistributionPlan).toHaveBeenLastCalledWith(plan.target, '1.1.87');
+});
+it('187 release switches invalidate cache confirmation and writes carry captured version with selector locked', async () => {
+  const request = defer<{ operation: 'stage'; state: 'staged_archive_verified' }>();
+  const write = vi.spyOn(bridge, 'writeQoderCache').mockReturnValue(request.promise);
+  render(<QoderDistribution />);
+  fireEvent.change(screen.getByLabelText('Qoder 缓存写入来源绝对路径'), { target: { value: '/source' } });
+  fireEvent.change(screen.getByLabelText('Qoder 全新缓存绝对目录'), { target: { value: '/new' } });
+  fireEvent.click(screen.getByRole('button', { name: '预览 Qoder 缓存写入' }));
+  const selector = screen.getByLabelText('Qoder 已审阅版本');
+  fireEvent.change(selector, { target: { value: '1.1.87' } }); expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '预览 Qoder 缓存写入' }));
+  expect(screen.getByRole('dialog')).toHaveTextContent('版本：1.1.87');
+  fireEvent.click(screen.getByRole('button', { name: '确认创建 Qoder 缓存' }));
+  expect(selector).toBeDisabled(); expect(write).toHaveBeenCalledExactlyOnceWith('stage', '/source', '/new', true, '1.1.87');
+  await act(async () => { request.resolve({ operation: 'stage', state: 'staged_archive_verified' }); await request.promise; });
+  expect(screen.getByText('已提交版本：1.1.87')).toBeInTheDocument(); expect(selector).not.toBeDisabled();
+});

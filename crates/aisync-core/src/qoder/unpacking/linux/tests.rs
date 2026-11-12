@@ -230,47 +230,53 @@ fn release_contracts_reject_mixed_receipts_before_destination_creation() {
         )
         .unwrap();
         assert!(validate_records_for_release(r, &d).is_ok()); // receipt contract only, not byte verification
-        let other = if *version == "1.1.85" {
-            "1.1.86"
-        } else {
-            "1.1.85"
-        };
-        let other_r = distribution::reviewed_release(other).unwrap();
-        let destination = f.root.join("must-not-exist");
-        assert!(unpack(other_r, &f.root, &destination).is_err());
-        assert!(!destination.exists());
-        for field in ["version", "archive_sha256", "bytes"] {
-            let mut mixed = complete.clone();
-            mixed[field] = match field {
-                "version" => serde_json::json!(other),
-                "archive_sha256" => serde_json::json!(
-                    distribution::plan_for_release(other, staging::TARGET)
-                        .unwrap()
-                        .sha256
-                ),
-                _ => serde_json::json!(other_r.archive_bytes),
-            };
+        for other in distribution::RELEASES
+            .iter()
+            .filter(|other| *other != version)
+        {
+            let other_r = distribution::reviewed_release(other).unwrap();
+            let destination = f.root.join("must-not-exist");
+            assert!(unpack(other_r, &f.root, &destination).is_err());
+            assert!(!destination.exists());
+            for field in ["version", "archive_sha256", "bytes"] {
+                let mut mixed = complete.clone();
+                mixed[field] = match field {
+                    "version" => serde_json::json!(other),
+                    "archive_sha256" => serde_json::json!(
+                        distribution::plan_for_release(other, staging::TARGET)
+                            .unwrap()
+                            .sha256
+                    ),
+                    _ => serde_json::json!(other_r.archive_bytes),
+                };
+                fs::write(
+                    f.root.join("complete.json"),
+                    serde_json::to_vec(&mixed).unwrap(),
+                )
+                .unwrap();
+                assert!(unpack(r, &f.root, &destination).is_err());
+                assert!(!destination.exists());
+            }
             fs::write(
                 f.root.join("complete.json"),
-                serde_json::to_vec(&mixed).unwrap(),
+                serde_json::to_vec(&complete).unwrap(),
+            )
+            .unwrap();
+            let mut mixed_intent = intent.clone();
+            mixed_intent["version"] = serde_json::json!(other);
+            fs::write(
+                f.root.join("incomplete.json"),
+                serde_json::to_vec(&mixed_intent).unwrap(),
             )
             .unwrap();
             assert!(unpack(r, &f.root, &destination).is_err());
             assert!(!destination.exists());
+            fs::write(
+                f.root.join("incomplete.json"),
+                serde_json::to_vec(&intent).unwrap(),
+            )
+            .unwrap();
+            assert!(validate_records_for_release(r, &d).is_ok());
         }
-        fs::write(
-            f.root.join("complete.json"),
-            serde_json::to_vec(&complete).unwrap(),
-        )
-        .unwrap();
-        let mut mixed_intent = intent.clone();
-        mixed_intent["version"] = serde_json::json!(other);
-        fs::write(
-            f.root.join("incomplete.json"),
-            serde_json::to_vec(&mixed_intent).unwrap(),
-        )
-        .unwrap();
-        assert!(unpack(r, &f.root, &destination).is_err());
-        assert!(!destination.exists());
     }
 }

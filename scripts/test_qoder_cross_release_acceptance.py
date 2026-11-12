@@ -10,7 +10,7 @@ import qoder_cross_release_acceptance as h
 class Tests(unittest.TestCase):
     def tearDown(self): h.complete.select_release('1.1.85')
 
-    def exercise(self, corrupt=False):
+    def exercise(self, corrupt=False, releases=('1.1.85', '1.1.86')):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); evidence=root/'evidence'; calls=[]
             def prepare(cli, archive, parent, env):
@@ -24,14 +24,14 @@ class Tests(unittest.TestCase):
                 calls.append((h.complete.pinned.VERSION,cache.name))
                 if corrupt: destination.mkdir(mode=0o700)
             with patch.dict(os.environ,{'RUNNER_TEMP':str(root)}), patch.object(h.deployment,'guard'), patch.object(h.complete,'prepare',side_effect=prepare), patch.object(h.deployment,'run_preview',return_value='a'*64), patch.object(h.deployment,'run_deploy',side_effect=reject), patch.object(h,'reject_fresh_preview') as fresh, patch.object(h,'inspect_state') as inspect:
-                result=h.run(Path('/cli'),{'1.1.85':root/'85','1.1.86':root/'86'},evidence)
+                result=h.run(Path('/cli'),{v: root/v for v in releases},evidence)
             if result:
-                self.assertEqual(fresh.call_count, 8)
-                self.assertEqual(inspect.call_count, 10)
+                self.assertEqual(fresh.call_count, len(releases)*(len(releases)-1)*4)
+                self.assertEqual(inspect.call_count, len(releases)*(len(releases)-1)*5)
                 whole = [call.args[-1] for call in inspect.call_args_list if call.args[3].name.startswith('foreign-inspect-')]
-                self.assertEqual(whole, ['unknown_ownership', 'conflict'])
+                self.assertEqual(whole, ['unknown_ownership' if r == '1.1.85' else 'conflict' for r in releases for other in releases if r != other])
                 mixed = [call.args[-1] for call in inspect.call_args_list if call.args[3].name.startswith('inspect-')]
-                self.assertEqual(mixed, ['conflict'] * 6)
+                self.assertEqual(mixed, ['conflict'] * (len(releases)*(len(releases)-1)*3))
             return result,json.loads((evidence/'result.json').read_text()),calls
 
     def test_both_directions_all_three_members_required(self):
@@ -44,6 +44,23 @@ class Tests(unittest.TestCase):
         self.assertEqual({(x['release'],x['member']) for x in report['checks']},
                          {(r,m) for r in ('1.1.85','1.1.86') for m in ('receipt','archive','payload')})
         self.assertTrue(all(x['destination_absent'] and x['source_unchanged'] for x in report['checks']))
+
+    def test_three_releases_cover_every_direction_and_member(self):
+        releases = ('1.1.85', '1.1.86', '1.1.87')
+        ok, report, calls = self.exercise(releases=releases)
+        self.assertTrue(ok)
+        self.assertEqual(report['releases'], list(releases))
+        self.assertEqual(len(calls), 18)
+        self.assertEqual(len(report['whole_cache_checks']), 6)
+        self.assertEqual(len(report['same_release_checks']), 6)
+        self.assertEqual({(x['release'], x['foreign_release'], x['member']) for x in report['checks']},
+                         {(r, o, m) for r in releases for o in releases if r != o for m in ('receipt', 'archive', 'payload')})
+
+    def test_unsupported_or_single_release_fails_before_guard_or_writes(self):
+        for releases in [('1.1.85',), ('1.1.85', 'latest')]:
+            with patch.object(h.deployment, 'guard') as guard, self.assertRaises(h.deployment.Failure):
+                h.run(Path('/cli'), {v: Path('/archive') for v in releases}, Path('/not-created'))
+            guard.assert_not_called()
 
     def test_rejection_that_writes_target_fails_closed(self):
         ok,report,calls=self.exercise(corrupt=True)

@@ -60,3 +60,45 @@ baseline archive was downloaded and structurally inspected in this investigation
 
 新增版本显式选择，保留旧版默认及来源证据；不是自动升级。真实运行、认证、
 在线服务与其他平台兼容性未由包结构检查证明。不得把旧版本验收冒充新版验收。
+
+## Explicit additional release 1.1.87 / 显式新增版本
+
+Read-only retrieval on 2026-11-12. Default remains 1.1.85; this is an explicitly
+selected reviewed release, **not a claim of latest version**. The official CLI
+changelog already lists 1.1.88 dated November 12 (title generation, MCP tools and
+new clear fixes); 1.1.87 is dated November 11 (stability/UX). At this review the
+rolling distribution and release-note timeline differed; no 1.1.88 contract is
+implicitly admitted by this increment.
+
+- Pinned official manifest: https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/channels/1.1.87/manifest.json
+- Retained `manifest-1.1.87.json`: 3358 bytes, SHA256
+  `5bea07a5bb10187aac873a1b3c5f7362e0b18f464daf4612cdc804cde31cd8ba`;
+  published_at `2026-11-11T12:07:29.788Z`.
+- All eleven target identities and metadata (os/arch/runtime/variant/minimum Windows
+  build) are unchanged from 1.1.86. All archive URLs are version-pinned and all
+  eleven digests changed. Windows standard is still Bun >=17763, legacy x64 is
+  Node SEA. Linux baseline/optimized/musl remain distinct selections.
+- The installation guide https://docs.qoder.com/cli/installation still says Windows
+  ARM64 is unsupported while the manifest lists it. This contradiction is retained,
+  not resolved by assuming a downloadable artifact is compatible.
+- Actual Linux x64 baseline archive: 78,554,027 bytes, SHA256
+  `738ee635eb868f5963526779ce023addbd63377b77861060a4c2af53bb83c2db`,
+  equal to the same-source manifest's pinned checksum.
+- Expanded TAR: 182,468,096 bytes. Single gzip stream, no trailing compressed data;
+  raw `./` directory followed by raw `./qodercli` regular file, USTAR, no prefix,
+  links or additional entries; both header checksums valid, 32 payload padding
+  bytes followed by 1024 zero terminator bytes.
+- Actual payload: 182,466,016 bytes, SHA256
+  `61e318f6c4d2ebae319aecfce2f18472c51e7b413a546accddaeb82e2592af2e`.
+  Structural inspection hashed the payload in memory without extracting an
+  executable, setting execute bits, invoking it or running an installer script.
+
+Only the Linux x64 baseline archive was downloaded for structural inspection.
+Other target hashes are manifest contracts, not evidence of runtime compatibility.
+Same-source checksums and unsigned receipts are not independent signatures.
+
+本次仅显式新增 1.1.87，默认保持 1.1.85，不追随 latest。更新日志已列 1.1.88，
+不能称 1.1.87 为最新，也不能把发布说明自动升级为受审分发契约。11 平台元数据与
+前版一致但摘要全部变化；Windows ARM64 文档/清单矛盾继续保留。仅实读 Linux x64
+baseline 官方归档并核对结构与完整载荷摘要，未运行、未提取为可执行文件、未赋执行
+权限。目录条目、同源 hash、unsigned record 均不证明签名、所有权、运行或登录成功。

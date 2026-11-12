@@ -52,9 +52,19 @@ it('accepts explicitly selected 1.1.86 and rejects both directions of mixed rele
 });
 it('rejects arbitrary deployment releases before IPC', async () => {
   Object.assign(window, { __TAURI_INTERNALS__: {} });
-  for (const release of ['latest', '', '1.1.87'] as never[]) {
+  for (const release of ['latest', '', '1.1.88'] as never[]) {
     await expect(previewQoderDeployment('/source', '/new', release)).rejects.toThrow();
     await expect(deployQoderPrivate('/source', '/new', raw.token, true, release)).rejects.toThrow();
   }
   expect(invoke).not.toHaveBeenCalled();
+});
+
+it('187 deployment preview pins independently reviewed payload and rejects 185/186 bytes',async()=>{
+  const next={...raw,version:'1.1.87',payload_bytes:182466016,payload_sha256:'61e318f6c4d2ebae319aecfce2f18472c51e7b413a546accddaeb82e2592af2e'};
+  expect(validateQoderDeploymentPreview(next,'1.1.87')).toEqual({token:raw.token});
+  for(const release of ['1.1.85','1.1.86'] as const)expect(()=>validateQoderDeploymentPreview(next,release)).toThrow();
+  for(const patch of [{payload_bytes:182543840},{payload_sha256:raw.payload_sha256},{payload_bytes:182412768},{payload_sha256:'fccd0ce90d1119f6bb213146de6e45358db0c89585048c31315ddb180c925ae8'}])expect(()=>validateQoderDeploymentPreview({...next,...patch},'1.1.87')).toThrow();
+  Object.assign(window,{__TAURI_INTERNALS__:{}});vi.mocked(invoke).mockResolvedValue(next);
+  await previewQoderDeployment('/source','/new','1.1.87');expect(invoke).toHaveBeenLastCalledWith('preview_qoder_deployment',{source:'/source',destination:'/new',release:'1.1.87'});
+  vi.mocked(invoke).mockResolvedValue({...outcome,version:'1.1.87'});await deployQoderPrivate('/source','/new',raw.token,true,'1.1.87');expect(invoke).toHaveBeenLastCalledWith('deploy_qoder_private',{source:'/source',destination:'/new',token:raw.token,confirmed:true,release:'1.1.87'});
 });

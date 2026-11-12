@@ -22,3 +22,10 @@ it('validates paths/releases before IPC and preserves exact selected path', asyn
   expect(invoke).toHaveBeenCalledExactlyOnceWith('inspect_qoder_deployment',{deploymentPath:'/private with spaces/deployed',release:'1.1.85'});
 });
 it('does not invoke in demo mode', async () => { history.replaceState(null,'','/?demo=1'); await expect(inspectQoderDeployment('/existing','1.1.85')).rejects.toThrow(); expect(invoke).not.toHaveBeenCalled(); });
+
+it('187 inspection preserves all authority boundaries and rejects any older payload evidence',async()=>{
+ const next={...raw,version:'1.1.87',payload_bytes:182466016,payload_sha256:'61e318f6c4d2ebae319aecfce2f18472c51e7b413a546accddaeb82e2592af2e'};
+ expect(validateDeploymentInspection(next,'1.1.87')).toEqual({state:'payload_verified'});
+ for(const release of ['1.1.85','1.1.86'] as const){expect(()=>validateDeploymentInspection(next,release)).toThrow();for(const patch of [{version:release},{payload_bytes:qoderPayloads[release].bytes},{payload_sha256:qoderPayloads[release].sha256}])expect(()=>validateDeploymentInspection({...next,...patch},'1.1.87')).toThrow();}
+ Object.assign(window,{__TAURI_INTERNALS__:{}});vi.mocked(invoke).mockResolvedValue(next);await inspectQoderDeployment('/private','1.1.87');expect(invoke).toHaveBeenCalledExactlyOnceWith('inspect_qoder_deployment',{deploymentPath:'/private',release:'1.1.87'});
+});

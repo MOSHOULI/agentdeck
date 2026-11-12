@@ -1,5 +1,12 @@
 # Qoder private executable deployment / Qoder 私有可执行部署
 
+> **Additional explicit release / 显式新增版本:** 1.1.87 is now reviewed alongside
+> 1.1.85 and 1.1.86. Default remains 1.1.85; use `--release 1.1.87` explicitly.
+> This does not follow latest, migrate caches or reuse another release's receipt/token.
+> 旧版继续可选，版本间缓存、收据与确认不得混用；不是官方运行/认证验收。
+> Exact source and payload evidence: [provenance](upstream/qoder/PROVENANCE.md).
+
+
 > **Release selection / 版本选择:** 1.1.85 remains the default. Explicit
 > 1.1.86 is additionally reviewed; CLI accepts `--release 1.1.86` on Qoder
 > distribution/cache/deployment subcommands, and the desktop has a reviewed-release
