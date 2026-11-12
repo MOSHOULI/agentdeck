@@ -237,6 +237,63 @@ class Tests(unittest.TestCase):
         for token in ('finally {','Stop-App',"'HOME','USERPROFILE','AGENTDECK_TEST_HOME','APPDATA','LOCALAPPDATA'",'$script:homeDir = $savedHome'):
             self.assertIn(token,homes)
 
+    def test_protection_digest_does_not_bind_readonly_home(self):
+        # PowerShell identifiers are case insensitive: $home aliases readonly $HOME.
+        self.assertNotRegex(UI, r'(?i)\$home\b')
+        function = UI[UI.index('function Get-ProtectionDigest'):UI.index('function Assert-RecoveryNoExecution')]
+        self.assertIn('[string]$protectionHome = $homeDir', function)
+        self.assertIn("'--home',$protectionHome", function)
+        self.assertIn("Join-Path $protectionHome '.agentdeck", function)
+
+    @unittest.skipUnless(shutil.which('pwsh'), 'actual PowerShell unavailable')
+    def test_protection_digest_parameter_binding_and_home_forwarding(self):
+        # Execute the real helper, not a reimplementation. Only its external
+        # snapshot/ACL reads are modeled; this does not prove native ACL behavior.
+        function = UI[UI.index('function Get-ProtectionDigest'):UI.index('function Assert-RecoveryNoExecution')]
+        command = """
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$originalHome = $HOME
+$homeDir = Join-Path ([IO.Path]::GetTempPath()) 'default home 测试'
+$alternateHome = Join-Path ([IO.Path]::GetTempPath()) 'alternate home 测试'
+$script:fixtureCalls = @()
+$script:aclPaths = @()
+function Invoke-InstallFixture {
+    $script:fixtureCalls += ,@($args)
+    '{"digest":"snapshot-digest"}'
+}
+function Get-Acl([string]$LiteralPath) {
+    $script:aclPaths += $LiteralPath
+    [pscustomobject]@{ Sddl = 'modeled-acl' }
+}
+""" + function + r"""
+$results = @(
+    (Get-ProtectionDigest 'manifest-default'),
+    (Get-ProtectionDigest 'manifest-positional' $alternateHome),
+    (Get-ProtectionDigest -manifest 'manifest-named' -protectionHome $alternateHome)
+)
+$expectedHomes = @($homeDir, $alternateHome, $alternateHome)
+$expectedManifests = @('manifest-default', 'manifest-positional', 'manifest-named')
+for ($i = 0; $i -lt 3; $i++) {
+    $expectedArgs = @('--protection', 'snapshot', '--manifest', $expectedManifests[$i], '--home', $expectedHomes[$i])
+    if (($script:fixtureCalls[$i] | ConvertTo-Json -Compress) -cne ($expectedArgs | ConvertTo-Json -Compress)) { throw 'Snapshot arguments changed' }
+    $stateRoot = Join-Path $expectedHomes[$i] '.agentdeck\install-protection'
+    $expectedPaths = @($stateRoot, (Join-Path $stateRoot 'codex'), (Join-Path $stateRoot 'codex\gate.lock'), (Join-Path $stateRoot 'codex\state.json'))
+    for ($j = 0; $j -lt 4; $j++) {
+        if ($script:aclPaths[$i * 4 + $j] -cne $expectedPaths[$j]) { throw 'ACL snapshot used wrong home' }
+    }
+}
+if ($HOME -cne $originalHome) { throw 'Automatic HOME changed' }
+if ($script:fixtureCalls.Count -ne 3 -or $script:aclPaths.Count -ne 12) { throw 'Unexpected snapshot call count' }
+ConvertTo-Json -InputObject $results -Compress
+"""
+        result = subprocess.run(
+            [shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-EncodedCommand',
+             base64.b64encode(command.encode('utf-16le')).decode()],
+            capture_output=True, encoding='utf-8', errors='strict', timeout=15, check=True)
+        self.assertEqual([json.loads(value) for value in json.loads(result.stdout)],
+                         [['snapshot-digest', ['modeled-acl'] * 4]] * 3)
+
     @unittest.skipUnless(shutil.which('pwsh'),'actual PowerShell unavailable')
     def test_recovery_target_matches_core_dos_verbatim_spelling_only(self):
         function=UI[UI.index('function ConvertTo-ExpectedRecoveryPrefix'):UI.index('function Assert-RecoveryEligibleTarget')]

@@ -410,16 +410,8 @@ def assert_wrong_root_coverage(records):
 
 def exercise_wrong_root(driver, fixture, home, records, phase):
     """Initial wrong-root attempt; the durable lane then restarts this HOME."""
-    # A new WebDriver session can return before React mounts its controls.
-    # Poll only read-only readiness; each click/type action is still sent once.
-    agents_tab = "//*[@role='tab' and @aria-label='Agent 管理']"
-    search_input = "//*[@id='agent-search']"
-    phase('wrong_root_wait_agents_tab')
-    driver.wait(lambda: len(driver.elements(agents_tab)) == 1 and driver.enabled(agents_tab))
-    phase('wrong_root_open_agents')
-    driver.click(agents_tab)
-    phase('wrong_root_wait_search')
-    driver.wait(lambda: len(driver.elements(search_input)) == 1 and driver.enabled(search_input))
+    phase('wrong_root_wait_workspace')
+    search_input = ready_agent_workspace(driver, 'wrong_root')
     phase('wrong_root_type_search')
     driver.type(search_input, 'Codex')
     search = driver.one("//*[@id='agent-search']")
@@ -490,7 +482,8 @@ def unique_action(driver, selector):
     driver.click(selector)
 
 
-def select_recovery_agent(driver):
+def ready_agent_workspace(driver, diagnostic_prefix):
+    """Observe startup readiness, with at most one non-replayed tab activation."""
     tab = "//*[@role='tab' and @aria-label='Agent 管理']"
     selected = tab + "[@aria-selected='true']"
     unselected = tab + "[@aria-selected='false' and not(@disabled)]"
@@ -508,20 +501,25 @@ def select_recovery_agent(driver):
     wait_read_only(lambda: len(driver.elements(tab)) == 1 and
                    (len(driver.elements(selected)) == 1 or
                     len(driver.elements(unselected)) == 1),
-                   'recovery_workspace_tab_not_ready')
+                   diagnostic_prefix + '_workspace_tab_not_ready')
     if len(driver.elements(selected)) != 1:
         # At most one navigation action. An uncertain click is not replayed.
         try:
             driver.click(unselected)
         except Exception as error:
-            raise InstallFailure('recovery_workspace_tab_activation_failed') from error
+            raise InstallFailure(diagnostic_prefix + '_workspace_tab_activation_failed') from error
     wait_read_only(lambda: len(driver.elements(selected)) == 1,
-                   'recovery_workspace_tab_not_selected')
+                   diagnostic_prefix + '_workspace_tab_not_selected')
     wait_read_only(lambda: len(driver.elements(search)) == 1 and
                    len(driver.elements(search + "[not(@disabled)]")) == 1,
-                   'recovery_workspace_search_not_ready')
+                   diagnostic_prefix + '_workspace_search_not_ready')
     wait_read_only(lambda: len(driver.elements(idle)) == 1,
-                   'recovery_workspace_list_not_idle')
+                   diagnostic_prefix + '_workspace_list_not_idle')
+    return search
+
+
+def select_recovery_agent(driver):
+    search = ready_agent_workspace(driver, 'recovery')
     driver.type(search,'Codex')
     element=driver.one(search)
     driver.command('POST','/element/'+element+'/value',{'text':'\ue004','value':['\ue004']})

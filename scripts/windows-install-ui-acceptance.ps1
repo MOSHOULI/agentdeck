@@ -504,9 +504,9 @@ function Open-BlockedRecovery {
     if ($null -ne (Find-QwenControl '确认恢复 Codex 探测' ([Windows.Automation.ControlType]::Button))) { throw 'Blocked recovery exposed confirmation' }
     Click-Qwen '取消恢复检查'
 }
-function Get-ProtectionDigest([string]$manifest, [string]$home = $homeDir) {
-    $digest = (Invoke-InstallFixture @('--protection','snapshot','--manifest',$manifest,'--home',$home) | ConvertFrom-Json).digest
-    $stateRoot = Join-Path $home '.agentdeck\install-protection'
+function Get-ProtectionDigest([string]$manifest, [string]$protectionHome = $homeDir) {
+    $digest = (Invoke-InstallFixture @('--protection','snapshot','--manifest',$manifest,'--home',$protectionHome) | ConvertFrom-Json).digest
+    $stateRoot = Join-Path $protectionHome '.agentdeck\install-protection'
     $security = foreach ($path in @($stateRoot,(Join-Path $stateRoot 'codex'),(Join-Path $stateRoot 'codex\gate.lock'),(Join-Path $stateRoot 'codex\state.json'))) { (Get-Acl -LiteralPath $path).Sddl }
     return ConvertTo-Json -InputObject @($digest,$security) -Depth 3 -Compress
 }
