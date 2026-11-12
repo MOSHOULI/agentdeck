@@ -423,6 +423,54 @@ class WrongRootFixtureTests(unittest.TestCase):
         self.assertEqual(driver.clicks.count("//button[text()='刷新列表']"),1)
         self.assertEqual(self.f['calls'].read_bytes(),b'i')
         self.assertEqual(self.f['versions'].read_bytes(),b'')
+    def test_wrong_root_waits_for_unique_enabled_controls_before_one_action(self):
+        tab="//*[@role='tab' and @aria-label='Agent 管理']"; search="//*[@id='agent-search']"
+        driver=Mock(); phases=[]; events=[]; ready=set()
+        counts={tab:iter((0,2,1,1)),search:iter((0,2,1,1))}
+        enables={tab:iter((False,True)),search:iter((False,True))}
+        def elements(selector):
+            events.append(('read',selector));return [{}]*next(counts[selector])
+        def enabled(selector):
+            result=next(enables[selector]);events.append(('enabled',selector,result))
+            if result:ready.add(selector)
+            return result
+        def wait(predicate):
+            for _ in range(4):
+                if predicate():return
+            raise harness.Failure('ui_wait_expired')
+        def click(selector):
+            self.assertIn(selector,ready);events.append(('click',selector))
+        def type_input(selector,value):
+            self.assertIn(selector,ready);events.append(('type',selector));raise harness.Failure('test_stop_after_readiness')
+        driver.elements.side_effect=elements;driver.enabled.side_effect=enabled;driver.wait.side_effect=wait
+        driver.click.side_effect=click;driver.type.side_effect=type_input
+        with self.assertRaisesRegex(harness.Failure,'test_stop_after_readiness'):
+            subject.exercise_wrong_root(driver,self.f,self.root,[],phases.append)
+        self.assertEqual(driver.click.call_count,1);self.assertEqual(driver.type.call_count,1)
+        self.assertLess(events.index(('enabled',tab,True)),events.index(('click',tab)))
+        self.assertLess(events.index(('enabled',search,True)),events.index(('type',search)))
+        self.assertEqual(phases,['wrong_root_wait_agents_tab','wrong_root_open_agents','wrong_root_wait_search','wrong_root_type_search'])
+
+    def test_wrong_root_missing_ambiguous_or_disabled_tab_never_acted_on(self):
+        for count,enabled in ((0,True),(2,True),(1,False)):
+            with self.subTest(count=count,enabled=enabled):
+                driver=Mock();driver.elements.return_value=[{}]*count;driver.enabled.return_value=enabled
+                def wait(predicate):
+                    self.assertFalse(predicate());raise harness.Failure('ui_wait_expired')
+                driver.wait.side_effect=wait
+                with self.assertRaisesRegex(harness.Failure,'ui_wait_expired'):
+                    subject.exercise_wrong_root(driver,self.f,self.root,[],lambda _:None)
+                driver.click.assert_not_called();driver.type.assert_not_called()
+                if count!=1:driver.enabled.assert_not_called()
+
+    def test_wrong_root_uncertain_first_click_is_not_replayed(self):
+        driver=Mock();driver.elements.return_value=[{}];driver.enabled.return_value=True
+        driver.wait.side_effect=lambda predicate:self.assertTrue(predicate())
+        driver.click.side_effect=harness.Failure('driver_http_error')
+        with self.assertRaisesRegex(harness.Failure,'driver_http_error'):
+            subject.exercise_wrong_root(driver,self.f,self.root,[],lambda _:None)
+        self.assertEqual(driver.click.call_count,1);driver.type.assert_not_called()
+
     def test_native_harness_keeps_success_lane_and_distinct_wrong_root_process(self):
         source=Path(harness.__file__).read_text(encoding='utf-8')
         self.assertLess(source.index('memory_export.assert_coverage(memory_export_records)'),source.index("phase('wrong_root_close_success_session')"))

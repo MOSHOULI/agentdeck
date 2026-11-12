@@ -407,9 +407,18 @@ def assert_wrong_root_coverage(records):
 
 def exercise_wrong_root(driver, fixture, home, records, phase):
     """A fresh native app session; never restart it with this complete residue."""
+    # A new WebDriver session can return before React mounts its controls.
+    # Poll only read-only readiness; each click/type action is still sent once.
+    agents_tab = "//*[@role='tab' and @aria-label='Agent 管理']"
+    search_input = "//*[@id='agent-search']"
+    phase('wrong_root_wait_agents_tab')
+    driver.wait(lambda: len(driver.elements(agents_tab)) == 1 and driver.enabled(agents_tab))
     phase('wrong_root_open_agents')
-    driver.click("//*[@role='tab' and @aria-label='Agent 管理']")
-    driver.type("//*[@id='agent-search']", 'Codex')
+    driver.click(agents_tab)
+    phase('wrong_root_wait_search')
+    driver.wait(lambda: len(driver.elements(search_input)) == 1 and driver.enabled(search_input))
+    phase('wrong_root_type_search')
+    driver.type(search_input, 'Codex')
     search = driver.one("//*[@id='agent-search']")
     driver.command('POST', '/element/' + search + '/value', {'text': '\ue004', 'value': ['\ue004']})
     driver.wait(lambda: driver.value("//*[@id='agent-search']") == 'Codex')
