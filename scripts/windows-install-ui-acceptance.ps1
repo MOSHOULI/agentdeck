@@ -647,6 +647,29 @@ function ConvertTo-ExpectedRecoveryPrefix([string]$value) {
     if ($value -cnotmatch '^[A-Za-z]:\\') { throw 'Unsupported recovery prefix spelling' }
     return $value
 }
+function Test-RecoveryTargetContent([string[]]$names, [string]$expectedPrefix) {
+    # Exact text-node shapes only. Never join arbitrary region text or normalize
+    # the observed path; a suffix, changed case or other target must still fail.
+    if ($names.Count -eq 1) { return $names[0] -ceq ('已记录安装位置：' + $expectedPrefix) }
+    return $names.Count -eq 2 -and $names[0] -ceq '已记录安装位置：' -and $names[1] -ceq $expectedPrefix
+}
+function Test-RecoveryTargetNodes($nodes, [string]$expectedPrefix) {
+    $candidates = @($nodes | Where-Object { $_.Current.Name -ceq '已记录安装位置：' -or $_.Current.Name -ceq ('已记录安装位置：' + $expectedPrefix) })
+    if ($candidates.Count -ne 1) { return $false }
+    if ($candidates[0].Current.Name -ceq ('已记录安装位置：' + $expectedPrefix)) { return $true }
+    # WebView exposes React static label and dynamic value as separate Text
+    # siblings. Require the complete named child sequence of that same parent.
+    $walker = [Windows.Automation.TreeWalker]::RawViewWalker
+    $parent = $walker.GetParent($candidates[0])
+    if ($null -eq $parent) { return $false }
+    $child = $walker.GetFirstChild($parent)
+    $childNames = @()
+    while ($null -ne $child) {
+        if ($child.Current.Name) { $childNames += $child.Current.Name }
+        $child = $walker.GetNextSibling($child)
+    }
+    return Test-RecoveryTargetContent $childNames $expectedPrefix
+}
 function Assert-RecoveryEligibleTarget($fixture) {
     $null = Wait-QwenControl '确认恢复 Codex 探测' ([Windows.Automation.ControlType]::Button)
     $condition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::ProcessIdProperty, $script:running.Id)
@@ -658,13 +681,13 @@ function Assert-RecoveryEligibleTarget($fixture) {
     $names = @($nodes | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
     $text = $names -join "`n"
     $expectedPrefix = ConvertTo-ExpectedRecoveryPrefix $fixture.prefix
-    if ($names -cnotcontains ('已记录安装位置：' + $expectedPrefix)) {
+    if (-not (Test-RecoveryTargetNodes $nodes $expectedPrefix)) {
         Save-QwenEvidence 'recovery-eligible-target-mismatch'
         Record 'recovery-eligible-target-mismatch' @{
             labelNodePresent = $names -ccontains '已记录安装位置：'
             exactPrefixNodePresent = $names -ccontains $expectedPrefix
             # Diagnostic only: neither separated nor concatenated names grant acceptance.
-            fullTargetNodePresent = $false
+            fullTargetNodePresent = $names -ccontains ('已记录安装位置：' + $expectedPrefix)
         }
         throw 'Recovery preview target mismatch'
     }

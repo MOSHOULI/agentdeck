@@ -395,12 +395,45 @@ ConvertTo-Json -InputObject $results -Compress
         result=subprocess.run([shutil.which('pwsh'),'-NoProfile','-NonInteractive','-EncodedCommand',base64.b64encode(command.encode('utf-16le')).decode()],capture_output=True,encoding='utf-8',errors='strict',timeout=15,check=True)
         self.assertEqual(json.loads(result.stdout),[r'C:\测试 空格\prefix',r'C:\测试 空格\prefix',r'c:\MixedCASE',*['REJECTED']*5])
         check=UI[UI.index('function Assert-RecoveryEligibleTarget'):UI.index('function Check-ExplicitInstallRecovery')]
-        self.assertIn("$names -cnotcontains ('已记录安装位置：' + $expectedPrefix)",check)
+        self.assertIn('Test-RecoveryTargetNodes $nodes $expectedPrefix',check)
         self.assertNotIn("$text.Contains('已记录安装位置：'",check)
+
+    def test_recovery_target_split_nodes_require_same_parent(self):
+        check = UI[UI.index('function Test-RecoveryTargetNodes'):UI.index('function Assert-RecoveryEligibleTarget')]
+        for token in ('$candidates.Count -ne 1', '$walker.GetParent($candidates[0])',
+                      '$walker.GetFirstChild($parent)', '$walker.GetNextSibling($child)',
+                      'Test-RecoveryTargetContent $childNames $expectedPrefix'):
+            self.assertIn(token, check)
+        self.assertNotIn('-join', check)
+
+    @unittest.skipUnless(shutil.which('pwsh'), 'actual PowerShell unavailable')
+    def test_recovery_target_text_shapes_are_exact_not_fuzzy(self):
+        function = UI[UI.index('function Test-RecoveryTargetContent'):UI.index('function Test-RecoveryTargetNodes')]
+        command = "$ErrorActionPreference = 'Stop';\n" + function + r"""
+$prefix = 'C:\测试 空格\prefix'
+$label = '已记录安装位置：'
+$results = @(
+    (Test-RecoveryTargetContent @($label + $prefix) $prefix),
+    (Test-RecoveryTargetContent @($label, $prefix) $prefix),
+    (Test-RecoveryTargetContent @($label, ($prefix + '-other')) $prefix),
+    (Test-RecoveryTargetContent @($label, ($prefix.Replace('prefix', 'PREFIX'))) $prefix),
+    (Test-RecoveryTargetContent @($prefix, $label) $prefix),
+    (Test-RecoveryTargetContent @($label, $prefix, 'extra') $prefix),
+    (Test-RecoveryTargetContent @($label, $prefix.Substring(0, 5), $prefix.Substring(5)) $prefix),
+    (Test-RecoveryTargetContent @($label) $prefix),
+    (Test-RecoveryTargetContent @() $prefix)
+)
+ConvertTo-Json -InputObject $results -Compress
+"""
+        result = subprocess.run(
+            [shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-EncodedCommand',
+             base64.b64encode(command.encode('utf-16le')).decode()],
+            capture_output=True, encoding='utf-8', errors='strict', timeout=15, check=True)
+        self.assertEqual(json.loads(result.stdout), [True, True, *[False] * 7])
 
     def test_recovery_target_mismatch_keeps_evidence_and_strict_failure(self):
         check = UI[UI.index('function Assert-RecoveryEligibleTarget'):UI.index('function Check-ExplicitInstallRecovery')]
-        self.assertIn("if ($names -cnotcontains ('已记录安装位置：' + $expectedPrefix))", check)
+        self.assertIn('if (-not (Test-RecoveryTargetNodes $nodes $expectedPrefix))', check)
         self.assertIn("Save-QwenEvidence 'recovery-eligible-target-mismatch'", check)
         self.assertIn("labelNodePresent = $names -ccontains '已记录安装位置：'", check)
         self.assertIn('exactPrefixNodePresent = $names -ccontains $expectedPrefix', check)
