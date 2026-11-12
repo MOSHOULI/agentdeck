@@ -12,6 +12,20 @@ import qoder_complete_fixtures as complete
 import qoder_private_deploy_acceptance as deployment
 
 
+# Exact observations for fixed whole foreign caches. The core checks selected
+# archive/payload size ceilings before reading the intent version. A smaller
+# foreign cache reaches the mismatched intent (unknown_ownership); a larger
+# member fails the ceiling first (conflict). Neither state authorizes mutation.
+FOREIGN_STATES = {
+    ('1.1.85', '1.1.86'): 'unknown_ownership',
+    ('1.1.85', '1.1.87'): 'unknown_ownership',
+    ('1.1.86', '1.1.85'): 'conflict',
+    ('1.1.86', '1.1.87'): 'conflict',
+    ('1.1.87', '1.1.85'): 'conflict',
+    ('1.1.87', '1.1.86'): 'unknown_ownership',
+}
+
+
 def trace_command(cli, action, cache, trace, destination=None):
     command = ['/usr/bin/strace', '-f', '-qq', '-s', '4096', '-o', str(trace),
                '-e', 'trace=execve,execveat', str(cli), 'qoder', action,
@@ -76,7 +90,7 @@ def run(cli, archives, evidence):
             foreign = prepared[other]['unpacked']
             foreign_target = root / f'foreign-{release}-{other}'
             reject_fresh_preview(cli, foreign, foreign_target, env, root / f'foreign-preview-{release}-{other}.trace')
-            foreign_state = 'unknown_ownership' if release == '1.1.85' else 'conflict'
+            foreign_state = FOREIGN_STATES[(release, other)]
             inspect_state(cli, foreign, env, root / f'foreign-inspect-{release}-{other}.trace', foreign_state)
             if os.path.lexists(foreign_target): raise deployment.Failure('foreign_preview_wrote_target')
             if any(deployment.snapshot(paths['unpacked']) != originals[v] for v, paths in prepared.items()) or deployment.snapshot(home) != home_before:
