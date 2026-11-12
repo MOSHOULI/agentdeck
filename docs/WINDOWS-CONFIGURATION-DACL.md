@@ -23,6 +23,15 @@ The reported category was `staging-dacl-verification-control-flags`. Original
 bytes, DACL controls, owner and group remained unchanged; no backup survived.
 This was a fail-closed compatibility issue, not a successful preservation result.
 
+A subsequent genuine inherited-ACL case with different configuration/backup
+parent policies was tested in native run
+[43126988204](https://github.com/MOSHOULI/agentdeck/actions/runs/43126988204)
+at `9f7f3a`. Backup staging refused the recalculated ACL bytes before content;
+the original remained unchanged. A diagnostic DACL-only `SetSecurityInfo` call
+also succeeded at the API level but failed exact security equality while the
+probe stayed empty. Omitting the inheritance toggle is therefore not a proven
+preservation fix. The temporary alternate-API probe was removed after this test.
+
 ## Implemented boundary
 
 For existing regular files the writer reads the DACL and owner/group SIDs. It
@@ -37,6 +46,16 @@ written into replacement or backup staging, it checks that the staging owner
 and group match, applies the original DACL, and verifies the effective ACL bytes
 and protection/auto-inheritance control flags. It does not force every file to
 become protected. Unsupported or differing metadata fails closed.
+
+**Inherited ACLs are not universally writable.** When Windows recalculates an
+unprotected DACL under a different backup-parent policy, the operation refuses
+before backup content or target replacement. The original bytes/security stay
+unchanged; empty attempted-backup directories can remain. AgentDeck does not
+protect the original ACL, change parent permissions, or weaken equality to make
+this succeed. The regression suite retains this explicit refusal case and a
+separate, clearly labelled success fixture whose parent policies match. Manage
+unsupported files with their owning tool; any user-authored ACL change is a
+separate decision, not an automatic application repair.
 
 Staging handles request the rights needed to set and read the DACL.
 Descriptors carrying `SE_DACL_AUTO_INHERITED` use handle-based
@@ -67,8 +86,8 @@ and reports a rollback failure instead of overwriting the intervening change.
 
 ## Verification and limits
 
-Native Windows tests exercise protected owner-only fixtures, ordinary inherited
-DACLs, per-file backup, successful writes, actual completed journal entries,
+Native Windows tests exercise protected owner-only fixtures, genuine inherited
+DACL success under matching parent policies and refusal under different policies, per-file backup, successful writes, actual completed journal entries,
 restore/delete conflict refusal, and empty staging before content. They use
 synthetic temporary files only. Linux tests and cross-target compilation are not
 native Windows execution evidence. Exact native CI results are recorded in the

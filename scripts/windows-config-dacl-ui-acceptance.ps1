@@ -74,6 +74,40 @@ function Get-ConfigurationFailureDiagnostic($agent, $target, $beforeAcl, $before
     } catch { }
     return $diagnostic
 }
+function Check-InheritedConfigurationRefusal($fixture, [string]$manifest, $agent, [string]$target) {
+    $acl = Get-Acl -LiteralPath $target
+    $raw = [Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(), 0)
+    if ($acl.AreAccessRulesProtected -or ($raw.ControlFlags -band 0x500) -ne 0x400 -or @($acl.GetAccessRules($false, $true, [Security.Principal.SecurityIdentifier])).Count -eq 0 -or @($acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])).Count -ne 0) { throw 'Genuine inherited AI fixture missing before refusal' }
+    $baseline = Get-ConfigurationSnapshot $fixture $manifest
+    $initial = Invoke-ConfigurationFixture @('diagnose-success', '--manifest', $manifest, '--agent', $agent.id) | ConvertFrom-Json
+    if (-not $initial.targetOriginalBytes -or $initial.backupCount -ne 0) { throw 'Inherited refusal fixture has unexpected prior writes' }
+    Check-Gui 'configuration-inherited-refusal-gemini-start' -KeepOpen
+    Set-QwenPath '搜索 Agent' $agent.name
+    $null = Wait-QwenControl ("应用默认配置 " + $agent.name) ([Windows.Automation.ControlType]::Button)
+    if ((Get-ConfigurationSnapshot $fixture $manifest) -cne $baseline) { throw 'Discovery changed inherited fixture' }
+    Click-Qwen ("应用默认配置 " + $agent.name)
+    Confirm-ConfigurationOnce $agent.name
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    $category = 'no-known-configuration-error'
+    do {
+        $text = Get-InstallAccessibleText
+        if ($text.Contains('默认 profile 配置操作已完成（写前备份）。')) { throw 'Unsupported inherited configuration displayed success' }
+        $category = Get-ConfigurationFailureCategory $text
+        if ($category -in @('staging-dacl-verification-acl-bytes', 'staging-dacl-verification-acl-and-control')) { break }
+        if ($category -ne 'no-known-configuration-error') { throw 'Unexpected inherited configuration error category' }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($category -notin @('staging-dacl-verification-acl-bytes', 'staging-dacl-verification-acl-and-control')) { throw 'Expected inherited DACL refusal missing' }
+    $null = Wait-QwenControl ("应用默认配置 " + $agent.name) ([Windows.Automation.ControlType]::Button)
+    if ((Get-ConfigurationSnapshot $fixture $manifest) -cne $baseline) { throw 'Refused inherited configuration changed fixture metadata or bytes' }
+    Stop-App
+    $state = Invoke-ConfigurationFixture @('diagnose-success', '--manifest', $manifest, '--agent', $agent.id) | ConvertFrom-Json
+    if ((Get-ConfigurationSnapshot $fixture $manifest) -cne $baseline -or -not $state.targetOriginalBytes -or $state.backupCount -ne 0) { throw 'Refused inherited configuration left writes or backups' }
+    $entry = @{ agent = $agent.id; confirmations = 1; category = $category; genuineInheritedAi = $true; inheritedDifferentParentPolicyUnsupported = $true; protectedSuccessRequiresSeparateTestPreparation = $true; sourceAndInactiveBytesIdentitySecurityPreserved = $true; noPerFileBackupCreated = $true; officialAgentExecuted = $false; passed = $true }
+    $entry | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'configuration-inherited-dacl-refusal.json') -Encoding utf8
+    Record 'configuration-inherited-dacl-refusal' $entry
+    return $entry
+}
 function Check-ConfigurationDaclPreservation([string]$manifest) {
     Stop-App
     $stage = 'configuration-success-dacl-preservation'
@@ -114,6 +148,21 @@ function Check-ConfigurationDaclPreservation([string]$manifest) {
         $inactiveBaseline = Get-InactiveConfigurationSnapshot $fixture $manifest
         foreach ($agent in $agents) {
             $target = Join-Path $fixture.home $agent.file
+            if (-not $agent.protected) {
+                $beforeAcl = Get-Acl -LiteralPath $target
+                $before = Get-ConfigurationDacl $target
+                $beforeOwner = $beforeAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+                $beforeGroup = $beforeAcl.GetGroup([Security.Principal.SecurityIdentifier]).Value
+                $result.inheritanceRefusal = Check-InheritedConfigurationRefusal $fixture $manifest $agent $target
+                # Test setup only, after the product proved it refuses without
+                # changing permissions. Author a separate supported protected case.
+                $parentBeforeProtection = (Get-Acl -LiteralPath (Split-Path $target)).Sddl
+                $protectedAcl = [Security.AccessControl.FileSecurity]::new()
+                $protectedAcl.SetAccessRuleProtection($true, $false)
+                $protectedAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($owner, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow))
+                Set-Acl -LiteralPath $target -AclObject $protectedAcl
+                if ((Get-Acl -LiteralPath (Split-Path $target)).Sddl -cne $parentBeforeProtection -or (Get-InactiveConfigurationSnapshot $fixture $manifest) -cne $inactiveBaseline) { throw 'Target-only fixture protection changed parent or inactive targets' }
+            }
             $beforeAcl = Get-Acl -LiteralPath $target
             $before = Get-ConfigurationDacl $target
             $beforeOwner = $beforeAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value
@@ -128,7 +177,7 @@ function Check-ConfigurationDaclPreservation([string]$manifest) {
             if ($agent.protected) {
                 $rules = @($beforeAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
                 if (-not $beforeAcl.AreAccessRulesProtected -or $rules.Count -ne 1 -or $rules[0].IdentityReference -ne $owner -or $otherParentGrants.Count -eq 0 -or $before -ceq (Get-ConfigurationDacl (Split-Path $target))) { throw 'Fixture does not contrast restrictive file DACL with broader parent' }
-            } elseif ($beforeAcl.AreAccessRulesProtected -or @($beforeAcl.GetAccessRules($false, $true, [Security.Principal.SecurityIdentifier])).Count -eq 0 -or @($beforeAcl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])).Count -ne 0) { throw 'Ordinary inherited DACL fixture missing' }
+            } elseif (-not $beforeAcl.AreAccessRulesProtected) { throw 'Authored protected Gemini DACL fixture missing' }
             Check-Gui ("configuration-dacl-" + $agent.id + '-start') -KeepOpen
             Set-QwenPath '搜索 Agent' $agent.name
             $null = Wait-QwenControl ("应用默认配置 " + $agent.name) ([Windows.Automation.ControlType]::Button)
@@ -152,7 +201,7 @@ function Check-ConfigurationDaclPreservation([string]$manifest) {
                 $closedAcl = Get-Acl -LiteralPath $checkedPath
                 if ($closedAcl.AreAccessRulesProtected -ne $beforeAcl.AreAccessRulesProtected -or $closedAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $beforeOwner -or $closedAcl.GetGroup([Security.Principal.SecurityIdentifier]).Value -cne $beforeGroup) { throw 'DACL protection state, owner or primary group changed while closing application' }
             }
-            $entry = @{ agent = $agent.id; confirmations = 1; successfulManagedContent = $true; daclPreserved = $true; protectionPreserved = $true; protectedFixture = $agent.protected; sourceAutoInherited = $sourceAutoInherited; sourceAutoInheritRequired = $sourceAutoInheritRequired; ownerPreserved = $true; primaryGroupPreserved = $true; backupOriginalBytesAndDaclPreserved = $true; inactiveSettingsAndPreviousAliasesPreserved = $true; versionOnlyProbes = $verified.versionOnlyProbes; officialAgentExecuted = $false }
+            $entry = @{ agent = $agent.id; confirmations = 1; successfulManagedContent = $true; daclPreserved = $true; protectionPreserved = $true; protectedFixture = $true; testAuthoredProtection = -not $agent.protected; sourceAutoInherited = $sourceAutoInherited; sourceAutoInheritRequired = $sourceAutoInheritRequired; ownerPreserved = $true; primaryGroupPreserved = $true; backupOriginalBytesAndDaclPreserved = $true; inactiveSettingsAndPreviousAliasesPreserved = $true; versionOnlyProbes = $verified.versionOnlyProbes; officialAgentExecuted = $false }
             $result.agents += $entry
             Record ("configuration-dacl-" + $agent.id) $entry
         }

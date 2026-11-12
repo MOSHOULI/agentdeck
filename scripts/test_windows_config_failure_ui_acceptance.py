@@ -85,8 +85,8 @@ class Tests(unittest.TestCase):
         script = (ROOT / 'scripts/windows-config-dacl-ui-acceptance.ps1').read_text(encoding='utf-8')
         self.assertIn("'windows-config-dacl-ui-acceptance.ps1'", LIFECYCLE)
         self.assertLess(SCRIPT.index('$result.hardlinks ='), SCRIPT.index('$result.successfulDacl ='))
-        self.assertEqual(script.count('Confirm-ConfigurationOnce $agent.name'), 1)
-        self.assertEqual(script.count('Click-Qwen ("应用默认配置 " + $agent.name)'), 1)
+        self.assertEqual(script.count('Confirm-ConfigurationOnce $agent.name'), 2)
+        self.assertEqual(script.count('Click-Qwen ("应用默认配置 " + $agent.name)'), 2)
         for required in ('AccessControlSections]::Access', 'AreAccessRulesProtected', '$otherParentGrants.Count -eq 0',
                          '$rules.Count -ne 1', '$rules[0].IdentityReference -ne $owner',
                          '$beforeOwner', 'Get-ConfigurationDacl $verified.backup',
@@ -111,11 +111,24 @@ class Tests(unittest.TestCase):
         self.assertIn('$parentAcl.SetAccessRuleProtection($true, $false)', script)
         self.assertIn('[Security.AccessControl.InheritanceFlags]::ObjectInherit -bor [Security.AccessControl.InheritanceFlags]::ContainerInherit', script)
         self.assertIn('$childAcl.SetAccessRuleProtection($false, $false)', script)
-        self.assertIn('@($beforeAcl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])).Count -ne 0', script)
+        self.assertIn('@($acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])).Count -ne 0', script)
         baseline_position = script.index('$inactiveBaseline = Get-InactiveConfigurationSnapshot')
         self.assertLess(script.index('Set-Acl -LiteralPath $target -AclObject $childAcl'), baseline_position)
         self.assertLess(script.index('Set-Acl -LiteralPath (Split-Path $target) -AclObject $parentAcl'), baseline_position)
-        self.assertNotIn('Set-Acl ', script[baseline_position:])
+        self.assertEqual(script[baseline_position:].count('Set-Acl '), 1)
+        self.assertIn('Set-Acl -LiteralPath $target -AclObject $protectedAcl', script[baseline_position:])
+        refusal = script.split('function Check-InheritedConfigurationRefusal', 1)[1].split('function Check-ConfigurationDaclPreservation', 1)[0]
+        self.assertEqual(refusal.count('Confirm-ConfigurationOnce $agent.name'), 1)
+        self.assertNotIn('Set-Acl ', refusal)
+        self.assertEqual(refusal.count('(Get-ConfigurationSnapshot $fixture $manifest) -cne $baseline'), 3)
+        self.assertIn('$state.backupCount -ne 0', refusal)
+        self.assertIn('inheritedDifferentParentPolicyUnsupported = $true', refusal)
+        self.assertIn('protectedSuccessRequiresSeparateTestPreparation = $true', refusal)
+        self.assertIn('configuration-inherited-dacl-refusal.json', refusal)
+        self.assertLess(refusal.index('    Stop-App'), refusal.index('$state.backupCount -ne 0'))
+        self.assertIn('testAuthoredProtection = -not $agent.protected', script)
+        self.assertLess(script.index('$result.inheritanceRefusal = Check-InheritedConfigurationRefusal'), script.index('Set-Acl -LiteralPath $target -AclObject $protectedAcl'))
+
 
 
         self.assertIn("file = '.claude/CLAUDE.md'; protected = $true", script)
