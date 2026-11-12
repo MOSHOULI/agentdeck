@@ -118,6 +118,38 @@ def run_deploy(cli, cache, destination, token, env, trace, *, reject=False):
     return result
 
 
+def run_inspect(cli, destination, env, trace, state):
+    command = ['/usr/bin/strace', '-f', '-qq', '-s', '4096', '-o', str(trace),
+               '-e', 'trace=execve,execveat', str(cli), 'qoder', 'inspect-deployment',
+               '--deployment', str(destination)] + complete.release_args()
+    result = complete.run_cli(command, env)
+    check_trace(trace, cli)
+    expected = {'version': complete.pinned.VERSION, 'target': 'linux-amd64-baseline',
+                'state': state, 'payload_bytes': complete.PAYLOAD_BYTES,
+                'payload_sha256': complete.PAYLOAD_SHA256, 'execution_verified': False,
+                'activated': False, 'ownership_proven': False, 'deletion_authorized': False,
+                'repair_authorized': False, 'manual_review_required': True}
+    exact_fields(result, expected, limitations=True)
+    return result
+
+
+def alter_authored_payload(destination):
+    # Only this harness's previously validated, disposable deployment. Preserve
+    # size/mode, flip one byte and retain the changed file; never execute it.
+    payload = destination / 'qodercli'
+    before = payload.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size < 1:
+        raise Failure('unsafe_tamper_fixture')
+    fd = os.open(payload, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'r+b') as stream:
+        if identity(os.fstat(stream.fileno())) != identity(before): raise Failure('file_changed')
+        original = stream.read(1)
+        stream.seek(0); stream.write(bytes([original[0] ^ 1])); stream.flush(); os.fsync(stream.fileno())
+    after = payload.lstat()
+    if (after.st_dev, after.st_ino, after.st_mode, after.st_size) != (before.st_dev, before.st_ino, before.st_mode, before.st_size):
+        raise Failure('tamper_fixture_replaced')
+
+
 # Product report and directory validators follow the fixed reviewed CLI contract.
 OUTCOME = {'state': 'private_executable_deployed_not_activated', 'version': complete.pinned.VERSION,
            'target': 'linux-amd64-baseline', 'executable_mode': '0700',
@@ -194,9 +226,10 @@ def run(cli, archive, evidence):
     cache_root = root / 'caches'; cache_root.mkdir(mode=0o700)
     report = {'passed': False, 'version': complete.pinned.VERSION, 'target': 'linux-amd64-baseline',
               'latest_version_claimed': False, 'harness_invokes_qoder': False, 'traced_steps_qoder_executed': None,
-              'boundary': 'Trace covers stage, unpack, preview, deploy and repeated deploy; configuration comparison covers synthetic HOME. Fixed private deployment, not runtime, login, PATH activation, service validation or proof of no other system side effects.',
+              'boundary': 'Trace covers stage, unpack, preview, deploy, repeated deploy and missing/verified/tampered read-only inspection; configuration comparison covers synthetic HOME. Tamper case flips one byte in the harness-owned disposable payload and retains it; inspection must not repair it. Fixed private deployment, not runtime, login, PATH activation, service validation or proof of no other system side effects.',
               'source_unchanged': False, 'configuration_unchanged': False,
-              'repeat_rejected_unchanged': False, 'preview_unchanged': False, 'preview_exec_count': 0, 'deploy_exec_count': 0, 'repeat_exec_count': 0}
+              'repeat_rejected_unchanged': False, 'preview_unchanged': False, 'preview_exec_count': 0, 'deploy_exec_count': 0, 'repeat_exec_count': 0, 'inspection_exec_count': 0, 'inspection_missing_unchanged': False,
+              'inspection_verified_unchanged': False, 'inspection_tampered_rejected_unchanged': False}
     try:
         before_home = snapshot(home)
         before_archive = (identity(archive.lstat()), complete.file_digest(archive, complete.pinned.SIZE, (complete.pinned.SIZE, complete.pinned.SHA256)))
@@ -214,6 +247,10 @@ def run(cli, archive, evidence):
         before_cache = snapshot(cache_root)
         if snapshot(home) != before_home: raise Failure('preparation_changed_config')
         destination = root / 'private-deployment'
+        run_inspect(cli, destination, env, root / 'inspect-missing.trace', 'missing')
+        if os.path.lexists(destination) or snapshot(cache_root) != before_cache or snapshot(home) != before_home:
+            raise Failure('missing_inspection_changed_state')
+        report.update(inspection_missing_unchanged=True, inspection_exec_count=1)
         token = run_preview(cli, caches['unpacked'], destination, env, root / 'preview.trace')
         if os.path.lexists(destination) or snapshot(cache_root) != before_cache or snapshot(home) != before_home:
             raise Failure('preview_changed_state')
@@ -223,6 +260,10 @@ def run(cli, archive, evidence):
         validate_destination(destination)
         report['deploy_exec_count'] = 1
         deployed = snapshot(destination)
+        run_inspect(cli, destination, env, root / 'inspect-verified.trace', 'payload_verified')
+        if snapshot(destination) != deployed or snapshot(cache_root) != before_cache or snapshot(home) != before_home:
+            raise Failure('verified_inspection_changed_state')
+        report.update(inspection_verified_unchanged=True, inspection_exec_count=2)
         if snapshot(cache_root) != before_cache: raise Failure('source_cache_changed')
         if snapshot(home) != before_home: raise Failure('configuration_changed')
         run_deploy(cli, caches['unpacked'], destination, token, env, root / 'repeat.trace', reject=True)
@@ -230,6 +271,13 @@ def run(cli, archive, evidence):
         if snapshot(destination) != deployed: raise Failure('repeated_deployment_changed_output')
         if snapshot(cache_root) != before_cache: raise Failure('source_cache_changed')
         if snapshot(home) != before_home: raise Failure('configuration_changed')
+        alter_authored_payload(destination)
+        changed = snapshot(destination)
+        if changed == deployed: raise Failure('tamper_fixture_not_changed')
+        run_inspect(cli, destination, env, root / 'inspect-tampered.trace', 'unsupported_or_changed')
+        if snapshot(destination) != changed or snapshot(cache_root) != before_cache or snapshot(home) != before_home:
+            raise Failure('tampered_inspection_changed_state')
+        report.update(inspection_tampered_rejected_unchanged=True, inspection_exec_count=3)
         after_archive = (identity(archive.lstat()), complete.file_digest(archive, complete.pinned.SIZE, (complete.pinned.SIZE, complete.pinned.SHA256)))
         if before_archive != after_archive: raise Failure('source_archive_changed')
         report.update(passed=True, traced_steps_qoder_executed=False, source_unchanged=True, configuration_unchanged=True,

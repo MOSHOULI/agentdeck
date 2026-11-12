@@ -12,7 +12,10 @@ import qoder_complete_fixtures as complete
 
 STAGES = ('preview_cancel', 'input_invalidates_preview', 'stale_destination_rejected',
           'confirmed_private_deployment', 'existing_destination_rejected',
-          'clear_preserves_files', 'navigation_invalidates_preview')
+          'clear_preserves_files', 'navigation_invalidates_preview',
+          'deployment_inspection_verified', 'deployment_inspection_edit_invalidated',
+          'deployment_inspection_conflict', 'deployment_inspection_clear_invalidated',
+          'deployment_inspection_cancel_discards')
 PANEL = "//section[@aria-label='Qoder 私有可执行部署']"
 SOURCE = "//*[@id='qoder-deploy-source']"
 DESTINATION = "//*[@id='qoder-deploy-destination']"
@@ -27,6 +30,10 @@ BUTTONS = {
     'cancel': '取消 Qoder 部署确认',
     'clear': '清除 Qoder 部署选择与结果',
 }
+INSPECT_PATH = "//*[@id='qoder-inspect-deployment']"
+INSPECT_RESULT = "//*[@data-testid='qoder-deployment-inspection-result']"
+INSPECT_BUTTON = "//button[text()='只读检查 Qoder 私有部署']"
+INSPECT_CLEAR = "//button[text()='清除 Qoder 部署检查']"
 SUCCESS = 'Qoder 私有可执行文件部署已完成；未激活、未运行。'
 
 
@@ -150,4 +157,38 @@ def exercise(driver, source, root, config_root, records, phase=lambda value: Non
     if deployment.snapshot(root) != before or os.path.lexists(future):
         raise DeploymentGuiFailure('deployment_navigation_changed_files')
     record('navigation_invalidates_preview')
+    # Observe actual deployed bytes via native UI/IPC; never execute the payload.
+    def inspect(target, expected):
+        driver.type(INSPECT_PATH, str(target))
+        driver.wait(lambda: driver.value(INSPECT_PATH) == str(target))
+        activate(driver, INSPECT_BUTTON)
+        driver.wait(lambda: len(driver.elements(INSPECT_RESULT + "[@data-state='" + expected + "']")) == 1, seconds=120)
+        if deployment.snapshot(root) != before:
+            raise DeploymentGuiFailure('deployment_inspection_changed_files')
+    phase('qoder_deployment_inspection_verified')
+    inspect(destination, 'payload_verified')
+    record('deployment_inspection_verified')
+    driver.type(INSPECT_PATH, str(stale))
+    driver.wait(lambda: not driver.elements(INSPECT_RESULT))
+    record('deployment_inspection_edit_invalidated')
+    phase('qoder_deployment_inspection_conflict')
+    inspect(stale, 'unsupported_or_changed')
+    record('deployment_inspection_conflict')
+    activate(driver, INSPECT_CLEAR)
+    driver.wait(lambda: driver.value(INSPECT_PATH) == '' and not driver.elements(INSPECT_RESULT))
+    if deployment.snapshot(root) != before:
+        raise DeploymentGuiFailure('deployment_inspection_clear_changed_files')
+    record('deployment_inspection_clear_invalidated')
+    driver.type(INSPECT_PATH, str(destination))
+    driver.wait(lambda: driver.value(INSPECT_PATH) == str(destination))
+    activate(driver, INSPECT_BUTTON)
+    # Always-present clear discards either pending or already-settled response.
+    # Do not assume the native read can be interrupted or that it was still pending.
+    activate(driver, INSPECT_CLEAR)
+    driver.wait(lambda: driver.value(INSPECT_PATH) == '' and not driver.elements(INSPECT_RESULT))
+    driver.type(INSPECT_PATH, str(destination))
+    driver.wait(lambda: driver.enabled(INSPECT_BUTTON), seconds=120)
+    if driver.elements(INSPECT_RESULT) or deployment.snapshot(root) != before:
+        raise DeploymentGuiFailure('deployment_inspection_cancel_revived_or_changed_files')
+    record('deployment_inspection_cancel_discards')
     assert_coverage(records)

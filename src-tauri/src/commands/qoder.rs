@@ -225,9 +225,57 @@ pub async fn deploy_qoder_private(
     .await
     .map_err(|_| "QODER_DEPLOY_UNCONFIRMED_PARTIAL_POSSIBLE".to_string())?
 }
+/// Observation only. Shares the in-memory write guard without creating filesystem locks.
+#[tauri::command]
+pub async fn inspect_qoder_deployment(
+    deployment_path: String,
+    release: Option<String>,
+) -> Result<aisync_core::qoder::deployment::DeploymentInspection, String> {
+    let release = selected_release(release)?;
+    validate_deployment_paths(&deployment_path, &deployment_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = CACHE_WRITE
+            .try_lock()
+            .map_err(|_| "QODER_DEPLOY_BUSY".to_string())?;
+        aisync_core::qoder::deployment::inspect_for_release(
+            release,
+            std::path::Path::new(&deployment_path),
+        )
+        .map_err(|_| "QODER_DEPLOY_INSPECTION_UNAVAILABLE".to_string())
+    })
+    .await
+    .map_err(|_| "QODER_DEPLOY_INSPECTION_UNAVAILABLE".to_string())?
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn deployment_inspection_rejects_unreviewed_release_and_invalid_paths_before_io() {
+        let result = tauri::async_runtime::block_on(inspect_qoder_deployment(
+            "/not-read".into(),
+            Some("latest".into()),
+        ));
+        assert_eq!(result.unwrap_err(), "QODER_UNREVIEWED_RELEASE");
+        for path in ["", "relative", "/bad\npath"] {
+            let result = tauri::async_runtime::block_on(inspect_qoder_deployment(
+                path.into(),
+                Some("1.1.85".into()),
+            ));
+            assert_eq!(result.unwrap_err(), "QODER_DEPLOY_INVALID_REQUEST");
+        }
+    }
+    #[test]
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    fn deployment_inspection_respects_native_write_exclusion() {
+        let guard = CACHE_WRITE.lock().unwrap();
+        let result = tauri::async_runtime::block_on(inspect_qoder_deployment(
+            "/not-read".into(),
+            Some("1.1.85".into()),
+        ));
+        assert_eq!(result.unwrap_err(), "QODER_DEPLOY_BUSY");
+        drop(guard);
+    }
+
     #[test]
     fn explicit_release_selection_defaults_old_and_rejects_unknown_before_io() {
         assert_eq!(selected_release(None).unwrap(), "1.1.85");

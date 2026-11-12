@@ -476,3 +476,12 @@ fn unchanged_output(file: &File, baseline: &Metadata, bytes: u64) -> Result<()> 
 }
 #[cfg(test)]
 mod tests;
+
+#[path = "inspection.rs"]
+mod inspection;
+pub(super) fn inspect(
+    reviewed: distribution::ReviewedRelease,
+    path: &Path,
+) -> std::result::Result<DeploymentInspectionState, DeploymentInspectionError> {
+    inspection::inspect(reviewed, path)
+}

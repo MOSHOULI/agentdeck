@@ -129,3 +129,35 @@ Qoder 工作区新增独立私有部署区域。先真实只读预览并展示�
 但它不是当前文件扫描、所有权或清理授权；不持久保存确认token。
 任何失败都保留“可能已有可执行部分文件”的警告；不自动回滚、删除、激活或执行。
 Windows等非Linux x86_64主机明确拒绝。本功能不代表Qoder运行、登录或兼容性验收。
+
+## Read-only deployment recheck / 只读部署重验
+
+```sh
+aisync qoder inspect-deployment --release 1.1.86 --deployment /absolute/private-parent/deployment
+```
+
+After restarting, explicitly select a previously deployed directory and its reviewed
+release (1.1.85 default, or 1.1.86). No source cache is required. `payload_verified`
+means this observation matched the fixed official payload length/SHA-256, strict
+intent/completion records, exact three-member inventory and private filesystem
+metadata. It does **not** establish who installed it, signature authenticity,
+activation, runtime compatibility or authentication. Records remain unsigned.
+`missing`, `incomplete`, and `unsupported_or_changed` are preservation observations,
+not cleanup or retry permission. Exit zero means a report was produced, not success
+of installation. Unknown releases/hosts and invalid explicit paths return errors.
+
+The operation opens no-follow handles, checks current-user ownership, 0700 directory
+and payload modes, 0600 single-link records, no extended attributes, and rechecks
+identities/metadata/inventory after hashing. It never executes Qoder, creates locks,
+changes permissions, repairs or removes files. Access times may change; no atomic
+snapshot or protection against all same-user races is claimed. Reports always set
+`execution_verified`, `activated`, `ownership_proven`, `deletion_authorized` and
+`repair_authorized` to false, and `manual_review_required` to true. Payload fields
+are the selected reviewed expectation, not evidence on non-verified states.
+
+重启后显式选择既有部署目录与已审核版本即可重验，不需要原缓存。
+`payload_verified` 只表示本次固定官方字节、严格记录和私有文件元数据匹配，
+不代表安装所有权、签名、激活、运行兼容或认证成功。其他状态仅供保留与人工检查，
+退出码为零只代表成功生成报告，不授予清理、修复或原地重试权限。
+不执行 Qoder、不写锁、不修改权限或任何内容；读取可能更新访问时间，不能排除全部
+同用户竞态。报告中的 payload 长度/hash 是所选版本的预期，失败状态不证明实际匹配。
