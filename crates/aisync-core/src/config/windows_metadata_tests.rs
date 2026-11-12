@@ -14,6 +14,11 @@ fn wide(path: &Path) -> Vec<u16> {
 
 fn restrict(path: &Path) {
     set_dacl(path, "D:P(A;;FA;;;OW)");
+    assert_eq!(
+        acl(path).2,
+        SE_DACL_PROTECTED,
+        "legacy fixture must be protected without AUTO_INHERITED or AUTO_INHERIT_REQ"
+    );
 }
 
 fn set_dacl(path: &Path, sddl: &str) {
@@ -49,7 +54,7 @@ fn set_dacl(path: &Path, sddl: &str) {
     );
 }
 
-fn acl(path: &Path) -> (Vec<u8>, bool) {
+fn acl(path: &Path) -> (Vec<u8>, bool, u16) {
     let mut needed = 0;
     unsafe {
         GetFileSecurityW(
@@ -105,6 +110,7 @@ fn acl(path: &Path) -> (Vec<u8>, bool) {
     (
         unsafe { std::slice::from_raw_parts(dacl.cast::<u8>(), (*dacl).AclSize as usize).to_vec() },
         control & SE_DACL_PROTECTED != 0,
+        control & (SE_DACL_PROTECTED | 0x0400 | 0x0100),
     )
 }
 
@@ -192,6 +198,10 @@ fn windows_configuration_inherited_dacl_survives_write_and_backup() {
     let (home, target) = fixture("inherited");
     let before = acl(&target);
     assert!(!before.1, "fixture must retain ordinary inheritance");
+    assert_eq!(
+        before.2, 0x0400,
+        "ordinary fixture must have AI without P or AR"
+    );
     let backup = backup_file_in(&target, &home).unwrap().unwrap();
     assert_eq!(acl(&backup), before);
     inject_in_home(Format::PlainText, &target, "updated", &home).unwrap();
@@ -347,4 +357,173 @@ fn windows_configuration_conditional_dacl_refuses_before_backup_or_write() {
     assert!(!home.join(".agentdeck/backups").exists());
     restrict(&target);
     fs::remove_dir_all(home).unwrap();
+}
+
+fn current_user_sid() -> String {
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        Security::{
+            Authorization::ConvertSidToStringSidW, GetTokenInformation, TOKEN_QUERY, TOKEN_USER,
+            TokenUser,
+        },
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+    let mut token = std::ptr::null_mut();
+    assert_ne!(
+        unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) },
+        0
+    );
+    let mut needed = 0;
+    unsafe {
+        GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut needed);
+    }
+    assert!(needed > 0 && needed < 65536);
+    let mut storage = vec![0usize; (needed as usize).div_ceil(std::mem::size_of::<usize>())];
+    let result = unsafe {
+        GetTokenInformation(
+            token,
+            TokenUser,
+            storage.as_mut_ptr().cast(),
+            needed,
+            &mut needed,
+        )
+    };
+    unsafe {
+        CloseHandle(token);
+    }
+    assert_ne!(result, 0);
+    let user = unsafe { &*storage.as_ptr().cast::<TOKEN_USER>() };
+    let mut text = std::ptr::null_mut();
+    assert_ne!(
+        unsafe { ConvertSidToStringSidW(user.User.Sid, &mut text) },
+        0
+    );
+    let mut length = 0;
+    while unsafe { *text.add(length) } != 0 {
+        length += 1;
+    }
+    let result = String::from_utf16(unsafe { std::slice::from_raw_parts(text, length) }).unwrap();
+    unsafe {
+        LocalFree(text.cast());
+    }
+    result
+}
+
+fn restrict_with_modern_file_api(path: &Path) {
+    use windows_sys::Win32::Security::Authorization::{SE_FILE_OBJECT, SetNamedSecurityInfoW};
+    let sddl: Vec<u16> = format!("D:P(A;;FA;;;{})", current_user_sid())
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let mut descriptor = std::ptr::null_mut();
+    assert_ne!(
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                1,
+                &mut descriptor,
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    let mut present = 0;
+    let mut defaulted = 0;
+    let mut dacl = std::ptr::null_mut();
+    assert_ne!(
+        unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut dacl, &mut defaulted) },
+        0
+    );
+    assert_ne!(present, 0);
+    assert!(!dacl.is_null());
+    // Same named-file API and protection flags used by .NET FileSecurity.Persist.
+    let result = unsafe {
+        SetNamedSecurityInfoW(
+            wide(path).as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            dacl,
+            std::ptr::null(),
+        )
+    };
+    unsafe {
+        LocalFree(descriptor);
+    }
+    assert_eq!(result, 0);
+    assert_eq!(
+        acl(path).2,
+        SE_DACL_PROTECTED | 0x0400,
+        "must reproduce protected+AUTO_INHERITED, without AR"
+    );
+}
+
+#[test]
+fn windows_configuration_modern_protected_ai_preserves_write_backup_and_rollback() {
+    for action in ["write", "backup", "rollback"] {
+        let (home, target) = fixture(action);
+        restrict_with_modern_file_api(&target);
+        let before = acl(&target);
+        let original_security = windows_security::Security::read_path(&target).unwrap();
+        match action {
+            "backup" => {
+                let backup = backup_file_in(&target, &home).unwrap().unwrap();
+                assert_eq!(
+                    fs::read(&backup).unwrap(),
+                    b"original synthetic instructions"
+                );
+                assert_eq!(acl(&backup), before);
+                assert_eq!(
+                    windows_security::Security::read_path(&backup).unwrap(),
+                    original_security
+                );
+            }
+            "write" => {
+                inject_in_home(
+                    Format::PlainText,
+                    &target,
+                    "updated synthetic instructions",
+                    &home,
+                )
+                .unwrap();
+                assert_eq!(
+                    fs::read(&target).unwrap(),
+                    b"updated synthetic instructions"
+                );
+            }
+            "rollback" => {
+                let mut journal = Vec::new();
+                inject_journaled(
+                    Format::PlainText,
+                    &target,
+                    "committed replacement",
+                    Some(&home),
+                    &mut journal,
+                )
+                .unwrap();
+                assert_eq!(journal.len(), 1);
+                assert_eq!(fs::read(&target).unwrap(), b"committed replacement");
+                let entry = journal.pop().unwrap();
+                rollback_security_checked(
+                    &entry.path,
+                    entry.before,
+                    entry.security,
+                    entry.committed_security,
+                )
+                .unwrap();
+                assert_eq!(
+                    fs::read(&target).unwrap(),
+                    b"original synthetic instructions"
+                );
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(acl(&target), before);
+        assert_eq!(
+            windows_security::Security::read_path(&target).unwrap(),
+            original_security
+        );
+        fs::remove_dir_all(home).unwrap();
+    }
 }

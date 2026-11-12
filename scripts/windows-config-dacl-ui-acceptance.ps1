@@ -100,6 +100,11 @@ function Check-ConfigurationDaclPreservation([string]$manifest) {
             $before = Get-ConfigurationDacl $target
             $beforeOwner = $beforeAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value
             $beforeGroup = $beforeAcl.GetGroup([Security.Principal.SecurityIdentifier]).Value
+            $sourceDescriptor = [Security.AccessControl.RawSecurityDescriptor]::new($beforeAcl.GetSecurityDescriptorBinaryForm(), 0)
+            $sourceAutoInherited = ($sourceDescriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited) -ne 0
+            $sourceAutoInheritRequired = ($sourceDescriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInheritRequired) -ne 0
+            if (-not $sourceAutoInherited -or $sourceAutoInheritRequired) { throw 'Expected native auto-inherited DACL control shape missing' }
+
             $parent = Get-Acl -LiteralPath (Split-Path $target)
             $otherParentGrants = @($parent.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object { $_.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and $_.IdentityReference -ne $owner })
             if ($agent.protected) {
@@ -129,7 +134,7 @@ function Check-ConfigurationDaclPreservation([string]$manifest) {
                 $closedAcl = Get-Acl -LiteralPath $checkedPath
                 if ($closedAcl.AreAccessRulesProtected -ne $beforeAcl.AreAccessRulesProtected -or $closedAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $beforeOwner -or $closedAcl.GetGroup([Security.Principal.SecurityIdentifier]).Value -cne $beforeGroup) { throw 'DACL protection state, owner or primary group changed while closing application' }
             }
-            $entry = @{ agent = $agent.id; confirmations = 1; successfulManagedContent = $true; daclPreserved = $true; protectionPreserved = $true; protectedFixture = $agent.protected; ownerPreserved = $true; primaryGroupPreserved = $true; backupOriginalBytesAndDaclPreserved = $true; inactiveSettingsAndPreviousAliasesPreserved = $true; versionOnlyProbes = $verified.versionOnlyProbes; officialAgentExecuted = $false }
+            $entry = @{ agent = $agent.id; confirmations = 1; successfulManagedContent = $true; daclPreserved = $true; protectionPreserved = $true; protectedFixture = $agent.protected; sourceAutoInherited = $sourceAutoInherited; sourceAutoInheritRequired = $sourceAutoInheritRequired; ownerPreserved = $true; primaryGroupPreserved = $true; backupOriginalBytesAndDaclPreserved = $true; inactiveSettingsAndPreviousAliasesPreserved = $true; versionOnlyProbes = $verified.versionOnlyProbes; officialAgentExecuted = $false }
             $result.agents += $entry
             Record ("configuration-dacl-" + $agent.id) $entry
         }

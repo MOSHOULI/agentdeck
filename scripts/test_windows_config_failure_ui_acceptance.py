@@ -102,6 +102,12 @@ class Tests(unittest.TestCase):
         close_checks = script.split('$closedAcl = Get-Acl', 1)[0]
         self.assertGreater(close_checks.rfind('Stop-App'), close_checks.rfind('Save-QwenEvidence'))
         self.assertIn('primaryGroupPreserved = $true', script)
+        self.assertIn('$sourceAutoInherited = ($sourceDescriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited) -ne 0', script)
+        self.assertIn('$sourceAutoInheritRequired = ($sourceDescriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInheritRequired) -ne 0', script)
+        self.assertIn("if (-not $sourceAutoInherited -or $sourceAutoInheritRequired) { throw 'Expected native auto-inherited DACL control shape missing' }", script)
+        self.assertLess(script.index("throw 'Expected native auto-inherited DACL control shape missing'"), script.index('            Check-Gui'))
+        self.assertIn('sourceAutoInherited = $sourceAutoInherited; sourceAutoInheritRequired = $sourceAutoInheritRequired;', script)
+
         self.assertIn("file = '.claude/CLAUDE.md'; protected = $true", script)
         self.assertIn("file = '.gemini/GEMINI.md'; protected = $false", script)
         for unsafe in ('executeScript', 'invoke_handler', '--remote-debugging', '--no-sandbox', 'Invoke-WebRequest'):

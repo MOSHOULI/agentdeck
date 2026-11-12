@@ -8,6 +8,7 @@ use std::{
 use windows_sys::Win32::{
     Foundation::{GENERIC_WRITE, HANDLE},
     Security::{
+        Authorization::{SE_FILE_OBJECT, SetSecurityInfo},
         DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION, GetKernelObjectSecurity,
         GetLengthSid, GetSecurityDescriptorControl, GetSecurityDescriptorDacl,
         GetSecurityDescriptorGroup, GetSecurityDescriptorOwner, IsValidAcl,
@@ -139,18 +140,58 @@ impl Security {
         } else {
             UNPROTECTED_DACL_SECURITY_INFORMATION
         };
-        // SetKernelObjectSecurity does not automatically propagate inheritance.
-        // Regardless of OS behavior, verify exact effective ACL/protection before bytes.
         let mut descriptor = self.descriptor.clone();
-        if unsafe {
-            SetKernelObjectSecurity(
-                file.as_raw_handle() as HANDLE,
-                DACL_SECURITY_INFORMATION | protection,
-                descriptor.as_mut_ptr().cast(),
-            )
-        } == 0
-        {
-            return Err(failure("staging DACL application failed"));
+        if self.control & SE_DACL_AUTO_INHERITED != 0 {
+            // Preserve the current file inheritance model, including protected+AI.
+            // SetKernelObjectSecurity loses AI on protected filesystem descriptors.
+            let mut present = 0;
+            let mut defaulted = 0;
+            let mut dacl = std::ptr::null_mut();
+            if unsafe {
+                GetSecurityDescriptorDacl(
+                    descriptor.as_mut_ptr().cast(),
+                    &mut present,
+                    &mut dacl,
+                    &mut defaulted,
+                )
+            } == 0
+                || present == 0
+                || dacl.is_null()
+                || defaulted != 0
+            {
+                return Err(failure("staging DACL extraction failed"));
+            }
+            // SAFETY: owned empty file handle; DACL belongs to the live aligned
+            // descriptor. Owner, group and SACL are deliberately not modified.
+            if unsafe {
+                SetSecurityInfo(
+                    file.as_raw_handle() as HANDLE,
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | protection,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    dacl,
+                    std::ptr::null(),
+                )
+            } != 0
+            {
+                return Err(failure("staging DACL application failed"));
+            }
+        } else {
+            // Bounded compatibility for legacy non-AI descriptors. The modern
+            // file API converts the inheritance model; that is not preservation.
+            // This legacy route is confined to our empty staging handle and
+            // still requires exact ACL/control/owner/group verification below.
+            if unsafe {
+                SetKernelObjectSecurity(
+                    file.as_raw_handle() as HANDLE,
+                    DACL_SECURITY_INFORMATION | protection,
+                    descriptor.as_mut_ptr().cast(),
+                )
+            } == 0
+            {
+                return Err(failure("staging DACL application failed"));
+            }
         }
         let observed = Self::read(file)?;
         if observed != *self {

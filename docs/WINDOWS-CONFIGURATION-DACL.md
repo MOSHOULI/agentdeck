@@ -15,6 +15,14 @@ owner-only DACL became an unprotected parent-derived DACL. The native core
 library suite reached 410 passed / 3 failed / 10 ignored; these were metadata
 assertion failures, not compilation or fixture setup failures.
 
+The next diagnostic run at `e8160e9f`
+([43123240254](https://github.com/MOSHOULI/agentdeck/actions/runs/43123240254))
+identified a separate refusal: the installed application's protected current-user
+fixture had `AUTO_INHERITED` set, while legacy staging lost that control bit.
+The reported category was `staging-dacl-verification-control-flags`. Original
+bytes, DACL controls, owner and group remained unchanged; no backup survived.
+This was a fail-closed compatibility issue, not a successful preservation result.
+
 ## Implemented boundary
 
 For existing regular files the writer reads the DACL and owner/group SIDs. It
@@ -30,8 +38,24 @@ and group match, applies the original DACL, and verifies the effective ACL bytes
 and protection/auto-inheritance control flags. It does not force every file to
 become protected. Unsupported or differing metadata fails closed.
 
-Staging handles request the rights needed to set and read the DACL. Source and
-staging security are rechecked before replacement; backup source/output handles
+Staging handles request the rights needed to set and read the DACL.
+Descriptors carrying `SE_DACL_AUTO_INHERITED` use handle-based
+[`SetSecurityInfo(SE_FILE_OBJECT)`](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setsecurityinfo),
+with the captured protected/unprotected flag. This includes protected+AI files
+created through the modern .NET file-security APIs. Exact readback remains
+mandatory, including AI/AR controls; no normalization discards a mismatch.
+
+For legacy non-AI descriptors, the existing `SetKernelObjectSecurity` path is
+retained solely as bounded compatibility. [Microsoft discourages that API for
+filesystem objects](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-setkernelobjectsecurity),
+but converting the descriptor to the modern inheritance model would change its
+captured controls. This path touches only our owned empty staging file handle,
+never an ancestor/directory or the original file; exact readback is required
+before bytes. No new pathname-based security setter or directory propagation
+is introduced. Native tests distinguish protected/no-AI, protected/AI and
+ordinary unprotected/AI fixtures; unsupported transformations are refused.
+
+Source and staging security are rechecked before replacement; backup source/output handles
 are also checked. Creation without an existing destination uses normal parent
 inheritance. No permissions of an existing user file are weakened or repaired.
 
@@ -55,6 +79,9 @@ Owner/group changes are refused rather than copied; SACLs, mandatory integrity
 labels, alternate data streams, encryption, compression and other extended
 metadata are not preserved or certified by this change. There is no atomic CAS,
 protection against concurrent hostile path/ACL mutation, crash recovery, or
-claim that Git-level backups preserve filesystem metadata. Backup errors may
+claim that Git-level backups preserve filesystem metadata. Empty staging is
+created with ordinary inheritance before its ACL is secured: an already-opened
+external handle is not revoked by changing the DACL. This is not an at-creation
+confidentiality or hostile concurrent-access guarantee. Backup errors may
 leave empty directories or an already secured partial backup if cleanup fails.
 Official Agent runtime and model/network calls are not part of this acceptance.
