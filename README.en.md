@@ -2,13 +2,15 @@
 
 [简体中文](README.md) | English
 
-This document describes the ongoing development source: installation-instance and source evidence, restricted npm installation, catalog corrections, and desktop/CLI DSH passive inventory. The published v1.1.1 installer does not include these increments. Confirm publication on the versioned Release page and compare `BUILD_COMMIT.txt` with the successful release CI commit. v1.2.0 was not released separately. The next installer will follow a larger, verified update; its version is not yet selected. See the historical [bilingual v1.2.0 preparation notes](docs/RELEASE-1.2.0.md).
+This source is the cumulative v1.2.0 release batch, requested for publication on 2026-11-12 before pausing development. The old v1.1.1 installer lacks these increments. Verify actual publication, exact build and limitations in the [bilingual release notes](docs/RELEASE-1.2.0.md) and versioned Release; source changes alone do not mean publication.
 
-This development branch also includes the [MCP toggle preflight and backup-order fix](docs/MCP-SAFETY.md), which has not shipped in a public installer. Validation uses synthetic fixtures only, not real agents or the desktop GUI.
+This batch also includes the [MCP toggle preflight and backup-order fix](docs/MCP-SAFETY.md), with publication status determined by the versioned Release. MCP-fix validation uses synthetic fixtures, not real Agent execution.
 
-**Next-development-version note:** This branch adds Qwen Code manual-install guidance and passive PATH candidate observation, not yet shipped in a public installer. A candidate does not establish a verified installation or login; Qwen Code automatic installation, runtime/source verification and general configuration writes remain unavailable; only the experimental CLI/desktop Vim preference apply/restore described below is available. See the [catalog source review](docs/REGISTRY-SOURCES.md#qwen-code-manual-installation-and-passive-path-discovery-only).
+**Batch scope:** This source includes Qwen Code manual-install guidance and passive PATH candidate observation, with publication status determined by the versioned Release. A candidate does not establish a verified installation or login; Qwen Code automatic installation, runtime/source verification and general configuration writes remain unavailable; only the experimental CLI/desktop Vim preference apply/restore described below is available. See the [catalog source review](docs/REGISTRY-SOURCES.md#qwen-code-manual-installation-and-passive-path-discovery-only).
 
-The catalog adds six [official manual-guidance entries](docs/MAINSTREAM-CATALOG.md) for Cursor, GitHub Copilot CLI, Kimi Code and Qoder CLI, separating CLI and desktop surfaces. Its 16 entries do not imply 16 managed integrations. New entries execute no probes and write no configuration; they have not shipped in a public installer.
+The catalog adds six [official manual-guidance entries](docs/MAINSTREAM-CATALOG.md) for Cursor, GitHub Copilot CLI, Kimi Code and Qoder CLI, separating CLI and desktop surfaces. Catalog entries do not imply complete managed integrations. New entries execute no probes and write no configuration; publication status is determined by the versioned Release.
+
+Qoder distribution and private deployment explicitly select reviewed 1.1.85 / 1.1.86 / 1.1.87; default remains 1.1.85. Relevant CLI commands accept `--release 1.1.87`, and the desktop has a reviewed-version selector. No cross-version migration or mixed cache/confirmation is allowed. Only Linux x64 baseline private file deployment is covered, without execution, login or PATH activation. See [deployment boundaries](docs/QODER-PRIVATE-DEPLOYMENT.md).
 
 Manage local AI agents from one desktop interface: discovery and installation, configuration, optional conversation-memory exports, encrypted keys, MCP, and configuration backups.
 
@@ -16,7 +18,7 @@ Manage local AI agents from one desktop interface: discovery and installation, c
 
 The catalog can filter currently available automatic installation, manual-only entries and observations needing confirmation. See [catalog filter guidance](docs/CATALOG-FILTERS.md).
 
-Desktop MCP toggles now offer a [change preview](docs/MCP-PREVIEW.md): review the target and action before confirming backup/write; stale previews are rejected. This summary is not a full configuration diff and has not shipped in a public installer.
+Desktop MCP toggles now offer a [change preview](docs/MCP-PREVIEW.md): review the target and action before confirming backup/write; stale previews are rejected. This summary is not a full configuration diff; publication status is determined by the versioned Release.
 
 ## Installation and startup
 
@@ -123,7 +125,7 @@ The reviewed two-line GLib backport, official source checks and three-profile na
 
 The test runner sets `AGENTDECK_TEST_HOME`, and core path resolution explicitly respects this absolute path. The Windows Known Folder API is not affected by ordinary HOME variables.
 
-**All tests use an isolated HOME. Do not run `--ignored` or `--include-ignored`.** The eight ignored manual/real-environment tests may install/uninstall third-party software, access sessions, or modify configuration. Normal CI uses only synthetic fixtures. The current installation-safety and DSH increments have not been validated through a real agent installation, desktop GUI workflow or real DSH execution; mocked IPC, temporary manifests and fake-process tests do not replace those checks.
+**Tests use isolated application data.** Do not indiscriminately run `--ignored` or `--include-ignored`: manual/real-environment tests can modify software, sessions or configuration. Current CI combines authored fixtures, non-executing official-payload checks, Windows installed-app acceptance and specific Linux WebView flows. These do not establish official Agent execution/login, real DSH operation or full Linux support. See the [current release boundaries](docs/RELEASE-1.2.0.md).
 
 CI validates the frontend, Linux core/CLI, and the full Windows workspace (including DPAPI), builds the NSIS installer, and records its SHA256 and source commit. Pull requests and merges to main do not automatically publish an installer. Publication requires manually triggering the workflow on main with `publish_release` explicitly enabled and passing all validation gates. CI then uploads a draft Release, downloads it again, and verifies the installer bytes, SHA256, build commit, and actual tag commit. It publishes only if all match. An existing Release, including a draft, or a tag pointing to another commit blocks publication for manual review; it is not overwritten or skipped as a successful publication.
 
