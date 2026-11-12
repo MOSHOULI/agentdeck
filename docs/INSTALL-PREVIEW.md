@@ -201,7 +201,8 @@ invocation before checking its exclusive marker, writes bounded partial package
 state, and exits unsuccessfully. The gate checks the production failure warning,
 consumed confirmation, no success claim, zero version probes, and unchanged
 partial bytes after a bounded wait, explicit list refresh and application restart.
-A subsequent preview is rejected because the partial package directory is occupied;
+A subsequent preview remains rejected while durable protection is armed; independent
+absent-only destination checks also refuse an occupied partial package directory;
 no confirmation or additional installation is allowed in that observed state.
 These checks prove no automatic retry or rollback in those observed flows; they
 do not implement repair, test a manually confirmed retry, or establish arbitrary
@@ -227,7 +228,7 @@ Windows 已安装应用门禁通过真实 WebView 和原生 UIAutomation 操作�
 独立失败替身在检查独占标记之前记录每次安装调用，写入有限部分文件后返回失败。
 门禁验证生产错误提示、确认已消耗、无成功提示、零版本探测，并在有限等待、应用重启、
 手动刷新列表后检查残留字节不变，证明这些被观察流程没有自动重试或回滚。
-重启后再次请求预览会因部分包目录被占用而拒绝，不出现安装确认，也不新增安装调用。
+重启后持久保护继续拒绝安装预览，不出现安装确认，也不新增安装调用；原有目标占用检查并未移除。
 这没有实现修复，也没有验收手动确认重试或任意安装器失败恢复；测试不删除残留以绕过失败。
 产品未生成持久安装所有权凭据；真实失败仍须先检查，再独立审核重试或手动恢复。
 
@@ -252,7 +253,7 @@ files and credentials. Do not infer that a directory can be deleted merely
 because it appeared in the reviewed plan. AgentDeck does not repair, roll back,
 uninstall or repeat the request from this panel. Where a later attempt is allowed,
 it still requires a fresh valid preview and separate confirmation, and occupied
-targets remain rejected. The Codex process-local suppression described below
+targets remain rejected. The Codex persistent suppression described below
 refuses further previews/install requests after attempted-dispatch failure;
 a fresh preview cannot clear that guard. Refreshing detection does not turn this historical record into an
 ownership claim. Restarting the application loses this session-only record.
@@ -266,48 +267,110 @@ ownership claim. Restarting the application loses this session-only record.
 请将记录的包、管理器、Node 和目标目录与当前本地状态及官方安装说明核对。
 保留不明文件和凭据，不因目录出现在预览中就认定可以删除。此面板不会修复、
 回滚、卸载或重复请求。在允许后续尝试的情况下，仍须重新取得有效预览并单独确认；
-目标占用仍会拒绝。下述 Codex 进程内门禁在已尝试调用安装器且失败后拒绝新的预览
+目标占用仍会拒绝。下述 Codex 持久门禁在已尝试调用安装器且失败后拒绝新的预览
 与安装请求，重新预览不能解除门禁。刷新检测不会让历史记录变成所有权证明；重启应用后会话记录不保留。
 
-### Failed Codex installation: process-local probe suppression
+### Persistent Codex installation protection and explicit recovery
 
-Before Codex's immediate post-install runtime probe, the exact reviewed root
-manifest is now checked. The existing manifest check after runtime/provenance
-inspection remains: a change during probing still rejects completion. This is
-an ordering guard, not publisher validation or protection against same-user races.
+The early and late exact root-manifest checks remain. The desktop additionally
+holds both the existing process-local gate and an exclusive OS-backed lease
+across each Codex list probe, installation preview, and complete installation
+attempt/postcheck. Normal simultaneous app instances cannot independently clear
+or ignore another lease. Contention, poison, unreadable state and failed path or
+identity/security checks mean suppression, not presumed absence or success.
+The final list projection rechecks durable state and removes runtime/source/auth
+evidence if protection is no longer clear. This is not an atomic UI snapshot
+against a transition after the final lease is released.
 
-The desktop additionally serializes this Codex row's list probe, preview and
-reviewed install under a process-local gate. The install gate arms eagerly to
-fail closed on panic. A typed core callback marks the boundary immediately before
-the installer subprocess is attempted. A normally returned preflight rejection
-before that callback restores the clear state, so a stale latest-version review
-can be refreshed and confirmed again in the same process. Once dispatch was
-attempted, any failed or uncertain installation/verification keeps this row
-suppressed. A successful attempt clears its own guard. An already suppressed
-process refuses later previews/install submissions; there is no reset endpoint.
+**New first-use side effect:** the normal Codex list/preview/install path initializes
+private `.agentdeck/install-protection/codex/gate.lock` and `state.json` under the
+application home. The record explicitly says `clear`, `armed`, or `failed_returned`.
+The fixed coordination lock is never removed during transitions. Existing invalid
+or partially missing state is not repaired or treated as clear. This metadata is
+not a package ownership receipt, credential vault, profile or backup. Merely
+opening the recovery preview uses existing-state-only access and creates nothing.
+This is not a migration of historical installation failures. First-use `clear`
+does not certify existing packages or recover failure information that older
+versions kept only in memory; only attempts recorded by this store are retained.
 
-While suppressed, automatic or manual list refresh and workspace navigation
-return an error/unknown Codex row with no instances, version, npm-source or auth
-proof, without running npm or Codex **for that row**. The existing failed-install
-residual inspection reference is separate and remains available on Windows.
-No residual files are removed, normalized, retried, or rolled back. List-probe
-contention and poisoned locks also fail closed. An already running Codex list
-probe holds the same gate, so installation cannot start concurrently with it.
-The complete list is rechecked/redacted after all other row projections; this
-is not an atomic UI snapshot against a transition after the final gate release.
+After both preflights, a fallible core gate receives the authoritative rebuilt
+preview. The durable store records the attempt and reviewed target before the
+installer can dispatch; a failed write/flush/validation prevents dispatch. A
+normally returned preflight failure before this point leaves the clear state
+unchanged, preserving stale-preview → fresh-preview behavior. Successful complete
+installation writes clear only for the matching attempt. Normal failed returns,
+after the bounded runner cleanup path has returned, record `failed_returned`.
+Panic or crash leaves `armed`; restarting does not clear that state. A crash may
+leave an installer descendant alive on platforms without parent-death containment,
+so **armed/unknown attempts are never eligible for in-app recovery**, even when
+slots currently look empty. This increment does not implement process repair.
 
-This protection is **not persisted across application restart**. Restart loses
-it and can resume ordinary probing; restarting is not verification or a safe
-repair operation. CLI/core callers do not acquire this desktop gate. Other
-Agent rows, custom registry aliases/shell recipes, other processes and adversarial
-filesystem changes are outside its scope. Other rows may still run their usual
-npm/version checks. No official Agent runtime or isolation guarantee follows
-from authored fixture acceptance.
+While blocked, refresh/navigation/restart returns an unknown/error Codex row
+without active npm or Agent probing for that row. No residual file is removed,
+normalized, retried or rolled back. The existing Windows session-only residual
+inspection remains separate; losing its UI history does not remove durable protection.
 
-桌面在 Codex 安装后执行版本探测前核验根 manifest，并保留探测后的再次核验。
-若已尝试启动安装器而安装或核验失败，本进程暂停该 Codex 条目的自动版本探测；
-刷新列表、切换页面不会绕过，旧预览或新的安装请求不能解除保护。明确发生在
-安装器调用前的预检拒绝仍允许重新预览。只返回未知状态，不伪造已安装、版本、
-来源或认证证据，不清理残留或自动重试。Windows 原有显式只读残留检查仍独立保留。
-该保护不跨应用重启；重启可能恢复普通探测，不等于修复或安全验证。其他条目、
-自定义别名、CLI、其他进程及恶意并发不在此进程内门禁的保证范围内。
+The separate “检查恢复探测条件” action reads trusted existing state, checks the
+recorded prefix identity, every fixed installation slot, and the complete current
+Codex PATH candidate set without running npm or an Agent. Unix checks the package
+directory and `bin/codex`; Windows also checks all supported launcher suffixes,
+including `.exe`, `.com`, and `.bat`, not only npm's three companions. Recovery is
+eligible only for a normally returned failure with unchanged trusted state/target
+and all affected slots and PATH candidates absent. Correct-looking manifests or
+version strings never authorize executing a remaining package.
+
+A fresh recovery revision binds those observations. “确认恢复 Codex 探测” rechecks
+under the lease and only then writes clear for that exact state. Cancel, stale
+revision, changed identity, occupied slots, incomplete scan or damaged record
+cannot clear it. The UI consumes confirmation before dispatch, never automatically
+retries uncertainty, and refreshes the list only after confirmed success. This
+restores permission for ordinary probing; it does not install or delete software,
+authenticate packages, prove runtime behavior, or automatically retry installation.
+Any later install requires its own fresh preview and explicit confirmation.
+
+An error during final clear-state replacement does not prove the old bytes remain:
+the clear record may have been committed before a later flush or identity check
+failed. The current process stays conservative; a later fresh open validates the
+actual on-disk state and may find clear. The UI therefore reports an unconfirmed
+protection state, never “unchanged” or automatic retry. Linux synchronizes file
+content and the containing directory; Windows uses its supported file flushing
+and replacement path without a portable directory-sync guarantee. Neither path
+claims universal power-loss durability.
+
+An already-running instance may retain its conservative in-memory suppression
+after another instance completes explicit recovery. This batch does not silently
+reconcile that memory gate. Only when read-only recovery inspection reports a
+validated durable `clear` record does the UI explain that reopening can read the
+already-cleared state. This is not a restart-based reset: `armed`, corrupt or
+unreadable durable records remain blocked after restart.
+
+These guards target the desktop's Codex row on supported Linux/Windows local
+filesystems. Other desktop platforms explicitly refuse Codex active inspection
+and installation rather than falling back to unprotected operation; macOS native
+acceptance is not claimed. CLI/core callers retain their existing behavior and do
+not acquire this desktop store. Custom registry aliases, other Agent rows and hostile
+same-user filesystem changes remain outside the guarantee. Other rows can perform
+their normal probes. State/lock deletion by an external actor, hardware/storage
+faults and arbitrary malicious races are not a tamper-proof or universal crash-
+durability guarantee. No #22 isolation boundary or installer publication gate changes.
+
+Storage tests kill an authored independent test process after arming and reopen
+the same record. Native desktop acceptance separately exercises normal exit and
+restart in the same home, plus explicitly prepared armed/corrupt fixture states;
+those prepared states are not evidence of an actual desktop crash. The positive
+recovery fixture deliberately moves only its own authored package/launcher slots
+aside while retaining the prefix identity, then uses the real review/confirmation
+flow. The product never performs that fixture cleanup or runs an official Agent.
+
+桌面首次正常检查 Codex 会创建固定的私有保护状态与协调锁；这不是零写入列表读取。
+不会追溯恢复旧版本只存在内存中的失败记录；首次 clear 不代表既有软件已经验证。
+安装器调用前必须完成持久 armed 记录，失败写入不得启动安装器。正常返回的失败记为
+failed_returned；崩溃或未知 armed 状态跨重启继续阻止该条目的 npm/Agent 探测，且不能
+仅凭槽为空在应用内解除，避免仍存活的安装器随后继续写入。明确的调用前预检拒绝
+仍允许重新预览。成功只释放匹配的本次尝试，不清理任何软件或配置。
+
+恢复是独立的只读检查与明确确认：必须记录可信、路径身份一致、所有固定安装槽及
+当前 PATH 候选均不存在。占用、损坏、无法访问、重定向或检查不完整一律保留保护。
+确认后仅允许恢复正常探测，不安装、不删除、不证明包真实性或运行安全；取消或
+过期确认不释放保护。重启不是清除或修复手段。普通多实例通过固定锁协调，但不声称
+抵抗恶意同用户/跨进程篡改，也不扩展到其他条目、别名或直接 CLI/core 调用。

@@ -13,6 +13,7 @@ import time
 import unittest
 from unittest.mock import patch
 import windows_install_fixture as h
+from install_protection_fixture import Failure as ProtectionFailure
 
 def remove_owned_node_copy(path, temporary_root):
     """After subprocess.run has waited/reaped, tolerate only transient Windows
@@ -196,6 +197,35 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(result.returncode,64)
         self.assertEqual(Path(self.p['versions']).read_bytes(),b'v')
         with self.assertRaisesRegex(h.Failure,'unexpected_version_probe'):h.assert_phase(self.p,'wrong-root')
+
+    def test_authored_relocation_preserves_prefix_identity_and_requires_new_install(self):
+        self.write('wrong-root');self.assertEqual(self.invoke(self.args()).returncode,0)
+        parents=[Path(self.p['prefix']),Path(self.p['globalRoot']),Path(self.p['package']).parent]
+        identities=[(p.stat().st_dev,p.stat().st_ino) for p in parents]
+        old=(Path(self.p['package'])/'package.json').read_bytes()
+        h.relocate_owned_residue(self.p)
+        self.assertEqual([(p.stat().st_dev,p.stat().st_ino) for p in parents],identities)
+        self.assertEqual((Path(self.p['root'])/'retained-package/package.json').read_bytes(),old)
+        h.assert_phase(self.p,'empty-owned')
+        h.authored_conflict(self.p)
+        with self.assertRaises(h.Failure):h.assert_phase(self.p,'empty-owned')
+        h.authored_conflict(self.p,True);h.assert_phase(self.p,'empty-owned')
+        self.assertEqual(self.invoke(self.args()).returncode,0)
+        self.assertEqual(h.assert_phase(self.p,'wrong-root',2)['installCalls'],2)
+        with self.assertRaises(h.Failure):h.relocate_owned_residue(self.p)
+
+    def test_protection_allowlist_accepts_only_exact_valid_record(self):
+        directory=Path(self.p['home'])/'.agentdeck/install-protection/codex'
+        directory.mkdir(parents=True)
+        for p in (directory.parent,directory):p.chmod(0o700)
+        record={'schema':1,'platform':'windows' if os.name=='nt' else 'linux','phase':'clear','attempt':None,'prefix':None,'prefixIdentity':None}
+        (directory/'gate.lock').write_bytes(b'');(directory/'state.json').write_text(json.dumps(record),encoding='utf-8')
+        for p in directory.iterdir():p.chmod(0o600)
+        h.no_configuration(self.p)
+        (directory/'unexpected').write_bytes(b'')
+        with self.assertRaises(ProtectionFailure):h.no_configuration(self.p)
+        (directory/'unexpected').unlink();(directory/'state.json').write_bytes(b'corrupt')
+        with self.assertRaises(ProtectionFailure):h.no_configuration(self.p)
 
     def test_wrong_root_guard_rejects_missing_or_changed_complete_files(self):
         self.write('wrong-root');self.assertEqual(self.invoke(self.args()).returncode,0)

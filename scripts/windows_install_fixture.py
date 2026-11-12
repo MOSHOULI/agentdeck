@@ -15,6 +15,7 @@ import struct
 import sys
 
 from installer_node_fixture import measured_version
+from install_protection_fixture import validate_install_protection, protection_snapshot, prepare_synthetic_protection
 
 CANARY = 'AGENTDECK_SYNTHETIC_INSTALL_PRIVATE_CANARY'
 MARKER = b'synthetic-install-once\n'
@@ -156,7 +157,8 @@ def no_configuration(m):
             if entry.name=='acceptance-user-data.txt':
                 # Existing installer-lifecycle sentinel, not a new agent profile.
                 if safe_file(entry,256).decode('utf-8-sig').rstrip('\r\n')!='Synthetic data, must survive installation, upgrade and uninstall.':raise Failure('sentinel_changed')
-            elif entry.name not in ('registry','registry-update.lock'):raise Failure('configuration_created')
+            elif entry.name not in ('registry','registry-update.lock','install-protection'):raise Failure('configuration_created')
+        validate_install_protection(home)
 
 def facts(m):
     q=safe_file(Path(m['queries']),4096);v=safe_file(Path(m['versions']),4096);calls=safe_file(Path(m['installCalls']),4096)
@@ -165,14 +167,14 @@ def facts(m):
     if hashlib.sha256(safe_file(Path(m['node']),256*1024*1024)).hexdigest()!=m['nodeSha256']:raise Failure('node_changed')
     return {'installCalls':len(calls),'partialInstallRetained':False,'prefixQueries':q.count(b'p'),'rootQueries':q.count(b'r'),'metadataQueries':q.count(b'm'),'versionProbes':len(v),'syntheticFixture':True,'officialAgentExecuted':False,'noConfigurationCreated':True}
 
-def assert_phase(m,phase):
+def assert_phase(m,phase,expected_attempts=1):
     result=facts(m);prefix=Path(m['prefix']);package=Path(m['package']);marker=Path(m['marker'])
     if phase=='absent':
         if any(os.path.lexists(p) for p in (marker,package,*[prefix/('codex'+s) for s in ('','.cmd','.ps1','.exe','.com','.bat')])):raise Failure('unconfirmed_install_write')
         if result['versionProbes']:raise Failure('unexpected_version_probe')
         if result['installCalls']:raise Failure('unexpected_install_calls')
     elif phase in ('installed','failed','wrong-root'):
-        if result['installCalls']!=1:raise Failure('unexpected_install_calls')
+        if result['installCalls']!=expected_attempts:raise Failure('unexpected_install_calls')
         if safe_file(marker,128)!=MARKER:raise Failure('install_marker_mismatch')
         if phase=='failed':
             if m['mode']!='fail' or not package.is_dir() or any(os.path.lexists(prefix/('codex'+suffix)) for suffix in ('','.cmd','.ps1','.exe','.com','.bat')):raise Failure('failure_state_mismatch')
@@ -191,8 +193,29 @@ def assert_phase(m,phase):
                 if result['versionProbes']!=0:raise Failure('unexpected_version_probe')
                 result['completeWrongRootRetained']=True
             elif result['versionProbes']<1:raise Failure('version_not_probed')
+    elif phase=='empty-owned':
+        if result['installCalls']!=expected_attempts or result['versionProbes']!=0:raise Failure('unexpected_install_calls')
+        if any(os.path.lexists(p) for p in (marker,package,*[prefix/('codex'+s) for s in ('','.cmd','.ps1','.exe','.com','.bat')])):raise Failure('unconfirmed_install_write')
     elif phase!='no-config':raise Failure('unknown_assertion')
     no_configuration(m);return result
+
+def relocate_owned_residue(m):
+    # Test-authored preparation, never product cleanup. Preserve every prefix
+    # ancestor identity used by recovery; archive exact fixture leaves only.
+    assert_phase(m,'wrong-root')
+    root=Path(m['root']);package=Path(m['package']);launcher=Path(m['prefix'])/'codex.cmd';marker=Path(m['marker'])
+    for target in (root/'retained-package',root/'retained-launcher.cmd',root/'retained-marker'):
+        if os.path.lexists(target):raise Failure('retained_residue_exists')
+    package.rename(root/'retained-package');launcher.rename(root/'retained-launcher.cmd');marker.rename(root/'retained-marker')
+    return {'testAuthoredRelocation':True,'productCleanup':False,'prefixParentsRetained':True}
+
+def authored_conflict(m,remove=False):
+    path=Path(m['prefix'])/'codex.cmd';data=b'authored recovery conflict, not executable'
+    if remove:
+        if safe_file(path,len(data))!=data:raise Failure('conflict_changed')
+        path.unlink()
+    else:write_new(path,data)
+    return {'testAuthoredConflict':True,'removed':remove}
 
 FAILURE_CODES = frozenset({
     'unsafe_fixture_file', 'requires_windows', 'invalid_fixture_arguments',
@@ -202,7 +225,7 @@ FAILURE_CODES = frozenset({
     'unconfirmed_install_write', 'unexpected_version_probe', 'install_marker_mismatch',
     'failure_state_mismatch', 'installed_inventory_mismatch', 'installed_bytes_changed',
     'shim_changed', 'version_not_probed', 'unknown_assertion', 'missing_prepare_arguments',
-    'missing_manifest', 'manager_already_changed', 'unexpected_install_calls',
+    'missing_manifest', 'manager_already_changed', 'unexpected_install_calls', 'retained_residue_exists','conflict_changed',
 })
 
 def failure_diagnostic(error):
@@ -222,8 +245,8 @@ def main():
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, 'reconfigure'): stream.reconfigure(encoding='utf-8', errors='strict')
     parser=argparse.ArgumentParser(description=__doc__);group=parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('--prepare',type=Path);group.add_argument('--assert',dest='phase',choices=('absent','installed','failed','wrong-root','no-config'));group.add_argument('--stale',action='store_true');group.add_argument('--restore-latest',action='store_true')
-    parser.add_argument('--node',type=Path);parser.add_argument('--home',type=Path);parser.add_argument('--mode',choices=('success','fail','wrong-root'),default='success');parser.add_argument('--manifest',type=Path)
+    group.add_argument('--prepare',type=Path);group.add_argument('--assert',dest='phase',choices=('absent','installed','failed','wrong-root','empty-owned','no-config'));group.add_argument('--stale',action='store_true');group.add_argument('--restore-latest',action='store_true');group.add_argument('--relocate-owned',action='store_true');group.add_argument('--conflict',choices=('create','remove'));group.add_argument('--protection',choices=('clear','armed','failed_returned','snapshot'));group.add_argument('--synthetic-protection',choices=('armed','corrupt'))
+    parser.add_argument('--destination-home',type=Path);parser.add_argument('--expected-attempts',type=int,choices=(1,2),default=1);parser.add_argument('--node',type=Path);parser.add_argument('--home',type=Path);parser.add_argument('--mode',choices=('success','fail','wrong-root'),default='success');parser.add_argument('--manifest',type=Path)
     a=parser.parse_args()
     try:
         if a.prepare:
@@ -231,6 +254,16 @@ def main():
             print(prepare(a.prepare,a.node,a.home,a.mode));return 0
         if a.manifest is None:raise Failure('missing_manifest')
         m=load(a.manifest)
+        if a.relocate_owned:print(json.dumps(relocate_owned_residue(m)));return 0
+        if a.conflict:print(json.dumps(authored_conflict(m,a.conflict=='remove')));return 0
+        if a.protection:
+            if a.protection=='snapshot':
+                # Only fixed digest returned, never prefix, attempt or rawstate.
+                value=protection_snapshot(a.home or m['home']);print(json.dumps({'digest':hashlib.sha256(repr(value).encode()).hexdigest()}));return 0
+            validate_install_protection(a.home or m['home'],a.protection,True);print(json.dumps({'phase':a.protection,'verified':True}));return 0
+        if a.synthetic_protection:
+            if a.destination_home is None:raise Failure('missing_prepare_arguments')
+            prepare_synthetic_protection(m['home'],a.destination_home,a.synthetic_protection);print(json.dumps({'syntheticState':a.synthetic_protection,'actualCrashVerified':False}));return 0
         if a.stale or a.restore_latest:
             path=Path(m['manager']);data=safe_file(path,65536)
             if hashlib.sha256(data).hexdigest()!=m['managerSha256']:raise Failure('manager_already_changed')
@@ -238,7 +271,7 @@ def main():
             if current!=(b'1.2.3' if a.stale else b'1.2.4'):raise Failure('invalid_manifest')
             latest.write_bytes(b'1.2.4' if a.stale else b'1.2.3')
             print(json.dumps({'latestChangedForStalePreview':a.stale,'managerUnchanged':True}));return 0
-        print(json.dumps(assert_phase(m,a.phase)));return 0
+        print(json.dumps(assert_phase(m,a.phase,a.expected_attempts)));return 0
     except Exception as error:
         print(json.dumps(failure_diagnostic(error)), file=sys.stderr);return 1
 if __name__=='__main__':raise SystemExit(main())

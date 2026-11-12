@@ -1,5 +1,10 @@
 """Offline wiring checks only; not evidence of native Windows UI behavior."""
+import base64
+import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import unittest
 ROOT = Path(__file__).resolve().parents[1]
 UI = (ROOT / 'scripts/windows-install-ui-acceptance.ps1').read_text(encoding='utf-8')
@@ -50,14 +55,15 @@ class Tests(unittest.TestCase):
         self.assertLess(flow.index("Click-Qwen '取消'"), flow.index("Click-Qwen '确认安装软件'"))
         self.assertIn("Check-Gui 'failed-reviewed-install-restart' -KeepOpen", flow)
         self.assertIn("Click-Qwen '刷新列表'", flow)
-        self.assertIn("Wait-InstallText '无法取得有效安装预览，请刷新后重新检查。' 'occupied-preview-error'", flow)
-        for stage in ('preview_cancel','confirmed_failure','refresh_no_retry','restart_no_retry','occupied_preview_rejected'):
+        self.assertIn("Open-BlockedRecovery", flow)
+        self.assertIn("Persistent partial failure allowed installation", flow)
+        for stage in ('preview_cancel','confirmed_failure','refresh_no_retry','restart_no_retry','persistent_recovery_blocked'):
             self.assertIn(stage, flow)
         for forbidden in ('Remove-Item', 'WriteAllText', '--stale', 'confirmInstall', 'Invoke-WebRequest'):
             self.assertNotIn(forbidden, flow)
         guard = UI[UI.index('function Assert-FailedInstallObservation'):UI.index('function Check-FailedReviewedInstall')]
         for check in ('installCalls -ne 1', 'versionProbes -ne 0', 'partialInstallRetained -ne $true',
-                      '$observedResidual -cne $residual', '(Get-CodexSnapshot) -cne $baseline',
+                      '$observedResidual -cne $residual', '(Get-InstallConfigurationSnapshot) -cne $baseline',
                       'Assert-InstallNoConfirmation', "Contains('软件安装操作已完成')"):
             self.assertIn(check, guard)
         self.assertEqual(flow.count('Assert-FailedInstallObservation $fixture $manifest $baseline $residual'), 5)
@@ -76,7 +82,7 @@ class Tests(unittest.TestCase):
         guard = UI[UI.index('function Assert-FailedInstallObservation'):UI.index('function Check-FailedReviewedInstall')]
         self.assertIn("throw ('Failed installation residual changed: ' + $stage)", guard)
         self.assertIn("checkpoint = $stage; changes = $difference", guard)
-        for stage in ('initial', 'settled', 'refresh', 'restart', 'occupied-preview'):
+        for stage in ('initial', 'settled', 'refresh', 'restart', 'recovery-blocked'):
             self.assertIn("Assert-FailedInstallObservation $fixture $manifest $baseline $residual '" + stage + "'", UI)
 
     def test_session_panel_is_native_readonly_and_not_persistent_recovery(self):
@@ -195,17 +201,20 @@ class Tests(unittest.TestCase):
         guard=UI[UI.index('function Assert-WrongRootInstallObservation'):UI.index('function Check-WrongRootReviewedInstall')]
         self.assertIn("'--mode', 'wrong-root'",method)
         self.assertEqual(method.count("Click-Qwen '确认安装软件'"),1)
-        self.assertEqual(method.count("Click-Qwen '刷新列表'"),1)
-        self.assertEqual(method.count('Check-Gui '),1)
+        self.assertEqual(method.count("Click-Qwen '刷新列表'"),2)
+        self.assertEqual(method.count('Check-Gui '),2)
         for stage in ('verification_rejected','automatic_refresh_unprobed','manual_refresh_unprobed','navigation_unprobed'):
             self.assertIn(stage,method)
         for item in ('installCalls -ne 1','versionProbes -ne 0','completeWrongRootRetained -ne $true',
-                     '$current -cne $residual','(Get-CodexSnapshot) -cne $baseline','Assert-InstallNoConfirmation',
+                     '$current -cne $residual','(Get-InstallConfigurationSnapshot) -cne $baseline','Assert-InstallNoConfirmation',
                      "'软件安装操作已完成'","'实测版本 1.2.3'"):
             self.assertIn(item,guard)
         self.assertIn("Activate-InstallWorkspace 'Qwen 配置检查'",method)
         self.assertIn("Activate-InstallWorkspace 'Agent 管理'",method)
-        self.assertIn('wrongRootSessionRestarted = $false',method)
+        self.assertIn('wrongRootSessionRestarted = $true',method)
+        self.assertIn("Check-Gui 'wrong-root-reviewed-install-restarted'",method)
+        self.assertIn('Open-BlockedRecovery',method)
+        self.assertIn('Check-ExplicitInstallRecovery $fixture $manifest',method)
         self.assertIn('authoredAgentExecuted = $false',method)
         self.assertIn("'probe-suppression'",guard)
         self.assertIn("@('installCalls','versionProbes','prefixQueries','rootQueries','metadataQueries')",guard)
@@ -214,6 +223,223 @@ class Tests(unittest.TestCase):
         self.assertIn('$action.Current.IsEnabled',guard)
         self.assertIn('    Check-WrongRootReviewedInstall',LIFECYCLE)
         self.assertLess(LIFECYCLE.index('    Check-FailedReviewedInstall'),LIFECYCLE.index('    Check-WrongRootReviewedInstall'))
+
+    def test_persistent_recovery_and_synthetic_cases_keep_explicit_boundaries(self):
+        recovery=UI[UI.index('function Check-ExplicitInstallRecovery'):UI.index('function Open-ReviewedInstallPlanAfterRecovery')]
+        synthetic=UI[UI.index('function Check-SyntheticUncertainProtection'):UI.index('function Check-ExplicitInstallRecovery')]
+        for token in ("'--relocate-owned'","'取消恢复检查'","'--conflict','create'","'--conflict','remove'",'Stale recovery cleared protection','Cancelled recovery changed protection',"'--protection','clear'",'Open-ReviewedInstallPlanAfterRecovery',"'--expected-attempts','2'",'testAuthoredResidueRelocation = $true','productCleanup = $false'):
+            self.assertIn(token,recovery)
+        self.assertEqual(recovery.count("Click-Qwen '确认恢复 Codex 探测'"),2) # stale once, fresh once
+        self.assertEqual(recovery.count("Click-Qwen '确认安装软件'"),1)
+        self.assertLess(recovery.index("'--protection','clear'"),recovery.index('Open-ReviewedInstallPlanAfterRecovery'))
+        for token in ("@('armed','corrupt')",'stateUnchanged = $true','actualCrashVerified = $false','emptySlots = $true','Assert-RecoveryNoExecution','Set-SyntheticProtectionSecurity $target $acl','Synthetic protection security did not match its source'):
+            self.assertIn(token,synthetic)
+        homes=UI[UI.index('function Invoke-InstallPrivateHome'):UI.index('function Open-BlockedRecovery')]
+        for token in ('finally {','Stop-App',"'HOME','USERPROFILE','AGENTDECK_TEST_HOME','APPDATA','LOCALAPPDATA'",'$script:homeDir = $savedHome'):
+            self.assertIn(token,homes)
+
+    def test_synthetic_security_owner_is_bounded_to_current_user(self):
+        helper = UI[UI.index('function Set-SyntheticProtectionSecurity'):UI.index('function Get-ProtectionSecurityDifference')]
+        self.assertIn('$descriptor.Owner -ne [Security.Principal.WindowsIdentity]::GetCurrent().User', helper)
+        self.assertIn('CreateFileW(path, 0x000E0000,', helper)
+        self.assertIn('SetKernelObjectSecurity(handle, 0x80000005, descriptor)', helper)
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows filesystem security required')
+    def test_synthetic_security_clone_preserves_non_ai_file_and_directory(self):
+        function = UI[UI.index('function Set-SyntheticProtectionSecurity'):UI.index('function Get-ProtectionSecurityDifference')]
+        command = "$ErrorActionPreference = 'Stop';\n" + function + r"""
+$root = Join-Path ([IO.Path]::GetTempPath()) ('protection-acl-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $root | Out-Null
+try {
+    $directory = Join-Path $root 'directory'
+    $file = Join-Path $root 'state.json'
+    New-Item -ItemType Directory -Path $directory | Out-Null
+    [IO.File]::WriteAllText($file, 'authored state')
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    foreach ($target in @($directory, $file)) {
+        $originalAcl = Get-Acl -LiteralPath $target
+        $acl = Get-Acl -LiteralPath $target
+        $raw = [Security.AccessControl.RawSecurityDescriptor]::new($acl.Sddl)
+        $sddl = 'O:' + $sid + 'G:' + $raw.Group.Value + 'D:P(A;;FA;;;SY)(A;;FA;;;' + $sid + ')'
+        $acl.SetSecurityDescriptorSddlForm($sddl)
+        # Reproduce the modern API's AI conversion before the exact clone.
+        Set-Acl -LiteralPath $target -AclObject $acl
+        $converted = [Security.AccessControl.RawSecurityDescriptor]::new((Get-Acl -LiteralPath $target).Sddl)
+        if (($converted.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited) -eq 0) { throw 'AI conversion fixture not established' }
+        # Restore the authored target's original owner before cloning. Elevated
+        # Windows runners create it as Administrators, unlike product current-user ownership.
+        Set-Acl -LiteralPath $target -AclObject $originalAcl
+        Set-SyntheticProtectionSecurity $target $acl
+        if ((Get-Acl -LiteralPath $target).Sddl -cne $acl.Sddl) { throw 'Exact descriptor clone failed' }
+        $before = (Get-Acl -LiteralPath $target).Sddl
+        foreach ($rejectedSddl in @($sddl.Replace('D:P', 'D:PAI'), $sddl.Replace('O:' + $sid, 'O:SY'))) {
+            $unsupported = Get-Acl -LiteralPath $target
+            $unsupported.SetSecurityDescriptorSddlForm($rejectedSddl)
+            $rejected = $false
+            try { Set-SyntheticProtectionSecurity $target $unsupported } catch {
+                if ($_.Exception.Message -ne 'Unsupported synthetic protection descriptor') { throw }
+                $rejected = $true
+            }
+            if (-not $rejected -or (Get-Acl -LiteralPath $target).Sddl -cne $before) { throw 'Unsupported descriptor modified target' }
+        }
+    }
+    if ([IO.File]::ReadAllText($file) -cne 'authored state') { throw 'Clone changed fixture bytes' }
+    'exact-clone-passed'
+} finally { Remove-Item -LiteralPath $root -Recurse -Force }
+"""
+        result = subprocess.run(
+            [shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-EncodedCommand',
+             base64.b64encode(command.encode('utf-16le')).decode()],
+            capture_output=True, encoding='utf-8', errors='strict', timeout=30, check=True)
+        self.assertEqual(result.stdout.strip(), 'exact-clone-passed')
+
+    def test_synthetic_security_diagnostic_preserves_full_sddl_failure(self):
+        function = UI[UI.index('function Get-ProtectionSecurityDifference'):UI.index('function Check-SyntheticUncertainProtection')]
+        for category in ("'owner'", "'group'", "'dacl'", "'sacl'", "'control'", "'resource-manager-control'", "'sddl'"):
+            self.assertIn(category, function)
+        flow = UI[UI.index('function Check-SyntheticUncertainProtection'):UI.index('function ConvertTo-ExpectedRecoveryPrefix')]
+        self.assertIn('if ($observedSddl -cne $acl.Sddl)', flow)
+        self.assertIn("fields = @(Get-ProtectionSecurityDifference $acl.Sddl $observedSddl)", flow)
+        self.assertIn("throw 'Synthetic protection security did not match its source'", flow)
+        self.assertNotIn('Write-Output', function)
+        self.assertNotIn('Write-Host', function)
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows PowerShell security descriptors required')
+    def test_security_diagnostic_reports_categories_not_descriptors(self):
+        function = UI[UI.index('function Get-ProtectionSecurityDifference'):UI.index('function Check-SyntheticUncertainProtection')]
+        command = "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ErrorActionPreference = 'Stop';\n" + function + """
+$base = 'O:SYG:SYD:P(A;;FA;;;SY)'
+$results = @(
+    ,@(Get-ProtectionSecurityDifference $base $base)
+    ,@(Get-ProtectionSecurityDifference $base 'O:BAG:SYD:P(A;;FA;;;SY)')
+    ,@(Get-ProtectionSecurityDifference $base 'O:SYG:BAD:P(A;;FA;;;SY)')
+    ,@(Get-ProtectionSecurityDifference $base 'O:SYG:SYD:P(A;;FR;;;SY)')
+    ,@(Get-ProtectionSecurityDifference $base 'O:SYG:SYD:PAI(A;;FA;;;SY)')
+    ,@(Get-ProtectionSecurityDifference $base 'O:SYG:SYD:P(A;;FA;;;SY)S:(AU;SA;FA;;;SY)')
+)
+ConvertTo-Json -InputObject $results -Depth 4 -Compress
+"""
+        result = subprocess.run(
+            [shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-EncodedCommand',
+             base64.b64encode(command.encode('utf-16le')).decode()],
+            capture_output=True, encoding='utf-8', errors='strict', timeout=15, check=True)
+        self.assertEqual(json.loads(result.stdout), [[], ['owner', 'sddl'], ['group', 'sddl'],
+                         ['dacl', 'sddl'], ['control', 'control:DiscretionaryAclAutoInherited', 'sddl'],
+                         ['sacl', 'control', 'control:SystemAclPresent', 'sddl']])
+
+    def test_protection_digest_does_not_bind_readonly_home(self):
+        # PowerShell identifiers are case insensitive: $home aliases readonly $HOME.
+        self.assertNotRegex(UI, r'(?i)\$home\b')
+        function = UI[UI.index('function Get-ProtectionDigest'):UI.index('function Assert-RecoveryNoExecution')]
+        self.assertIn('[string]$protectionHome = $homeDir', function)
+        self.assertIn("'--home',$protectionHome", function)
+        self.assertIn("Join-Path $protectionHome '.agentdeck", function)
+
+    @unittest.skipUnless(shutil.which('pwsh'), 'actual PowerShell unavailable')
+    def test_protection_digest_parameter_binding_and_home_forwarding(self):
+        # Execute the real helper, not a reimplementation. Only its external
+        # snapshot/ACL reads are modeled; this does not prove native ACL behavior.
+        function = UI[UI.index('function Get-ProtectionDigest'):UI.index('function Assert-RecoveryNoExecution')]
+        command = """
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$originalHome = $HOME
+$homeDir = Join-Path ([IO.Path]::GetTempPath()) 'default home 测试'
+$alternateHome = Join-Path ([IO.Path]::GetTempPath()) 'alternate home 测试'
+$script:fixtureCalls = @()
+$script:aclPaths = @()
+function Invoke-InstallFixture {
+    $script:fixtureCalls += ,@($args)
+    '{"digest":"snapshot-digest"}'
+}
+function Get-Acl([string]$LiteralPath) {
+    $script:aclPaths += $LiteralPath
+    [pscustomobject]@{ Sddl = 'modeled-acl' }
+}
+""" + function + r"""
+$results = @(
+    (Get-ProtectionDigest 'manifest-default'),
+    (Get-ProtectionDigest 'manifest-positional' $alternateHome),
+    (Get-ProtectionDigest -manifest 'manifest-named' -protectionHome $alternateHome)
+)
+$expectedHomes = @($homeDir, $alternateHome, $alternateHome)
+$expectedManifests = @('manifest-default', 'manifest-positional', 'manifest-named')
+for ($i = 0; $i -lt 3; $i++) {
+    $expectedArgs = @('--protection', 'snapshot', '--manifest', $expectedManifests[$i], '--home', $expectedHomes[$i])
+    if (($script:fixtureCalls[$i] | ConvertTo-Json -Compress) -cne ($expectedArgs | ConvertTo-Json -Compress)) { throw 'Snapshot arguments changed' }
+    $stateRoot = Join-Path $expectedHomes[$i] '.agentdeck\install-protection'
+    $expectedPaths = @($stateRoot, (Join-Path $stateRoot 'codex'), (Join-Path $stateRoot 'codex\gate.lock'), (Join-Path $stateRoot 'codex\state.json'))
+    for ($j = 0; $j -lt 4; $j++) {
+        if ($script:aclPaths[$i * 4 + $j] -cne $expectedPaths[$j]) { throw 'ACL snapshot used wrong home' }
+    }
+}
+if ($HOME -cne $originalHome) { throw 'Automatic HOME changed' }
+if ($script:fixtureCalls.Count -ne 3 -or $script:aclPaths.Count -ne 12) { throw 'Unexpected snapshot call count' }
+ConvertTo-Json -InputObject $results -Compress
+"""
+        result = subprocess.run(
+            [shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-EncodedCommand',
+             base64.b64encode(command.encode('utf-16le')).decode()],
+            capture_output=True, encoding='utf-8', errors='strict', timeout=15, check=True)
+        self.assertEqual([json.loads(value) for value in json.loads(result.stdout)],
+                         [['snapshot-digest', ['modeled-acl'] * 4]] * 3)
+
+    @unittest.skipUnless(shutil.which('pwsh'),'actual PowerShell unavailable')
+    def test_recovery_target_matches_core_dos_verbatim_spelling_only(self):
+        function=UI[UI.index('function ConvertTo-ExpectedRecoveryPrefix'):UI.index('function Assert-RecoveryEligibleTarget')]
+        inputs=[r'\\?\C:\测试 空格\prefix',r'C:\测试 空格\prefix',r'\\?\c:\MixedCASE',r'\\?\UNC\server\share',r'\\.\C:\prefix',r'\\?\Volume{test}\prefix',r'C:relative',r'\\?\C:/prefix']
+        encoded=base64.b64encode(json.dumps(inputs,ensure_ascii=False).encode('utf-8')).decode()
+        # Both ends of the pipe must use UTF-8; Windows Python otherwise decodes
+        # pwsh output using the active ANSI code page even for -EncodedCommand.
+        command="[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false);\n"+function+"\n$values=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+encoded+"')) | ConvertFrom-Json; $out=@(foreach($value in $values){try{ConvertTo-ExpectedRecoveryPrefix $value}catch{'REJECTED'}}); ConvertTo-Json -InputObject $out -Compress"
+        result=subprocess.run([shutil.which('pwsh'),'-NoProfile','-NonInteractive','-EncodedCommand',base64.b64encode(command.encode('utf-16le')).decode()],capture_output=True,encoding='utf-8',errors='strict',timeout=15,check=True)
+        self.assertEqual(json.loads(result.stdout),[r'C:\测试 空格\prefix',r'C:\测试 空格\prefix',r'c:\MixedCASE',*['REJECTED']*5])
+        check=UI[UI.index('function Assert-RecoveryEligibleTarget'):UI.index('function Check-ExplicitInstallRecovery')]
+        self.assertIn('Test-RecoveryTargetNodes $nodes $expectedPrefix',check)
+        self.assertNotIn("$text.Contains('已记录安装位置：'",check)
+
+    def test_recovery_target_split_nodes_require_same_parent(self):
+        check = UI[UI.index('function Test-RecoveryTargetNodes'):UI.index('function Assert-RecoveryEligibleTarget')]
+        for token in ('$candidates.Count -ne 1', '$walker.GetParent($candidates[0])',
+                      '$walker.GetFirstChild($parent)', '$walker.GetNextSibling($child)',
+                      'Test-RecoveryTargetContent $childNames $expectedPrefix'):
+            self.assertIn(token, check)
+        self.assertNotIn('-join', check)
+
+    @unittest.skipUnless(shutil.which('pwsh'), 'actual PowerShell unavailable')
+    def test_recovery_target_text_shapes_are_exact_not_fuzzy(self):
+        function = UI[UI.index('function Test-RecoveryTargetContent'):UI.index('function Test-RecoveryTargetNodes')]
+        command = "$ErrorActionPreference = 'Stop';\n" + function + r"""
+$prefix = 'C:\测试 空格\prefix'
+$label = '已记录安装位置：'
+$results = @(
+    (Test-RecoveryTargetContent @($label + $prefix) $prefix),
+    (Test-RecoveryTargetContent @($label, $prefix) $prefix),
+    (Test-RecoveryTargetContent @($label, ($prefix + '-other')) $prefix),
+    (Test-RecoveryTargetContent @($label, ($prefix.Replace('prefix', 'PREFIX'))) $prefix),
+    (Test-RecoveryTargetContent @($prefix, $label) $prefix),
+    (Test-RecoveryTargetContent @($label, $prefix, 'extra') $prefix),
+    (Test-RecoveryTargetContent @($label, $prefix.Substring(0, 5), $prefix.Substring(5)) $prefix),
+    (Test-RecoveryTargetContent @($label) $prefix),
+    (Test-RecoveryTargetContent @() $prefix)
+)
+ConvertTo-Json -InputObject $results -Compress
+"""
+        result = subprocess.run(
+            [shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-EncodedCommand',
+             base64.b64encode(command.encode('utf-16le')).decode()],
+            capture_output=True, encoding='utf-8', errors='strict', timeout=15, check=True)
+        self.assertEqual(json.loads(result.stdout), [True, True, *[False] * 7])
+
+    def test_recovery_target_mismatch_keeps_evidence_and_strict_failure(self):
+        check = UI[UI.index('function Assert-RecoveryEligibleTarget'):UI.index('function Check-ExplicitInstallRecovery')]
+        self.assertIn('if (-not (Test-RecoveryTargetNodes $nodes $expectedPrefix))', check)
+        self.assertIn("Save-QwenEvidence 'recovery-eligible-target-mismatch'", check)
+        self.assertIn("labelNodePresent = $names -ccontains '已记录安装位置：'", check)
+        self.assertIn('exactPrefixNodePresent = $names -ccontains $expectedPrefix', check)
+        self.assertLess(check.index("Save-QwenEvidence 'recovery-eligible-target-mismatch'"),
+                        check.index("throw 'Recovery preview target mismatch'"))
+        self.assertNotIn('return', check)
 
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
@@ -228,7 +454,7 @@ class Tests(unittest.TestCase):
         self.assertLess(UI.index("'--stale', '--manifest'"), UI.index("Click-Qwen '确认安装软件'"))
         for text in ('preview_cancel', 'stale_revision', 'confirmed_install', 'observed_source', 'no_configuration',
                      'authoredNpmAndAgentCodeExecuted = $true', 'officialAgentExecuted = $false',
-                     '(Get-CodexSnapshot) -cne $baseline', 'Save-QwenEvidence', 'prefixQueries + 1', 'rootQueries + 1'):
+                     '(Get-InstallConfigurationSnapshot) -cne $baseline', 'Save-QwenEvidence', 'prefixQueries + 1', 'rootQueries + 1'):
             self.assertIn(text, UI)
         self.assertIn('$env:PATH = $savedPath; $env:PATHEXT = $savedExt', UI)
     def test_all_evidence_checks_names_and_values_before_persistence(self):

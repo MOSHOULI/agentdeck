@@ -436,53 +436,41 @@ class WrongRootFixtureTests(unittest.TestCase):
         self.assertNotIn("//button[text()='刷新列表']",driver.clicks)
         self.assertEqual(self.f['calls'].read_bytes(),b'i')
         self.assertEqual(self.f['versions'].read_bytes(),b'')
-    def test_wrong_root_waits_for_unique_enabled_controls_before_one_action(self):
-        tab="//*[@role='tab' and @aria-label='Agent 管理']"; search="//*[@id='agent-search']"
-        driver=Mock(); phases=[]; events=[]; ready=set()
-        counts={tab:iter((0,2,1,1)),search:iter((0,2,1,1))}
-        enables={tab:iter((False,True)),search:iter((False,True))}
-        def elements(selector):
-            events.append(('read',selector));return [{}]*next(counts[selector])
-        def enabled(selector):
-            result=next(enables[selector]);events.append(('enabled',selector,result))
-            if result:ready.add(selector)
-            return result
-        def wait(predicate):
-            for _ in range(4):
-                if predicate():return
-            raise harness.Failure('ui_wait_expired')
-        def click(selector):
-            self.assertIn(selector,ready);events.append(('click',selector))
-        def type_input(selector,value):
-            self.assertIn(selector,ready);events.append(('type',selector));raise harness.Failure('test_stop_after_readiness')
-        driver.elements.side_effect=elements;driver.enabled.side_effect=enabled;driver.wait.side_effect=wait
-        driver.click.side_effect=click;driver.type.side_effect=type_input
-        with self.assertRaisesRegex(harness.Failure,'test_stop_after_readiness'):
-            subject.exercise_wrong_root(driver,self.f,self.root,[],phases.append)
-        self.assertEqual(driver.click.call_count,1);self.assertEqual(driver.type.call_count,1)
-        self.assertLess(events.index(('enabled',tab,True)),events.index(('click',tab)))
-        self.assertLess(events.index(('enabled',search,True)),events.index(('type',search)))
-        self.assertEqual(phases,['wrong_root_wait_agents_tab','wrong_root_open_agents','wrong_root_wait_search','wrong_root_type_search'])
+    def test_wrong_root_waits_for_workspace_before_single_input(self):
+        class Driver(RecoveryWorkspaceReadinessTests.Driver):
+            def type(self, selector, value):
+                super().type(selector, value)
+                raise harness.Failure('test_stop_after_readiness')
+        for selected in (True, False):
+            with self.subTest(selected=selected):
+                driver = Driver(selected=selected, delayed=True); phases=[]
+                with self.assertRaisesRegex(harness.Failure, 'test_stop_after_readiness'):
+                    subject.exercise_wrong_root(driver, self.f, self.root, [], phases.append)
+                self.assertEqual(len(driver.clicks), 0 if selected else 1)
+                self.assertEqual(driver.typed, 1)
+                self.assertEqual(driver.commands, [])
+                self.assertEqual(phases, ['wrong_root_wait_workspace', 'wrong_root_type_search'])
+                self.assertTrue(any("@aria-busy='false'" in q for q in driver.polls))
 
     def test_wrong_root_missing_ambiguous_or_disabled_tab_never_acted_on(self):
-        for count,enabled in ((0,True),(2,True),(1,False)):
-            with self.subTest(count=count,enabled=enabled):
-                driver=Mock();driver.elements.return_value=[{}]*count;driver.enabled.return_value=enabled
+        tab = "//*[@role='tab' and @aria-label='Agent 管理']"
+        for count, enabled in ((0,True),(2,True),(1,False)):
+            with self.subTest(count=count, enabled=enabled):
+                driver = Mock()
+                driver.elements.side_effect = lambda q: ([{}]*count if q==tab else ([{}] if enabled else []))
                 def wait(predicate):
-                    self.assertFalse(predicate());raise harness.Failure('ui_wait_expired')
+                    self.assertFalse(predicate()); raise harness.Failure('ui_wait_expired')
                 driver.wait.side_effect=wait
-                with self.assertRaisesRegex(harness.Failure,'ui_wait_expired'):
+                with self.assertRaisesRegex(subject.InstallFailure, 'wrong_root_workspace_tab_not_ready'):
                     subject.exercise_wrong_root(driver,self.f,self.root,[],lambda _:None)
-                driver.click.assert_not_called();driver.type.assert_not_called()
-                if count!=1:driver.enabled.assert_not_called()
+                driver.click.assert_not_called();driver.type.assert_not_called();driver.enabled.assert_not_called()
 
     def test_wrong_root_uncertain_first_click_is_not_replayed(self):
-        driver=Mock();driver.elements.return_value=[{}];driver.enabled.return_value=True
-        driver.wait.side_effect=lambda predicate:self.assertTrue(predicate())
-        driver.click.side_effect=harness.Failure('driver_http_error')
-        with self.assertRaisesRegex(harness.Failure,'driver_http_error'):
+        driver = RecoveryWorkspaceReadinessTests.Driver(selected=False, click_failure=True)
+        with self.assertRaisesRegex(subject.InstallFailure, 'wrong_root_workspace_tab_activation_failed'):
             subject.exercise_wrong_root(driver,self.f,self.root,[],lambda _:None)
-        self.assertEqual(driver.click.call_count,1);driver.type.assert_not_called()
+        self.assertEqual(len(driver.clicks),1);self.assertEqual(driver.typed,0)
+        self.assertEqual(driver.commands,[])
 
     def test_native_harness_keeps_success_lane_and_distinct_wrong_root_process(self):
         source=Path(harness.__file__).read_text(encoding='utf-8')
@@ -492,5 +480,181 @@ class WrongRootFixtureTests(unittest.TestCase):
         self.assertLess(source.index("mode='wrong-root'",close),source.index('install_gui.exercise_wrong_root(',close))
         self.assertIn('install_gui.assert_wrong_root_coverage(wrong_root_records)',source)
         self.assertIn("'wrong_root_install_gui_verified': passed and",source)
+
+class RecoveryWorkspaceReadinessTests(unittest.TestCase):
+    class Driver(OfflineDriver):
+        def __init__(self, selected=True, delayed=False, click_failure=False, blocked=None):
+            super().__init__(None, None)
+            self.selected = selected; self.delayed = delayed
+            self.click_failure = click_failure; self.blocked = blocked
+            self.polls = {}; self.typed = 0
+        def elements(self, selector):
+            self.polls[selector] = self.polls.get(selector, 0) + 1
+            if self.blocked and self.blocked in selector: return []
+            if self.delayed and self.polls[selector] == 1: return []
+            if "@aria-selected='true'" in selector: return [{}] if self.selected else []
+            if "@aria-selected='false'" in selector: return [] if self.selected else [{}]
+            return [{}]
+        def wait(self, predicate, **_):
+            for _ in range(10):
+                if predicate(): return
+            raise harness.Failure('ui_wait_expired')
+        def enabled(self, selector):
+            raise AssertionError('do not re-locate controls through enabled() during readiness')
+        def click(self, selector):
+            self.clicks.append(selector)
+            if self.click_failure: raise harness.Failure('uncertain_click')
+            self.selected = True
+        def type(self, selector, text):
+            self.typed += 1
+            if not self.selected: raise AssertionError('input before selected workspace')
+
+    def test_selected_workspace_waits_for_delayed_dom_without_click(self):
+        driver = self.Driver(delayed=True)
+        subject.select_recovery_agent(driver)
+        self.assertEqual(driver.clicks, [])
+        self.assertEqual(driver.typed, 1)
+        self.assertTrue(any("@aria-busy='false'" in q for q in driver.polls))
+        self.assertEqual(len(driver.commands), 1)  # one Tab, no replay
+
+    def test_unselected_workspace_receives_one_navigation_click(self):
+        driver = self.Driver(selected=False)
+        subject.select_recovery_agent(driver)
+        self.assertEqual(len(driver.clicks), 1)
+        self.assertIn("@aria-selected='false'", driver.clicks[0])
+        self.assertEqual(driver.typed, 1)
+
+    def test_uncertain_navigation_action_is_not_replayed(self):
+        driver = self.Driver(selected=False, click_failure=True)
+        with self.assertRaisesRegex(subject.InstallFailure, 'recovery_workspace_tab_activation_failed'):
+            subject.select_recovery_agent(driver)
+        self.assertEqual(len(driver.clicks), 1)
+        self.assertEqual(driver.typed, 0)
+        self.assertEqual(driver.commands, [])
+
+    def test_missing_search_or_busy_list_fails_before_input_with_diagnostic(self):
+        for blocked, diagnostic in [('agent-search', 'search_not_ready'),
+                                    ("@aria-busy='false'", 'list_not_idle')]:
+            with self.subTest(blocked=blocked):
+                driver = self.Driver(blocked=blocked)
+                with self.assertRaisesRegex(subject.InstallFailure, diagnostic):
+                    subject.select_recovery_agent(driver)
+                self.assertEqual(driver.clicks, [])
+                self.assertEqual(driver.typed, 0)
+                self.assertEqual(driver.commands, [])
+
+
+class DurableRecoveryFixtureTests(unittest.TestCase):
+    setUp=WrongRootFixtureTests.setUp
+    install=WrongRootFixtureTests.install
+    def create_state(self,home,phase='failed_returned'):
+        import uuid
+        home.mkdir(mode=0o700,exist_ok=True)
+        product=home/'.agentdeck';product.mkdir(mode=0o700)
+        parent=product/'install-protection';parent.mkdir(mode=0o700)
+        directory=parent/'codex';directory.mkdir(mode=0o700)
+        subject.private_write(directory/'gate.lock','')
+        record={'schema':1,'platform':'linux','phase':phase,'attempt':str(uuid.uuid4()),'prefix':str(self.f['prefix']),'prefixIdentity':'test-only-identity'}
+        subject.private_write(directory/'state.json',json.dumps(record))
+        return record
+    def test_manual_relocation_preserves_prefix_ancestors_and_original_bytes(self):
+        self.install()
+        parents=[self.f['prefix'],self.f['bin'],self.f['global'],self.f['global'].parent]
+        identities=[(p.stat().st_dev,p.stat().st_ino) for p in parents]
+        payload=(self.f['package']/'bin/codex.js').read_bytes()
+        archive=subject.relocate_authored_residue(self.f)
+        self.assertEqual(identities,[(p.stat().st_dev,p.stat().st_ino) for p in parents])
+        self.assertEqual((archive/'codex-package/bin/codex.js').read_bytes(),payload)
+        self.assertFalse(self.f['package'].exists());self.assertFalse(os.path.lexists(self.f['bin']/'codex'))
+        self.install();subject.assert_wrong_root(self.f,attempts=2)
+        self.assertEqual((archive/'codex-package/bin/codex.js').read_bytes(),payload)
+    def test_configuration_allowlist_requires_exact_private_guard(self):
+        import install_protection_fixture as protection
+        home=self.root/'guard-home';self.create_state(home)
+        subject.assert_no_configuration(home)
+        (home/'.agentdeck/install-protection/codex/extra').write_bytes(b'not allowed')
+        with self.assertRaises(protection.Failure):subject.assert_no_configuration(home)
+        linked=self.root/'linked-home';linked.mkdir(mode=0o700);(linked/'.agentdeck').mkdir(mode=0o700)
+        (linked/'.agentdeck/install-protection').symlink_to(linked/'missing')
+        with self.assertRaises(protection.Failure):subject.assert_no_configuration(linked)
+    def test_offline_recovery_protocol_model_requires_each_confirmation(self):
+        # Real authored npm/file transitions; modeled UI/backend, not IPC proof.
+        self.install();home=self.root/'recovery-home';record=self.create_state(home)
+        state=home/'.agentdeck/install-protection/codex/state.json'
+        residue=subject.assert_wrong_root(self.f);before=subject.protection_snapshot(home,'failed_returned');queries=subject.query_counts(self.f)
+        owner=self
+        class Driver(OfflineDriver):
+            plan=None;cleared=False;error=False
+            def click(self,selector):
+                self.clicks.append(selector)
+                if selector==subject.RECOVERY_PREVIEW:
+                    self.plan='blocked' if self.fixture['package'].exists() else 'eligible'
+                elif selector==subject.RECOVERY_CANCEL:self.plan=None
+                elif selector==subject.RECOVERY_CONFIRM:
+                    self.plan=None
+                    if self.fixture['bin'].joinpath('codex').exists():self.error=True
+                    else:
+                        self.cleared=True;self.error=False
+                        state.write_text(json.dumps({'schema':1,'platform':'linux','phase':'clear','attempt':None,'prefix':None,'prefixIdentity':None}),encoding='utf-8')
+                elif selector==subject.PREVIEW:self.dialog=True
+                elif selector==subject.CONFIRM:
+                    self.dialog=False;owner.install();state.write_text(json.dumps(record),encoding='utf-8');self.cleared=False
+            def elements(self,selector):
+                if selector.startswith(subject.RECOVERY_RESULT):
+                    return [{}] if self.plan and (selector==subject.RECOVERY_RESULT or "@data-state='"+self.plan+"'" in selector) else []
+                if selector==subject.RECOVERY_CONFIRM:return [{}] if self.plan=='eligible' else []
+                return super().elements(selector)
+            def text(self,selector):
+                if selector.startswith(subject.RECOVERY_RESULT) and selector.endswith('/dd'):return 'missing'
+                if selector==subject.RECOVERY_RESULT:return '已记录安装位置：'+str(self.fixture['prefix'])+' 确认只解除探测保护；之后刷新可恢复 npm/Codex 查询。不安装、不删除，也不代表包真实性或运行验证。'
+                if selector=='//body' and self.error:return '恢复检查或确认未完成，保护状态未确认。请保留现有文件；不会自动重试。'
+                if selector=="//*[@aria-label='Agent 列表']":return subject.WRONG_ROOT_GUARD
+                return super().text(selector)
+        driver=Driver(self.f,self.install);records=[]
+        subject.exercise_recovery_after_restart(driver,self.f,home,records,lambda _:None,residue,before,queries)
+        self.assertEqual(records,[{'stage':stage,'verified':True} for stage in subject.RECOVERY_STAGES])
+        self.assertEqual(driver.clicks.count(subject.RECOVERY_CONFIRM),2)
+        self.assertEqual(driver.clicks.count(subject.RECOVERY_CANCEL),2)
+        self.assertEqual(driver.clicks.count(subject.CONFIRM),1)
+        self.assertEqual(self.f['calls'].read_bytes(),b'ii');self.assertEqual(self.f['versions'].read_bytes(),b'')
+    def test_synthetic_empty_slot_recovery_models_preserve_raw_records(self):
+        import install_protection_fixture as protection
+        self.install();source=self.root/'source-home';self.create_state(source)
+        subject.relocate_authored_residue(self.f)
+        original=protection.protection_snapshot(source)
+        class Driver(OfflineDriver):
+            plan=False
+            def click(self,selector):
+                self.clicks.append(selector)
+                if selector==subject.RECOVERY_PREVIEW:self.plan=True
+                elif selector==subject.RECOVERY_CANCEL:self.plan=False
+            def elements(self,selector):
+                if selector.startswith(subject.RECOVERY_RESULT):return [{}] if self.plan and self.case=='armed' else []
+                if selector=="//*[@data-testid='codex-recovery-error']":return [{}] if self.plan and self.case=='corrupt' else []
+                if selector==subject.RECOVERY_CONFIRM:return []
+                return super().elements(selector)
+            def text(self,selector):
+                if selector=="//*[@data-testid='codex-recovery-error']":return '恢复检查或确认未完成，保护状态未确认。请保留现有文件；不会自动重试。'
+                if selector=="//*[@aria-label='Agent 列表']":return subject.WRONG_ROOT_GUARD
+                return super().text(selector)
+        records=[]
+        for case in ('armed','corrupt'):
+            home=self.root/case;home.mkdir(mode=0o700)
+            before=protection.prepare_synthetic_protection(source,home,case)
+            driver=Driver(self.f,self.install);driver.case=case
+            subject.exercise_synthetic_recovery_blocked(driver,self.f,home,case,records,lambda _:None,before,subject.query_counts(self.f))
+            self.assertNotIn(subject.RECOVERY_CONFIRM,driver.clicks)
+            self.assertEqual(protection.protection_snapshot(source),original)
+        self.assertEqual(len(records),6)
+        self.assertTrue(all(row['testAuthoredState'] and not row['crashRecoveryVerified'] for row in records))
+
+    def test_native_restart_uses_same_home_path_and_stopped_synthetic_preparation(self):
+        source=Path(harness.__file__).read_text(encoding='utf-8')
+        self.assertIn('restart_for_home(original_wrong_home)',source)
+        self.assertIn("if env['PATH']!=wrong_fixture['path']",source)
+        method=source[source.index('        def restart_for_home'):source.index("        phase('durable_wrong_root_restart_same_home')")]
+        self.assertLess(method.index('process.wait(timeout=5)'),method.index('if prepare is not None:prepare()'))
+        self.assertLess(method.index('if prepare is not None:prepare()'),method.index('subprocess.Popen'))
+        self.assertIn("for case in ('armed','corrupt')",source)
 
 if __name__ == '__main__': unittest.main()

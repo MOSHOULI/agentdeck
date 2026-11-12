@@ -125,6 +125,25 @@ pub(crate) fn install_agent_from_preview_observed(
     })
 }
 
+pub(crate) fn install_agent_from_preview_guarded(
+    agent: &AgentDefinition,
+    revision: &str,
+    before_dispatch: impl FnOnce(&InstallPreview) -> Result<(), String>,
+) -> crate::Result<()> {
+    locked(|| {
+        let (known, search) = inputs(agent)?;
+        install_reviewed_guarded_with(
+            &agent.id,
+            revision,
+            known,
+            &search,
+            &mut ProcessRunner,
+            before_dispatch,
+            |command| run_bounded(command, INSTALL_TIMEOUT, 1024 * 1024).map(|_| ()),
+        )
+    })
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct Manager {
     command: ProbeCommand,
@@ -250,6 +269,18 @@ fn install_reviewed_with(
     runner: &mut impl Runner,
     install: impl FnOnce(&ProbeCommand) -> io::Result<()>,
 ) -> Result<(), String> {
+    install_reviewed_guarded_with(id, revision, known, search, runner, |_| Ok(()), install)
+}
+
+fn install_reviewed_guarded_with(
+    id: &str,
+    revision: &str,
+    known: KnownAgent,
+    search: &SearchPath,
+    runner: &mut impl Runner,
+    before_dispatch: impl FnOnce(&InstallPreview) -> Result<(), String>,
+    install: impl FnOnce(&ProbeCommand) -> io::Result<()>,
+) -> Result<(), String> {
     if revision.len() != 64
         || !revision
             .bytes()
@@ -266,7 +297,20 @@ fn install_reviewed_with(
             "Installation target changed since confirmation; refresh and review the target".into(),
         );
     }
-    execute_plan(plan, known, search, runner, install)
+    execute_plan_guarded(
+        plan,
+        known,
+        search,
+        runner,
+        |plan| {
+            let actual_preview = project_plan(id, known, search.platform, plan)?;
+            before_dispatch(&actual_preview).map_err(|_| {
+                "Installation protection could not be persisted; no installer was started"
+                    .to_string()
+            })
+        },
+        install,
+    )
 }
 
 fn digest(path: &Path) -> Result<Vec<u8>, String> {
@@ -698,11 +742,23 @@ fn execute_plan(
     runner: &mut impl Runner,
     install: impl FnOnce(&ProbeCommand) -> io::Result<()>,
 ) -> Result<(), String> {
+    execute_plan_guarded(plan, known, search, runner, |_| Ok(()), install)
+}
+
+fn execute_plan_guarded(
+    plan: InstallPlan,
+    known: KnownAgent,
+    search: &SearchPath,
+    runner: &mut impl Runner,
+    before_dispatch: impl FnOnce(&InstallPlan) -> Result<(), String>,
+    install: impl FnOnce(&ProbeCommand) -> io::Result<()>,
+) -> Result<(), String> {
     // Re-resolve the selected manager, paths and occupied destinations. The plan
     // is never accepted from IPC and is not a durable ownership receipt.
     if plan != build_plan(known, search, runner)? {
         return Err("Installation target changed during preflight; refresh and try again".into());
     }
+    before_dispatch(&plan)?;
     install(&install_command(&plan)).map_err(|_| {
         "Installer did not complete successfully; software may have changed. Refresh and inspect before retrying; no rollback was attempted".to_string()
     })?;
@@ -912,6 +968,68 @@ mod tests {
             let attempted = usize::from(!matches!(scenario, "stale" | "second-preflight"));
             assert_eq!(starts.get(), attempted, "{scenario}");
             assert_eq!(installs.get(), attempted, "{scenario}");
+        }
+    }
+
+    #[test]
+    fn fallible_dispatch_gate_receives_actual_plan_and_aborts_without_install() {
+        for scenario in ["stale", "second-preflight", "gate-error", "success"] {
+            let fixture = Fixture::new(Platform::Windows);
+            let plan = build_plan(CODEX, &fixture.search, &mut fixture.runner()).unwrap();
+            let expected = project_plan("codex", CODEX, Platform::Windows, &plan).unwrap();
+            let revision = if scenario == "stale" {
+                "0".repeat(64)
+            } else {
+                expected.revision.clone()
+            };
+            let mut runner = MetadataRunner {
+                inner: fixture.runner(),
+                outputs: vec![
+                    Ok(br#""99.99.99""#.to_vec()),
+                    Ok(if scenario == "second-preflight" {
+                        br#""99.99.98""#.to_vec()
+                    } else {
+                        br#""99.99.99""#.to_vec()
+                    }),
+                ]
+                .into(),
+            };
+            let gated = std::cell::Cell::new(0);
+            let installed = std::cell::Cell::new(0);
+            let result = install_reviewed_guarded_with(
+                "codex",
+                &revision,
+                CODEX,
+                &fixture.search,
+                &mut runner,
+                |actual| {
+                    assert_eq!(actual, &expected);
+                    gated.set(gated.get() + 1);
+                    if scenario == "gate-error" {
+                        Err("private failure detail".into())
+                    } else {
+                        Ok(())
+                    }
+                },
+                |_| {
+                    assert_eq!(gated.get(), 1);
+                    installed.set(installed.get() + 1);
+                    fixture.populate();
+                    Ok(())
+                },
+            );
+            assert_eq!(result.is_ok(), scenario == "success");
+            assert_eq!(
+                gated.get(),
+                usize::from(!matches!(scenario, "stale" | "second-preflight"))
+            );
+            assert_eq!(installed.get(), usize::from(scenario == "success"));
+            if scenario == "gate-error" {
+                let error = result.unwrap_err();
+                assert!(error.contains("no installer was started"));
+                assert!(!error.contains("private failure detail"));
+                assert!(!fixture.root.exists());
+            }
         }
     }
 

@@ -179,8 +179,11 @@ def assert_no_configuration(home):
     # Native WebKit caches are permitted, product/configuration mutations are not.
     forbidden = {'.aisync', '.codex', 'profiles', 'profile', 'vault', 'vault.json', 'backups', 'backup'}
     product = home / '.agentdeck'
-    if product.exists() and any(p.name not in {'registry', 'registry-update.lock'} for p in product.iterdir()):
+    if product.exists() and any(p.name not in {'registry', 'registry-update.lock', 'install-protection'} for p in product.iterdir()):
         raise InstallFailure('configuration_created')
+    if os.path.lexists(product / 'install-protection'):
+        from install_protection_fixture import validate_install_protection
+        validate_install_protection(home, required=True)
     if any(p.name.lower() in forbidden or p.name.lower().startswith(('vault.', 'profile.')) for p in home.rglob('*')):
         raise InstallFailure('configuration_created')
 
@@ -357,7 +360,7 @@ def exercise(driver, fixture, home, records, phase, trace=None, observe=None):
     assert_coverage(records)
 
 
-WRONG_ROOT_GUARD = '本进程中 Codex 安装完成状态未确认，已暂停自动版本探测。刷新或切换页面不会为此条目执行 Codex 或 npm；未清理残留。此保护不跨应用重启。'
+WRONG_ROOT_GUARD = 'Codex 安装保护未通过检查，已暂停此条目的主动探测。刷新或切换页面不会为此条目执行 Codex 或 npm；重启不代表安全恢复。未清理残留。'
 WRONG_ROOT_STAGES = ('wrong_root_rejected', 'automatic_refresh_guarded', 'manual_refresh_guarded', 'navigation_guarded', 'residue_unchanged')
 
 
@@ -380,10 +383,10 @@ def wrong_root_snapshot(fixture):
     return result
 
 
-def assert_wrong_root(fixture, expected=None):
+def assert_wrong_root(fixture, expected=None, attempts=1):
     if fixture['mode'] != 'wrong-root': raise InstallFailure('invalid_fixture_mode')
     if fixture['versions'].read_bytes() != b'': raise InstallFailure('wrong_root_agent_executed')
-    if fixture['calls'].read_bytes() != b'i': raise InstallFailure('wrong_root_install_count')
+    if fixture['calls'].read_bytes() != b'i' * attempts: raise InstallFailure('wrong_root_install_count')
     if fixture['marker'].read_bytes() != b'synthetic-install-once\n': raise InstallFailure('install_count')
     package = fixture['package']
     if (fixture['bin'] / 'codex').is_symlink() is not True or (fixture['bin'] / 'codex').resolve(strict=True) != package / 'bin/codex.js':
@@ -406,17 +409,9 @@ def assert_wrong_root_coverage(records):
 
 
 def exercise_wrong_root(driver, fixture, home, records, phase):
-    """A fresh native app session; never restart it with this complete residue."""
-    # A new WebDriver session can return before React mounts its controls.
-    # Poll only read-only readiness; each click/type action is still sent once.
-    agents_tab = "//*[@role='tab' and @aria-label='Agent 管理']"
-    search_input = "//*[@id='agent-search']"
-    phase('wrong_root_wait_agents_tab')
-    driver.wait(lambda: len(driver.elements(agents_tab)) == 1 and driver.enabled(agents_tab))
-    phase('wrong_root_open_agents')
-    driver.click(agents_tab)
-    phase('wrong_root_wait_search')
-    driver.wait(lambda: len(driver.elements(search_input)) == 1 and driver.enabled(search_input))
+    """Initial wrong-root attempt; the durable lane then restarts this HOME."""
+    phase('wrong_root_wait_workspace')
+    search_input = ready_agent_workspace(driver, 'wrong_root')
     phase('wrong_root_type_search')
     driver.type(search_input, 'Codex')
     search = driver.one("//*[@id='agent-search']")
@@ -467,3 +462,190 @@ def exercise_wrong_root(driver, fixture, home, records, phase):
     assert_no_configuration(home)
     records.append({'stage': 'residue_unchanged', 'verified': True})
     assert_wrong_root_coverage(records)
+
+
+RECOVERY_RESULT = "//*[@data-testid='codex-recovery-result']"
+RECOVERY_PREVIEW = "//*[@data-testid='codex-recovery-preview']"
+RECOVERY_CONFIRM = "//*[@data-testid='codex-recovery-confirm']"
+RECOVERY_CANCEL = "//*[@data-testid='codex-recovery-cancel']"
+RECOVERY_STAGES = ('restart_guarded', 'restart_refresh_guarded', 'restart_navigation_guarded', 'residue_recovery_blocked', 'authored_residue_relocated', 'recovery_cancel_unchanged', 'stale_recovery_rejected', 'explicit_recovery_confirmed', 'new_install_explicitly_confirmed', 'repeated_wrong_root_guarded')
+
+
+def protection_snapshot(home, phase=None):
+    from install_protection_fixture import validate_install_protection, protection_snapshot as snapshot
+    validate_install_protection(home, expected_phase=phase, required=True)
+    return snapshot(home)
+
+
+def unique_action(driver, selector):
+    driver.wait(lambda: len(driver.elements(selector))==1 and driver.enabled(selector))
+    driver.click(selector)
+
+
+def ready_agent_workspace(driver, diagnostic_prefix):
+    """Observe startup readiness, with at most one non-replayed tab activation."""
+    tab = "//*[@role='tab' and @aria-label='Agent 管理']"
+    selected = tab + "[@aria-selected='true']"
+    unselected = tab + "[@aria-selected='false' and not(@disabled)]"
+    search = "//*[@id='agent-search']"
+    idle = "//*[@aria-label='Agent 列表' and @aria-busy='false']"
+
+    def wait_read_only(predicate, classification):
+        # Startup can render between queries. Poll only observations; never
+        # retry a click, input, install or recovery request on failure.
+        try:
+            driver.wait(predicate)
+        except Exception as error:
+            raise InstallFailure(classification) from error
+
+    wait_read_only(lambda: len(driver.elements(tab)) == 1 and
+                   (len(driver.elements(selected)) == 1 or
+                    len(driver.elements(unselected)) == 1),
+                   diagnostic_prefix + '_workspace_tab_not_ready')
+    if len(driver.elements(selected)) != 1:
+        # At most one navigation action. An uncertain click is not replayed.
+        try:
+            driver.click(unselected)
+        except Exception as error:
+            raise InstallFailure(diagnostic_prefix + '_workspace_tab_activation_failed') from error
+    wait_read_only(lambda: len(driver.elements(selected)) == 1,
+                   diagnostic_prefix + '_workspace_tab_not_selected')
+    wait_read_only(lambda: len(driver.elements(search)) == 1 and
+                   len(driver.elements(search + "[not(@disabled)]")) == 1,
+                   diagnostic_prefix + '_workspace_search_not_ready')
+    wait_read_only(lambda: len(driver.elements(idle)) == 1,
+                   diagnostic_prefix + '_workspace_list_not_idle')
+    return search
+
+
+def select_recovery_agent(driver):
+    search = ready_agent_workspace(driver, 'recovery')
+    driver.type(search,'Codex')
+    element=driver.one(search)
+    driver.command('POST','/element/'+element+'/value',{'text':'\ue004','value':['\ue004']})
+    driver.wait(lambda: driver.value(search)=='Codex' and len(driver.elements("//*[@aria-label='Agent 列表']/article"))==1)
+
+
+def recovery_preview(driver, state, prefix=None):
+    unique_action(driver,RECOVERY_PREVIEW)
+    driver.wait(lambda: len(driver.elements(RECOVERY_RESULT+"[@data-state='"+state+"']"))==1)
+    if state=='eligible':
+        if prefix is None or '已记录安装位置：'+str(prefix) not in driver.text(RECOVERY_RESULT):raise InstallFailure('recovery_target_mismatch')
+        for slot in ('package_directory','posix_launcher'):
+            if driver.text(RECOVERY_RESULT+"//div[dt[text()='"+slot+"']]/dd")!='missing':raise InstallFailure('recovery_slot_mismatch')
+        if '确认只解除探测保护；之后刷新可恢复 npm/Codex 查询。不安装、不删除，也不代表包真实性或运行验证。' not in driver.text(RECOVERY_RESULT):raise InstallFailure('recovery_boundary_missing')
+    if state=='blocked' and driver.elements(RECOVERY_CONFIRM):
+        raise InstallFailure('blocked_recovery_has_confirm')
+
+
+def cancel_recovery(driver):
+    unique_action(driver,RECOVERY_CANCEL)
+    driver.wait(lambda:not driver.elements(RECOVERY_RESULT))
+
+
+def relocate_authored_residue(fixture):
+    # Harness-only manual repair. Product recovery never performs these moves.
+    # Preserve prefix/bin/lib/node_modules identities bound by the durable record.
+    archive=fixture['root']/'authored-relocated-residue'; archive.mkdir(mode=0o700)
+    files={}
+    for path in fixture['package'].rglob('*'):
+        if path.is_file():files[str(path.relative_to(fixture['package']))]=path.read_bytes()
+    fixture['package'].rename(archive/'codex-package')
+    (fixture['bin']/'codex').rename(archive/'codex-launcher')
+    fixture['marker'].rename(archive/'install-marker')
+    if {str(p.relative_to(archive/'codex-package')):p.read_bytes() for p in (archive/'codex-package').rglob('*') if p.is_file()}!=files:
+        raise InstallFailure('authored_relocation_changed_bytes')
+    if fixture['package'].exists() or os.path.lexists(fixture['bin']/'codex') or fixture['marker'].exists():
+        raise InstallFailure('authored_relocation_incomplete')
+    return archive
+
+
+def exercise_recovery_after_restart(driver,fixture,home,records,phase,residue,state_before,queries_before,synthetic_cases=None):
+    select_recovery_agent(driver)
+    def unchanged(stage, require_residue=True):
+        phase(stage)
+        driver.wait(lambda: len(driver.elements("//*[@aria-label='Agent 列表' and @aria-busy='false']"))==1)
+        if fixture['versions'].read_bytes()!=b'' or fixture['calls'].read_bytes()!=b'i' or query_counts(fixture)!=queries_before:
+            raise InstallFailure('durable_guard_executed_fixture')
+        if protection_snapshot(home,'failed_returned')!=state_before:raise InstallFailure('durable_state_changed')
+        if require_residue:assert_wrong_root(fixture,residue)
+        assert_no_configuration(home)
+        records.append({'stage':stage,'verified':True})
+    driver.wait(lambda:WRONG_ROOT_GUARD in driver.text("//*[@aria-label='Agent 列表']"))
+    unchanged('restart_guarded')
+    unique_action(driver,"//*[@id='workspace-panel-agents' and not(@hidden)]//button[text()='刷新列表']")
+    unchanged('restart_refresh_guarded')
+    unique_action(driver,"//*[@role='tab' and @aria-label='Qwen 配置检查']")
+    unique_action(driver,"//*[@role='tab' and @aria-label='Agent 管理']")
+    unchanged('restart_navigation_guarded')
+    recovery_preview(driver,'blocked');cancel_recovery(driver)
+    unchanged('residue_recovery_blocked')
+    phase('authored_residue_relocation')
+    archive=relocate_authored_residue(fixture)
+    preserved={str(p.relative_to(archive/'codex-package')):p.read_bytes() for p in (archive/'codex-package').rglob('*') if p.is_file()}
+    unchanged('authored_residue_relocated',False)
+    if synthetic_cases is not None:
+        driver=synthetic_cases()
+        select_recovery_agent(driver)
+        driver.wait(lambda:WRONG_ROOT_GUARD in driver.text("//*[@aria-label='Agent 列表']"))
+        if protection_snapshot(home,'failed_returned')!=state_before or query_counts(fixture)!=queries_before:raise InstallFailure('original_guard_changed_after_synthetic_cases')
+    recovery_preview(driver,'eligible',fixture['prefix']);cancel_recovery(driver)
+    unchanged('recovery_cancel_unchanged',False)
+    recovery_preview(driver,'eligible',fixture['prefix'])
+    # A test-authored PATH conflict invalidates the reviewed absence; do not
+    # modify/delete the preserved original package or the persistent record.
+    conflict=fixture['bin']/'codex';private_write(conflict,'authored conflict\n')
+    unique_action(driver,RECOVERY_CONFIRM)
+    driver.wait(lambda:not driver.elements(RECOVERY_RESULT+"[@data-state='eligible']"))
+    driver.wait(lambda:'恢复检查或确认未完成，保护状态未确认。请保留现有文件；不会自动重试。' in driver.text('//body'))
+    if conflict.read_text(encoding='utf-8')!='authored conflict\n':raise InstallFailure('recovery_changed_conflict')
+    conflict.rename(archive/'stale-recovery-conflict')
+    unchanged('stale_recovery_rejected',False)
+    if driver.elements(RECOVERY_RESULT):cancel_recovery(driver)
+    recovery_preview(driver,'eligible',fixture['prefix']);unique_action(driver,RECOVERY_CONFIRM)
+    driver.wait(lambda:not driver.elements(RECOVERY_RESULT))
+    driver.wait(lambda:len(driver.elements(PREVIEW))==1 and driver.enabled(PREVIEW))
+    protection_snapshot(home,'clear')
+    if fixture['calls'].read_bytes()!=b'i' or fixture['versions'].read_bytes()!=b'':raise InstallFailure('recovery_auto_installed_or_probed')
+    records.append({'stage':'explicit_recovery_confirmed','verified':True})
+    unique_action(driver,PREVIEW)
+    driver.wait(lambda:driver.elements(DIALOG));assert_plan(driver,fixture)
+    if fixture['calls'].read_bytes()!=b'i':raise InstallFailure('new_preview_installed')
+    unique_action(driver,CONFIRM)
+    alert="//*[@role='alert' and contains(@class,'agent-notice')]"
+    driver.wait(lambda:driver.elements(alert) and '安装请求已发送，但完成状态未确认。' in driver.text(alert))
+    assert_wrong_root(fixture,attempts=2)
+    records.append({'stage':'new_install_explicitly_confirmed','verified':True})
+    driver.wait(lambda:WRONG_ROOT_GUARD in driver.text("//*[@aria-label='Agent 列表']"))
+    protection_snapshot(home,'failed_returned');assert_wrong_root(fixture,attempts=2)
+    if {str(p.relative_to(archive/'codex-package')):p.read_bytes() for p in (archive/'codex-package').rglob('*') if p.is_file()}!=preserved:raise InstallFailure('authored_archive_changed')
+    records.append({'stage':'repeated_wrong_root_guarded','verified':True})
+    if records!=[{'stage':stage,'verified':True} for stage in RECOVERY_STAGES]:raise InstallFailure('incomplete_recovery_coverage')
+
+
+def raw_protection_snapshot(home):
+    from install_protection_fixture import protection_snapshot as snapshot
+    return snapshot(home)
+
+
+def exercise_synthetic_recovery_blocked(driver,fixture,home,case,records,phase,before,queries):
+    if case not in ('armed','corrupt'):raise InstallFailure('unknown_synthetic_case')
+    select_recovery_agent(driver)
+    phase('synthetic_'+case+'_guarded')
+    driver.wait(lambda:WRONG_ROOT_GUARD in driver.text("//*[@aria-label='Agent 列表']"))
+    for stage in ('startup','readonly_recovery','manual_refresh'):
+        if stage=='readonly_recovery':
+            if case=='armed':recovery_preview(driver,'blocked')
+            else:
+                unique_action(driver,RECOVERY_PREVIEW)
+                error="//*[@data-testid='codex-recovery-error']"
+                driver.wait(lambda:len(driver.elements(error))==1 and driver.text(error)=='恢复检查或确认未完成，保护状态未确认。请保留现有文件；不会自动重试。')
+                if driver.elements(RECOVERY_RESULT) or driver.elements(RECOVERY_CONFIRM):raise InstallFailure('corrupt_recovery_offered_result')
+            cancel_recovery(driver)
+        if stage=='manual_refresh':
+            unique_action(driver,"//*[@id='workspace-panel-agents' and not(@hidden)]//button[text()='刷新列表']")
+        driver.wait(lambda:len(driver.elements("//*[@aria-label='Agent 列表' and @aria-busy='false']"))==1)
+        if raw_protection_snapshot(home)!=before:raise InstallFailure('synthetic_guard_changed')
+        if fixture['versions'].read_bytes()!=b'' or fixture['calls'].read_bytes()!=b'i' or query_counts(fixture)!=queries:raise InstallFailure('synthetic_guard_executed_fixture')
+        if fixture['package'].exists() or os.path.lexists(fixture['bin']/'codex') or fixture['marker'].exists():raise InstallFailure('synthetic_guard_created_residue')
+        records.append({'case':case,'stage':stage,'verified':True,'testAuthoredState':True,'crashRecoveryVerified':False})
