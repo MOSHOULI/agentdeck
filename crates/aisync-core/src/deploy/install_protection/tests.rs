@@ -22,7 +22,10 @@ impl Fixture {
     }
     fn state(&self) -> PathBuf {
         self.home()
-            .join(".agentdeck/install-protection/codex/state.json")
+            .join(".agentdeck")
+            .join("install-protection")
+            .join("codex")
+            .join("state.json")
     }
 }
 impl Drop for Fixture {
@@ -398,14 +401,17 @@ fn windows_untrusted_dacl_and_junction_state_are_rejected() {
     let directory = f.state().parent().unwrap().to_owned();
     let moved = f.0.join("moved-state");
     fs::rename(&directory, &moved).unwrap();
-    let status = Command::new("cmd.exe")
+    let output = Command::new("cmd.exe")
         .args(["/D", "/C", "mklink", "/J"])
         .arg(&directory)
         .arg(&moved)
-        .stdout(Stdio::null())
-        .status()
+        .output()
         .unwrap();
-    assert!(status.success());
+    assert!(
+        output.status.success(),
+        "junction fixture setup failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(Store::open_existing(&f.home()).is_err());
     // Remove only this test-created junction, never recurse through its target.
     fs::remove_dir(&directory).unwrap();
