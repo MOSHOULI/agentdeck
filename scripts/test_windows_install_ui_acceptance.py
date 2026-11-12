@@ -398,6 +398,16 @@ ConvertTo-Json -InputObject $results -Compress
         self.assertIn("$names -cnotcontains ('已记录安装位置：' + $expectedPrefix)",check)
         self.assertNotIn("$text.Contains('已记录安装位置：'",check)
 
+    def test_recovery_target_mismatch_keeps_evidence_and_strict_failure(self):
+        check = UI[UI.index('function Assert-RecoveryEligibleTarget'):UI.index('function Check-ExplicitInstallRecovery')]
+        self.assertIn("if ($names -cnotcontains ('已记录安装位置：' + $expectedPrefix))", check)
+        self.assertIn("Save-QwenEvidence 'recovery-eligible-target-mismatch'", check)
+        self.assertIn("labelNodePresent = $names -ccontains '已记录安装位置：'", check)
+        self.assertIn('exactPrefixNodePresent = $names -ccontains $expectedPrefix', check)
+        self.assertLess(check.index("Save-QwenEvidence 'recovery-eligible-target-mismatch'"),
+                        check.index("throw 'Recovery preview target mismatch'"))
+        self.assertNotIn('return', check)
+
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
         self.assertLess(LIFECYCLE.index('    Check-ReviewedInstall'), LIFECYCLE.index('    Check-CodexReadonly'))

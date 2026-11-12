@@ -658,7 +658,16 @@ function Assert-RecoveryEligibleTarget($fixture) {
     $names = @($nodes | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
     $text = $names -join "`n"
     $expectedPrefix = ConvertTo-ExpectedRecoveryPrefix $fixture.prefix
-    if ($names -cnotcontains ('已记录安装位置：' + $expectedPrefix)) { throw 'Recovery preview target mismatch' }
+    if ($names -cnotcontains ('已记录安装位置：' + $expectedPrefix)) {
+        Save-QwenEvidence 'recovery-eligible-target-mismatch'
+        Record 'recovery-eligible-target-mismatch' @{
+            labelNodePresent = $names -ccontains '已记录安装位置：'
+            exactPrefixNodePresent = $names -ccontains $expectedPrefix
+            # Diagnostic only: neither separated nor concatenated names grant acceptance.
+            fullTargetNodePresent = $false
+        }
+        throw 'Recovery preview target mismatch'
+    }
     foreach ($slot in @('package_directory','posix_launcher','cmd_launcher','powershell_launcher','exe_launcher','com_launcher','bat_launcher')) {
         if ($names -cnotcontains $slot) { throw 'Recovery preview slot missing' }
     }
