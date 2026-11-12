@@ -110,14 +110,14 @@ enum Commands {
 enum QoderAction {
     /// Recheck an explicit private deployment without cache, execution, repair or ownership claims.
     InspectDeployment {
-        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86", "1.1.87"])]
         release: String,
         #[arg(long)]
         deployment: PathBuf,
     },
     /// Review fixed Qoder reviewed release (default 1.1.85) baseline private executable deployment (no writes).
     DeployPreview {
-        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86", "1.1.87"])]
         release: String,
         #[arg(long)]
         cache: PathBuf,
@@ -129,7 +129,7 @@ enum QoderAction {
         long_about = "Linux x86_64 only. Deploy pinned Qoder reviewed release (default 1.1.85) baseline to a NEW directory beneath an existing private 0700 parent. Requires a matching deploy-preview token and --yes. Source cache stays non-executable; only the new verified payload gets mode 0700. No PATH, global links, program execution, authentication or configuration changes. Existing destinations are never reused. Any failure after creation may leave executable partial output; preserve for manual review, never retry in place. Not latest-version, signature or runtime compatibility verification."
     )]
     DeployPrivate {
-        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86", "1.1.87"])]
         release: String,
         #[arg(long)]
         cache: PathBuf,
@@ -145,7 +145,7 @@ enum QoderAction {
         long_about = "Linux x86_64 only. Observe an explicit Qoder reviewed release (default 1.1.85) baseline staged or unpacked cache. Fixed record contracts and complete archive/payload hashes are rechecked. No locks, writes, cleanup, execution or PATH changes. Exit zero reports an observation, including conflict/unknown ownership, not readiness or permission to delete. Reads may update access times; same-user races are not an atomic guarantee."
     )]
     InspectCache {
-        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86", "1.1.87"])]
         release: String,
         #[arg(long)]
         cache: PathBuf,
@@ -155,7 +155,7 @@ enum QoderAction {
         long_about = "Linux x86_64 only: validate the explicit staged Qoder reviewed release (default 1.1.85) baseline cache and extract its single pinned payload into a NEW private directory. Requires --yes. No execution, activation, PATH, login or configuration changes. Completion means extracted cache only, not installed. Records are not authorization; fixed archive and payload hashes are independently rechecked. Existing destinations are never overwritten. Failure may retain partial output; inspect before manual cleanup, never retry in place."
     )]
     UnpackCache {
-        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86", "1.1.87"])]
         release: String,
         #[arg(long)]
         cache: PathBuf,
@@ -169,7 +169,7 @@ enum QoderAction {
         long_about = "Create a new explicit private archive cache, only for linux-amd64-baseline at the explicit reviewed release (default 1.1.85) on Linux x86_64. Requires --yes. Existing destinations are never reused or overwritten. Copies and hashes the same audited source handle, then rechecks the private copy. No unpacking, execution, PATH or configuration writes. Failure may retain an incomplete destination; inspect before manual cleanup. Completion means staged archive only, not installed/runtime-ready. Same-user hostile races and mount I/O deadlines are not solved."
     )]
     StagePackage {
-        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86", "1.1.87"])]
         release: String,
         #[arg(long, value_parser = [qoder::staging::TARGET])]
         target: String,
@@ -182,7 +182,7 @@ enum QoderAction {
     },
     /// Print a pinned native distribution plan; never download, install or execute.
     DistributionPlan {
-        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86", "1.1.87"])]
         release: String,
         #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(qoder::distribution::TARGETS.iter().copied()))]
         target: String,
@@ -192,7 +192,7 @@ enum QoderAction {
         long_about = "Check an explicit local archive against the fixed reviewed Qoder reviewed release (default 1.1.85) target SHA256. Does not download, unpack, execute, install, modify PATH or configuration. Requires the official archive basename. Exit 0 means only a digest match; NOT independent signature verification, installation or runtime compatibility. Unknown target, unsupported/unsafe file, oversized input and mismatch exit nonzero. Only audited Windows/Linux readers are supported; access time may change and same-user races/mount I/O deadlines are not solved."
     )]
     VerifyPackage {
-        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86", "1.1.87"])]
         release: String,
         #[arg(long, value_parser = clap::builder::PossibleValuesParser::new(qoder::distribution::TARGETS.iter().copied()))]
         target: String,
@@ -1603,7 +1603,7 @@ mod tests {
 
     #[test]
     fn qoder_deployment_inspection_requires_explicit_readonly_selection() {
-        for release in ["1.1.85", "1.1.86"] {
+        for release in ["1.1.85", "1.1.86", "1.1.87"] {
             let cli = Cli::try_parse_from([
                 "aisync",
                 "qoder",

@@ -4,6 +4,7 @@ fn selected_release(release: Option<String>) -> Result<&'static str, String> {
     match release.as_deref().unwrap_or("1.1.85") {
         "1.1.85" => Ok("1.1.85"),
         "1.1.86" => Ok("1.1.86"),
+        "1.1.87" => Ok("1.1.87"),
         _ => Err("QODER_UNREVIEWED_RELEASE".into()),
     }
 }
@@ -279,11 +280,11 @@ mod tests {
     #[test]
     fn explicit_release_selection_defaults_old_and_rejects_unknown_before_io() {
         assert_eq!(selected_release(None).unwrap(), "1.1.85");
-        for release in ["1.1.85", "1.1.86"] {
+        for release in ["1.1.85", "1.1.86", "1.1.87"] {
             assert_eq!(selected_release(Some(release.into())).unwrap(), release);
         }
         tauri::async_runtime::block_on(async {
-            for release in ["latest", "", "1.1.87", "SECRET"] {
+            for release in ["latest", "", "1.1.88", "SECRET"] {
                 let r = Some(release.to_string());
                 assert_eq!(
                     selected_release(r.clone()).unwrap_err(),
@@ -343,12 +344,14 @@ mod tests {
                     "QODER_UNREVIEWED_RELEASE"
                 );
             }
-            for target in distribution::TARGETS {
-                let plan = qoder_distribution_plan(target.to_string(), Some("1.1.86".into()))
-                    .await
-                    .unwrap();
-                assert_eq!(plan.version, "1.1.86");
-                assert!(!plan.install_supported && !plan.execution_verified);
+            for release in ["1.1.86", "1.1.87"] {
+                for target in distribution::TARGETS {
+                    let plan = qoder_distribution_plan(target.to_string(), Some(release.into()))
+                        .await
+                        .unwrap();
+                    assert_eq!(plan.version, release);
+                    assert!(!plan.install_supported && !plan.execution_verified);
+                }
             }
         });
     }

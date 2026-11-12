@@ -13,8 +13,8 @@ class Tests(unittest.TestCase):
 
     def test_closed_selection_and_default_preserved(self):
         self.assertEqual(releases.DEFAULT, '1.1.85')
-        self.assertEqual(set(releases.RELEASES), {'1.1.85', '1.1.86'})
-        for invalid in ('latest', '1.1.87', 'https://other', ''):
+        self.assertEqual(set(releases.RELEASES), {'1.1.85', '1.1.86', '1.1.87'})
+        for invalid in ('latest', '1.1.88', 'https://other', ''):
             with self.assertRaises(ValueError): complete.select_release(invalid)
         with self.assertRaises(TypeError): releases.RELEASES['latest'] = ()
 
@@ -27,6 +27,21 @@ class Tests(unittest.TestCase):
         complete.select_release('1.1.85')
         self.assertEqual(complete.pinned.SIZE, 78_587_775)
         self.assertEqual(complete.PAYLOAD_BYTES, 182_543_840)
+
+    def test_187_exact_fixed_contract_and_no_default_change(self):
+        complete.select_release('1.1.87')
+        self.assertEqual(complete.pinned.SIZE, 78_554_027)
+        self.assertEqual(complete.PAYLOAD_BYTES, 182_466_016)
+        self.assertEqual(complete.PAYLOAD_SHA256, '61e318f6c4d2ebae319aecfce2f18472c51e7b413a546accddaeb82e2592af2e')
+        self.assertEqual(complete.release_args(), ['--release', '1.1.87'])
+        self.assertEqual(complete.pinned.URL, 'https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.87/qodercli-linux-x64-baseline.tar.gz')
+        self.assertEqual(releases.DEFAULT, '1.1.85')
+
+    def test_ci_retains_three_versions_and_all_pair_inputs(self):
+        workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/ci.yml').read_text()
+        self.assertIn("qoder_release: ['1.1.85', '1.1.86', '1.1.87']", workflow)
+        self.assertIn('--additional-archive "$RUNNER_TEMP/qoder-linux-official/qodercli-linux-x64-baseline.tar.gz"', workflow)
+        self.assertIn('--current-archive "$RUNNER_TEMP/qoder-linux-intermediate/qodercli-linux-x64-baseline.tar.gz"', workflow)
 
     def test_manifest_snapshot_matches_archive_contract(self):
         path = Path(__file__).resolve().parents[1] / 'docs/upstream/qoder/manifest-1.1.86.json'

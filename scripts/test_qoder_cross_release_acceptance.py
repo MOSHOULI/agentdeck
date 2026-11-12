@@ -10,7 +10,7 @@ import qoder_cross_release_acceptance as h
 class Tests(unittest.TestCase):
     def tearDown(self): h.complete.select_release('1.1.85')
 
-    def exercise(self, corrupt=False):
+    def exercise(self, corrupt=False, releases=('1.1.85', '1.1.86')):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); evidence=root/'evidence'; calls=[]
             def prepare(cli, archive, parent, env):
@@ -24,14 +24,14 @@ class Tests(unittest.TestCase):
                 calls.append((h.complete.pinned.VERSION,cache.name))
                 if corrupt: destination.mkdir(mode=0o700)
             with patch.dict(os.environ,{'RUNNER_TEMP':str(root)}), patch.object(h.deployment,'guard'), patch.object(h.complete,'prepare',side_effect=prepare), patch.object(h.deployment,'run_preview',return_value='a'*64), patch.object(h.deployment,'run_deploy',side_effect=reject), patch.object(h,'reject_fresh_preview') as fresh, patch.object(h,'inspect_state') as inspect:
-                result=h.run(Path('/cli'),{'1.1.85':root/'85','1.1.86':root/'86'},evidence)
+                result=h.run(Path('/cli'),{v: root/v for v in releases},evidence)
             if result:
-                self.assertEqual(fresh.call_count, 8)
-                self.assertEqual(inspect.call_count, 10)
+                self.assertEqual(fresh.call_count, len(releases)*(len(releases)-1)*4)
+                self.assertEqual(inspect.call_count, len(releases)*(len(releases)-1)*5)
                 whole = [call.args[-1] for call in inspect.call_args_list if call.args[3].name.startswith('foreign-inspect-')]
-                self.assertEqual(whole, ['unknown_ownership', 'conflict'])
+                self.assertEqual(whole, [h.FOREIGN_STATES[(r, other)] for r in releases for other in releases if r != other])
                 mixed = [call.args[-1] for call in inspect.call_args_list if call.args[3].name.startswith('inspect-')]
-                self.assertEqual(mixed, ['conflict'] * 6)
+                self.assertEqual(mixed, ['conflict'] * (len(releases)*(len(releases)-1)*3))
             return result,json.loads((evidence/'result.json').read_text()),calls
 
     def test_both_directions_all_three_members_required(self):
@@ -44,6 +44,46 @@ class Tests(unittest.TestCase):
         self.assertEqual({(x['release'],x['member']) for x in report['checks']},
                          {(r,m) for r in ('1.1.85','1.1.86') for m in ('receipt','archive','payload')})
         self.assertTrue(all(x['destination_absent'] and x['source_unchanged'] for x in report['checks']))
+
+    def test_three_releases_cover_every_direction_and_member(self):
+        releases = ('1.1.85', '1.1.86', '1.1.87')
+        ok, report, calls = self.exercise(releases=releases)
+        self.assertTrue(ok)
+        self.assertEqual(report['releases'], list(releases))
+        self.assertEqual(len(calls), 18)
+        self.assertEqual(len(report['whole_cache_checks']), 6)
+        self.assertEqual(len(report['same_release_checks']), 6)
+        self.assertEqual({(x['release'], x['foreign_release'], x['member']) for x in report['checks']},
+                         {(r, o, m) for r in releases for o in releases if r != o for m in ('receipt', 'archive', 'payload')})
+
+    def test_whole_cache_pair_states_follow_exact_size_then_intent_order(self):
+        self.assertEqual(h.FOREIGN_STATES, {
+            ('1.1.85', '1.1.86'): 'unknown_ownership',
+            ('1.1.85', '1.1.87'): 'unknown_ownership',
+            ('1.1.86', '1.1.85'): 'conflict',
+            ('1.1.86', '1.1.87'): 'conflict',
+            ('1.1.87', '1.1.85'): 'conflict',
+            ('1.1.87', '1.1.86'): 'unknown_ownership',
+        })
+        for (selected, foreign), expected in h.FOREIGN_STATES.items():
+            own = h.complete.pinned.releases.contract(selected)
+            other = h.complete.pinned.releases.contract(foreign)
+            self.assertEqual(expected, 'conflict' if other[0] > own[0] or other[2] > own[2] else 'unknown_ownership')
+
+    def test_187_foreign_186_requires_exact_unknown_not_any_rejection_state(self):
+        h.complete.select_release('1.1.87')
+        valid = {'version': '1.1.87', 'state': 'unknown_ownership', 'installed': False, 'deletion_authorized': False}
+        with patch.object(h.complete, 'run_cli', return_value=valid), patch.object(h.deployment, 'check_trace'):
+            h.inspect_state(Path('/cli'), Path('/cache'), {}, Path('/trace'), 'unknown_ownership')
+        for state in ['conflict', 'incomplete', 'unpacked_payload_verified', 'staged_archive_verified']:
+            with patch.object(h.complete, 'run_cli', return_value={**valid, 'state': state}), patch.object(h.deployment, 'check_trace'), self.assertRaises(h.deployment.Failure):
+                h.inspect_state(Path('/cli'), Path('/cache'), {}, Path('/trace'), 'unknown_ownership')
+
+    def test_unsupported_or_single_release_fails_before_guard_or_writes(self):
+        for releases in [('1.1.85',), ('1.1.85', 'latest')]:
+            with patch.object(h.deployment, 'guard') as guard, self.assertRaises(h.deployment.Failure):
+                h.run(Path('/cli'), {v: Path('/archive') for v in releases}, Path('/not-created'))
+            guard.assert_not_called()
 
     def test_rejection_that_writes_target_fails_closed(self):
         ok,report,calls=self.exercise(corrupt=True)

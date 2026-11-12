@@ -108,3 +108,17 @@ it('unreviewed releases fail before all Qoder IPC calls', async () => {
   await expect(bridge.writeQoderCache('stage', '/file', '/new', true, release)).rejects.toThrow();
   expect(invoke).not.toHaveBeenCalled();
 });
+
+it.each(qoderTargets)('explicit reviewed 1.1.87 target %s rejects older manifest evidence', async target => {
+  const next=qoderRawPlan(target,'1.1.87');
+  expect(validateQoderPlan(next,target,'1.1.87').version).toBe('1.1.87');
+  expect(()=>validateQoderPlan(next,target)).toThrow();
+  for(const release of ['1.1.85','1.1.86'] as const){
+    const old=qoderRawPlan(target,release);
+    expect(()=>validateQoderPlan(old,target,'1.1.87')).toThrow();
+    expect(()=>validateQoderPlan(next,target,release)).toThrow();
+    for(const key of ['version','manifest_sha256','url','sha256'] as const) expect(()=>validateQoderPlan({...next,[key]:old[key]},target,'1.1.87')).toThrow();
+  }
+  vi.mocked(invoke).mockResolvedValue(next);await bridge.qoderDistributionPlan(target,'1.1.87');
+  expect(invoke).toHaveBeenLastCalledWith('qoder_distribution_plan',{target,release:'1.1.87'});
+});

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real two-release mixed cache rejection; never execute a Qoder payload."""
+"""Real fixed-release mixed cache rejection; never execute a Qoder payload."""
 import argparse
 import json
 import os
@@ -10,6 +10,20 @@ import subprocess
 import tempfile
 import qoder_complete_fixtures as complete
 import qoder_private_deploy_acceptance as deployment
+
+
+# Exact observations for fixed whole foreign caches. The core checks selected
+# archive/payload size ceilings before reading the intent version. A smaller
+# foreign cache reaches the mismatched intent (unknown_ownership); a larger
+# member fails the ceiling first (conflict). Neither state authorizes mutation.
+FOREIGN_STATES = {
+    ('1.1.85', '1.1.86'): 'unknown_ownership',
+    ('1.1.85', '1.1.87'): 'unknown_ownership',
+    ('1.1.86', '1.1.85'): 'conflict',
+    ('1.1.86', '1.1.87'): 'conflict',
+    ('1.1.87', '1.1.85'): 'conflict',
+    ('1.1.87', '1.1.86'): 'unknown_ownership',
+}
 
 
 def trace_command(cli, action, cache, trace, destination=None):
@@ -46,12 +60,15 @@ def inspect_state(cli, cache, env, trace, expected):
 
 
 def run(cli, archives, evidence):
+    if len(archives) < 2 or not set(archives).issubset(complete.pinned.releases.RELEASES):
+        raise deployment.Failure('unsupported_cross_release_selection')
+    pairs = [(release, other) for release in archives for other in archives if release != other]
     for archive in archives.values(): deployment.guard(cli, archive, evidence)
     evidence.mkdir(mode=0o700, exist_ok=False)
     root = Path(tempfile.mkdtemp(prefix='qoder-cross-release-', dir=os.environ['RUNNER_TEMP']))
     home = root / 'home'; home.mkdir(mode=0o700)
     env = {'HOME': str(home), 'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}
-    report = {'passed': False, 'releases': list(complete.pinned.releases.RELEASES),
+    report = {'passed': False, 'releases': list(archives),
               'checks': [], 'whole_cache_checks': [], 'same_release_checks': [], 'harness_invokes_qoder': False,
               'boundary': 'Real fixed archive/payload caches; each rejected deploy traced. Preparation does not invoke Qoder but is not traced here. No runtime or authentication acceptance.'}
     try:
@@ -62,35 +79,35 @@ def run(cli, archives, evidence):
             prepared[release], _ = complete.prepare(cli, archive, parent, env)
         originals = {release: deployment.snapshot(paths['unpacked']) for release, paths in prepared.items()}
         home_before = deployment.snapshot(home)
-        for release, other in [('1.1.85', '1.1.86'), ('1.1.86', '1.1.85')]:
+        for release, other in pairs:
             complete.select_release(release)
             own = prepared[release]['unpacked']
-            matching_target = root / f'matching-{release}'
-            deployment.run_preview(cli, own, matching_target, env, root / f'matching-{release}.trace')
-            inspect_state(cli, own, env, root / f'matching-inspect-{release}.trace', 'unpacked_payload_verified')
+            matching_target = root / f'matching-{release}-{other}'
+            deployment.run_preview(cli, own, matching_target, env, root / f'matching-{release}-{other}.trace')
+            inspect_state(cli, own, env, root / f'matching-inspect-{release}-{other}.trace', 'unpacked_payload_verified')
             if os.path.lexists(matching_target): raise deployment.Failure('matching_preview_wrote_target')
-            report['same_release_checks'].append({'release': release, 'preview_success': True, 'verified_inspection': True})
+            report['same_release_checks'].append({'release': release, 'foreign_release': other, 'preview_success': True, 'verified_inspection': True})
             foreign = prepared[other]['unpacked']
-            foreign_target = root / f'foreign-{release}'
-            reject_fresh_preview(cli, foreign, foreign_target, env, root / f'foreign-preview-{release}.trace')
-            foreign_state = 'unknown_ownership' if release == '1.1.85' else 'conflict'
-            inspect_state(cli, foreign, env, root / f'foreign-inspect-{release}.trace', foreign_state)
+            foreign_target = root / f'foreign-{release}-{other}'
+            reject_fresh_preview(cli, foreign, foreign_target, env, root / f'foreign-preview-{release}-{other}.trace')
+            foreign_state = FOREIGN_STATES[(release, other)]
+            inspect_state(cli, foreign, env, root / f'foreign-inspect-{release}-{other}.trace', foreign_state)
             if os.path.lexists(foreign_target): raise deployment.Failure('foreign_preview_wrote_target')
             if any(deployment.snapshot(paths['unpacked']) != originals[v] for v, paths in prepared.items()) or deployment.snapshot(home) != home_before:
                 raise deployment.Failure('foreign_cache_check_changed_state')
             report['whole_cache_checks'].append({'selected_release': release, 'cache_release': other, 'fresh_preview_rejected': True, 'inspection': foreign_state, 'source_unchanged': True, 'destination_absent': True})
             for member, category in [('complete.json', 'receipt'), ('archive.tar.gz', 'archive'), ('qodercli', 'payload')]:
-                cache = root / f'mixed-{release}-{category}'
+                cache = root / f'mixed-{release}-{other}-{category}'
                 shutil.copytree(prepared[release]['unpacked'], cache)
-                destination = root / f'destination-{release}-{category}'
-                token = deployment.run_preview(cli, cache, destination, env, root / f'preview-{release}-{category}.trace')
+                destination = root / f'destination-{release}-{other}-{category}'
+                token = deployment.run_preview(cli, cache, destination, env, root / f'preview-{release}-{other}-{category}.trace')
                 # Harness-authored mutation after a valid preview. Snapshot AFTER
                 # mixing distinguishes our intentional setup from product writes.
                 shutil.copyfile(prepared[other]['unpacked'] / member, cache / member)
                 before = deployment.snapshot(cache)
-                reject_fresh_preview(cli, cache, destination, env, root / f'fresh-{release}-{category}.trace')
-                inspect_state(cli, cache, env, root / f'inspect-{release}-{category}.trace', 'conflict')
-                deployment.run_deploy(cli, cache, destination, token, env, root / f'reject-{release}-{category}.trace', reject=True)
+                reject_fresh_preview(cli, cache, destination, env, root / f'fresh-{release}-{other}-{category}.trace')
+                inspect_state(cli, cache, env, root / f'inspect-{release}-{other}-{category}.trace', 'conflict')
+                deployment.run_deploy(cli, cache, destination, token, env, root / f'reject-{release}-{other}-{category}.trace', reject=True)
                 if os.path.lexists(destination) or deployment.snapshot(cache) != before:
                     raise deployment.Failure('mixed_release_rejection_changed_state')
                 if deployment.snapshot(home) != home_before:
@@ -101,7 +118,7 @@ def run(cli, archives, evidence):
                 report['checks'].append({'release': release, 'foreign_release': other, 'member': category,
                                         'rejected': True, 'fresh_preview_rejected': True, 'inspection': 'conflict', 'destination_absent': True, 'source_unchanged': True,
                                         'preview_exec_count': 1, 'rejection_exec_count': 1})
-        if len(report['checks']) != 6 or len(report['whole_cache_checks']) != 2 or len(report['same_release_checks']) != 2: raise deployment.Failure('missing_cross_release_coverage')
+        if len(report['checks']) != len(pairs) * 3 or len(report['whole_cache_checks']) != len(pairs) or len(report['same_release_checks']) != len(pairs): raise deployment.Failure('missing_cross_release_coverage')
         report['passed'] = True
     except Exception as error:
         report['failure'] = str(error) if isinstance(error, (deployment.Failure, complete.PreparationFailure)) else 'unexpected_cross_release_failure'
@@ -115,9 +132,12 @@ def main():
     parser.add_argument('--cli', type=Path, required=True)
     parser.add_argument('--legacy-archive', type=Path, required=True)
     parser.add_argument('--current-archive', type=Path, required=True)
+    parser.add_argument('--additional-archive', type=Path, help='Fixed reviewed 1.1.87 archive; adds all bidirectional pairs')
     parser.add_argument('--evidence', type=Path, required=True)
     args = parser.parse_args()
-    try: return 0 if run(args.cli, {'1.1.85': args.legacy_archive, '1.1.86': args.current_archive}, args.evidence) else 1
+    archives = {'1.1.85': args.legacy_archive, '1.1.86': args.current_archive}
+    if args.additional_archive is not None: archives['1.1.87'] = args.additional_archive
+    try: return 0 if run(args.cli, archives, args.evidence) else 1
     except Exception:
         print('Qoder cross-release acceptance could not start')
         return 1

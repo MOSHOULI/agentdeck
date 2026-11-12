@@ -1,9 +1,11 @@
 import manifest from '../../../docs/upstream/qoder/manifest-1.1.85.json';
+import manifest87 from '../../../docs/upstream/qoder/manifest-1.1.87.json';
 import manifest86 from '../../../docs/upstream/qoder/manifest-1.1.86.json';
 import { requireQoderRelease, type QoderRelease } from './qoderReleases';
-const manifestHashes = { '1.1.85': 'a78234316fe2065cdae6fc17ac425bbc2ae11006d04b6ab5216fd6093597e4de', '1.1.86': 'f323905da3f75088b1e9ae4cf9b0fef6f117879f4f6942b609e92228a533fa78' };
+const manifests = { '1.1.85': manifest, '1.1.86': manifest86, '1.1.87': manifest87 };
+const manifestHashes = { '1.1.87': '5bea07a5bb10187aac873a1b3c5f7362e0b18f464daf4612cdc804cde31cd8ba', '1.1.85': 'a78234316fe2065cdae6fc17ac425bbc2ae11006d04b6ab5216fd6093597e4de', '1.1.86': 'f323905da3f75088b1e9ae4cf9b0fef6f117879f4f6942b609e92228a533fa78' };
 const maxBytes = 256 * 1024 * 1024;
-const filesFor = (version: QoderRelease) => (version === '1.1.85' ? manifest : manifest86).files.map(file => ({ ...file, id: `${file.os}-${file.arch}${'variant' in file ? `-${file.variant}` : ''}` }));
+const filesFor = (version: QoderRelease) => manifests[version].files.map(file => ({ ...file, id: `${file.os}-${file.arch}${'variant' in file ? `-${file.variant}` : ''}` }));
 export const qoderTargets = filesFor('1.1.85').map(file => file.id);
 export interface QoderPlan { target: string; version: QoderRelease; archiveName: string; url: string; sha256: string; manifestHash: string; runtime: string; variant: string; requirements: string }
 export interface QoderVerification { plan: QoderPlan; bytes: number }

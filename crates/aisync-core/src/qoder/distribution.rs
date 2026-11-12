@@ -6,7 +6,7 @@ use std::path::Path;
 pub const VERSION: &str = "1.1.85";
 pub const MANIFEST_SHA256: &str =
     "a78234316fe2065cdae6fc17ac425bbc2ae11006d04b6ab5216fd6093597e4de";
-pub const RELEASES: &[&str] = &["1.1.85", "1.1.86"];
+pub const RELEASES: &[&str] = &["1.1.85", "1.1.86", "1.1.87"];
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(
     not(all(target_os = "linux", target_arch = "x86_64")),
@@ -34,6 +34,13 @@ pub(crate) fn reviewed_release(release: &str) -> Result<ReviewedRelease, Distrib
             tar_bytes: 182_414_848,
             payload_bytes: 182_412_768,
             payload_sha256: "fccd0ce90d1119f6bb213146de6e45358db0c89585048c31315ddb180c925ae8",
+        }),
+        "1.1.87" => Ok(ReviewedRelease {
+            version: "1.1.87",
+            archive_bytes: 78_554_027,
+            tar_bytes: 182_468_096,
+            payload_bytes: 182_466_016,
+            payload_sha256: "61e318f6c4d2ebae319aecfce2f18472c51e7b413a546accddaeb82e2592af2e",
         }),
         _ => Err(DistributionError::UnknownRelease),
     }
@@ -267,6 +274,60 @@ pub fn plan_for_release(
     let reviewed = reviewed_release(release)?;
     let mut plan = plan(target)?;
     if reviewed.version == VERSION {
+        return Ok(plan);
+    }
+    if reviewed.version == "1.1.87" {
+        let (url, sha256) = match target {
+            "darwin-arm64" => (
+                "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.87/qodercli-darwin-arm64.tar.gz",
+                "6bacbb3bfc23d4677d1ed811367d713e2a8fdd408d6785b5edaf8c6055fb34eb",
+            ),
+            "darwin-amd64" => (
+                "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.87/qodercli-darwin-x64.tar.gz",
+                "a90ffc0d95ceb45ffbbeee3ed324d8d6f63f6a508715f7ce2dd58146374b73bc",
+            ),
+            "linux-arm64-musl" => (
+                "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.87/qodercli-linux-arm64-musl.tar.gz",
+                "228339b08cb10c33e89f20334d7d7ab71714c1b903df330e32cce02331b89db8",
+            ),
+            "linux-arm64" => (
+                "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.87/qodercli-linux-arm64.tar.gz",
+                "bb321552d11ebcbcf67fe85ec8dd56c59459edb586b7ba391febe3cec0979314",
+            ),
+            "linux-amd64-baseline" => (
+                "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.87/qodercli-linux-x64-baseline.tar.gz",
+                "738ee635eb868f5963526779ce023addbd63377b77861060a4c2af53bb83c2db",
+            ),
+            "linux-amd64-musl" => (
+                "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.87/qodercli-linux-x64-musl.tar.gz",
+                "60f3ae33fc9ecde24c2b0d1735e0acae5d2ee753b21bec6d85ab238150688b8e",
+            ),
+            "linux-amd64" => (
+                "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.87/qodercli-linux-x64.tar.gz",
+                "dd4d3b27da9ed875f95eafa6c1f7b0c37fa3657d409d3705f8fc528424eaf9bb",
+            ),
+            "openharmony-arm64" => (
+                "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.87/qodercli-openharmony-arm64.tar.gz",
+                "bca3ed3aec0bf77b82e6c3a556e5e859a4e79277470345379de5b9dce0b823e5",
+            ),
+            "windows-arm64-standard" => (
+                "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.87/qodercli-windows-arm64.zip",
+                "7d96da487c9f362ac5e6fa31b09be72f2e4203b6681ff58e7b3c1a09e7728210",
+            ),
+            "windows-amd64-legacy" => (
+                "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.87/qodercli-windows-x64-legacy.zip",
+                "f9d4eb26f5ed0857ba1fb78a85d7f07da3ea0605750101ad13fcd0f9f189c872",
+            ),
+            "windows-amd64-standard" => (
+                "https://qoder-ide.oss-accelerate.aliyuncs.com/qodercli/releases/1.1.87/qodercli-windows-x64.zip",
+                "a23933e8f82b1a7238a0d12a5c0a94f96beace6928b33da7322f44344515f9d5",
+            ),
+            _ => return Err(DistributionError::UnknownTarget),
+        };
+        plan.version = reviewed.version;
+        plan.url = url;
+        plan.sha256 = sha256;
+        plan.manifest_sha256 = "5bea07a5bb10187aac873a1b3c5f7362e0b18f464daf4612cdc804cde31cd8ba";
         return Ok(plan);
     }
     let (url, sha256) = match target {

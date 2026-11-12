@@ -74,7 +74,7 @@ export function QoderDistribution({ active = true }: { active?: boolean }) {
     }
   };
   return <div className="dsh-workspace">
-    <header className="workspace-heading"><div><p className="eyebrow">QODER DISTRIBUTION</p><h1>Qoder 分发与校验</h1><p className="muted">固定 1.1.85 / 1.1.86 分发清单，不查询滚动最新版本，不自动判断本机平台。</p></div><span className="status-badge">显式受控操作</span></header>
+    <header className="workspace-heading"><div><p className="eyebrow">QODER DISTRIBUTION</p><h1>Qoder 分发与校验</h1><p className="muted">固定 1.1.85 / 1.1.86 / 1.1.87 分发清单，不查询滚动最新版本，不自动判断本机平台。</p></div><span className="status-badge">显式受控操作</span></header>
     <div className="notice">分发计划与诊断只读；Linux x86_64 可明确确认后写入全新受控缓存。不下载、不执行、不激活、不修改 PATH 或配置；私有可执行部署须在独立区域预览确认。</div>
     {!native && <p role="status">仅桌面原生后端可用；浏览器及演示模式不读取归档，也不模拟校验成功。</p>}
     <section className="panel" aria-label="Qoder 分发选择">

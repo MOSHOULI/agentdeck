@@ -114,7 +114,7 @@ fn unpack_requires_confirmation_without_creating_any_output() {
 
 #[test]
 fn release_selection_is_explicit_bounded_and_defaults_to_legacy() {
-    for release in ["1.1.85", "1.1.86"] {
+    for release in ["1.1.85", "1.1.86", "1.1.87"] {
         for target in aisync_core::qoder::distribution::TARGETS {
             let output = Command::new(env!("CARGO_BIN_EXE_aisync"))
                 .args([
@@ -146,7 +146,7 @@ fn release_selection_is_explicit_bounded_and_defaults_to_legacy() {
         "deploy-preview",
         "deploy-private",
     ] {
-        for release in ["latest", "1.1.87", " 1.1.86"] {
+        for release in ["latest", "1.1.88", " 1.1.86"] {
             let output = Command::new(env!("CARGO_BIN_EXE_aisync"))
                 .args(["qoder", action, "--release", release])
                 .output()
