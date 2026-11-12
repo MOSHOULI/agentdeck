@@ -48,6 +48,8 @@ PINNED = {
         "a78234316fe2065cdae6fc17ac425bbc2ae11006d04b6ab5216fd6093597e4de",
     "docs/upstream/qoder/manifest-1.1.86.json":
         "f323905da3f75088b1e9ae4cf9b0fef6f117879f4f6942b609e92228a533fa78",
+    "docs/upstream/qoder/manifest-1.1.87.json":
+        "5bea07a5bb10187aac873a1b3c5f7362e0b18f464daf4612cdc804cde31cd8ba",
     "docs/upstream/dsh/root-0.2.2-rc.1.json":
         "e23a5772276c9a7709ffb2daeaa5b2d6099a431a4bb9f48cf8c87c5a2517539e",
     "docs/upstream/dsh/dependency-evidence/root-package-0.2.2-rc.1.json":
@@ -135,6 +137,7 @@ class EvidenceCheckoutTests(unittest.TestCase):
             'docs/upstream/dsh/subprocess-archive-layout-0.2.2-rc.1.json',
             "docs/upstream/qoder/manifest-1.1.85.json",
             "docs/upstream/qoder/manifest-1.1.86.json",
+            "docs/upstream/qoder/manifest-1.1.87.json",
             "docs/upstream/dsh/root-0.2.2-rc.1.json",
             "docs/upstream/dsh/dependency-evidence/root-package-0.2.2-rc.1.json",
         ]:

@@ -3,6 +3,7 @@
 tests/fixtures/qwen-0.27.0/read-config-file.ts -text
 docs/upstream/qoder/manifest-1.1.85.json -text
 docs/upstream/qoder/manifest-1.1.86.json -text
+docs/upstream/qoder/manifest-1.1.87.json -text
 docs/upstream/tauri/nsis-2.12.4.rs -text
 docs/upstream/dsh/root-0.2.2-rc.1.json -text
 docs/upstream/dsh/dependency-evidence/*.json -text
