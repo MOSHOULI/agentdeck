@@ -117,7 +117,7 @@ class Tests(unittest.TestCase):
             h.run_deploy(Path('/cli'),self.root,self.root/'new','a'*64,{},self.root/'trace',reject=True)
 
     def test_orchestration_fails_on_source_config_or_repeat_mutation(self):
-        for fault in (None, 'source', 'config', 'repeat'):
+        for fault in (None, 'source', 'config', 'repeat', 'inspect-missing', 'inspect-verified', 'inspect-tampered'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp); archive=root/'archive'; h.private_file(archive,b'archive sentinel')
                 def prepare(cli, archive, caches, env, *, runner):
@@ -134,14 +134,60 @@ class Tests(unittest.TestCase):
                         if fault == 'config': (Path(env['HOME'])/'.qoder'/'sentinel.json').write_bytes(b'changed')
                     elif fault == 'repeat': (destination/'qodercli').write_bytes(b'changed')
                     return {**h.OUTCOME,'limitations':'reviewed'}
-                with patch.dict(os.environ,{'RUNNER_TEMP':tmp}), patch.object(h,'guard'), \
+                inspections=[]
+                def inspect(cli, destination, env, trace, state):
+                    inspections.append(state)
+                    if fault == 'inspect-missing' and state == 'missing': destination.mkdir(mode=0o700)
+                    if fault == 'inspect-verified' and state == 'payload_verified': (destination/'qodercli').write_bytes(b'bad inspection write')
+                    if fault == 'inspect-tampered' and state == 'unsupported_or_changed': (destination/'qodercli').write_bytes(b'bad repair')
+                with patch.object(h,'run_inspect',side_effect=inspect), patch.dict(os.environ,{'RUNNER_TEMP':tmp}), patch.object(h,'guard'), \
                      patch.object(h.complete,'run_cli',return_value={}), patch.object(h,'check_trace'), patch.object(h.complete,'file_digest',return_value='fixed'), patch.object(h.complete,'prepare',side_effect=prepare), \
                      patch.object(h,'run_preview',return_value='a'*64), patch.object(h,'run_deploy',side_effect=deploy), patch.object(h,'validate_destination'):
                     self.assertEqual(h.run(Path('/built/aisync'),archive,root/'evidence'), fault is None)
                 result=json.loads((root/'evidence'/'result.json').read_text())
                 self.assertEqual(result['passed'],fault is None)
+                if fault is None:
+                    self.assertEqual(inspections,['missing','payload_verified','unsupported_or_changed'])
+                    self.assertEqual(result['inspection_exec_count'],3)
+                    self.assertTrue(result['inspection_missing_unchanged'])
+                    self.assertTrue(result['inspection_verified_unchanged'])
+                    self.assertTrue(result['inspection_tampered_rejected_unchanged'])
                 self.assertNotIn(tmp,json.dumps(result))
                 self.assertNotIn('.trace',json.dumps(result)); self.assertNotIn('execve(',json.dumps(result))
+
+    def test_inspection_report_requires_exact_state_and_no_authority_claims(self):
+        valid = {'version': h.complete.pinned.VERSION, 'target':'linux-amd64-baseline',
+                 'state':'payload_verified', 'payload_bytes':h.complete.PAYLOAD_BYTES,
+                 'payload_sha256':h.complete.PAYLOAD_SHA256, 'execution_verified':False,
+                 'activated':False, 'ownership_proven':False, 'deletion_authorized':False,
+                 'repair_authorized':False, 'manual_review_required':True, 'limitations':'bounded'}
+        with patch.object(h.complete,'run_cli',return_value=valid) as run, patch.object(h,'check_trace') as trace:
+            h.run_inspect(Path('/cli'), self.root, {}, self.root/'trace', 'payload_verified')
+            trace.assert_called_once()
+            command=run.call_args.args[0]
+            self.assertEqual(command[0],'/usr/bin/strace')
+            self.assertIn('inspect-deployment',command)
+            self.assertNotIn('--cache',command); self.assertNotIn('--yes',command)
+        for field in ('execution_verified','activated','ownership_proven','deletion_authorized','repair_authorized'):
+            with self.subTest(field=field), patch.object(h.complete,'run_cli',return_value={**valid,field:True}), patch.object(h,'check_trace'), self.assertRaises(h.Failure):
+                h.run_inspect(Path('/cli'),self.root,{},self.root/'trace','payload_verified')
+        for invalid in ({**valid,'state':'unsupported_or_changed'}, {**valid,'manual_review_required':False},
+                        {**valid,'payload_bytes':True}, {**valid,'limitations':''}, {**valid,'extra':False}):
+            with patch.object(h.complete,'run_cli',return_value=invalid), patch.object(h,'check_trace'), self.assertRaises(h.Failure):
+                h.run_inspect(Path('/cli'),self.root,{},self.root/'trace','payload_verified')
+        with patch.object(h.complete,'run_cli',return_value=valid), patch.object(h,'check_trace',side_effect=h.Failure('trace')), self.assertRaises(h.Failure):
+            h.run_inspect(Path('/cli'),self.root,{},self.root/'trace','payload_verified')
+
+    def test_authored_tamper_preserves_size_mode_identity_and_changes_bytes(self):
+        payload=self.root/'qodercli'; h.private_file(payload,b'never executed'); payload.chmod(0o700)
+        before=payload.stat(); original=payload.read_bytes()
+        h.alter_authored_payload(self.root)
+        after=payload.stat()
+        self.assertEqual((before.st_ino,before.st_size,before.st_mode),(after.st_ino,after.st_size,after.st_mode))
+        self.assertNotEqual(original,payload.read_bytes())
+        self.assertEqual(original[1:],payload.read_bytes()[1:])
+        payload.unlink(); payload.symlink_to(self.root/'missing')
+        with self.assertRaises(h.Failure):h.alter_authored_payload(self.root)
 
     def test_ci_has_mandatory_gate_and_only_fixed_evidence_uploaded(self):
         workflow=(Path(__file__).resolve().parents[1]/'.github/workflows/ci.yml').read_text()

@@ -1,3 +1,4 @@
+import { validateDeploymentInspection } from "./qoderDeploymentInspectionContract";
 import { exportTarget, exportIds, exportToken, validateExportSnapshot, validateExportPreview, validateExportReceipt } from './memoryExportContract';
 import { requireDshNativePackage, dshNativeEvidence, validateDshNativeVerification, type DshNativePackage } from './dshNativeContract';
 import { requireQoderRelease, type QoderRelease } from './qoderReleases';
@@ -773,4 +774,12 @@ export async function confirmCodexInstallRecovery(revision: string): Promise<voi
   const { recoveryRevision } = await import('./codexInstallRecoveryContract');
   if (!recoveryRevision(revision)) throw new Error('请先检查有效恢复预览。');
   return invoke<void>('confirm_codex_install_recovery', { revision });
+}
+
+/** Read-only deployment observation; no execution, cleanup or ownership authority. */
+export async function inspectQoderDeployment(deploymentPath: string, release: QoderRelease) {
+  requireQoderRelease(release);
+  useDemo(true);
+  if (!validQoderDeploymentPath(deploymentPath)) throw new Error('QODER_INSPECTION_INVALID_PATH');
+  return validateDeploymentInspection(await invoke<unknown>('inspect_qoder_deployment', { deploymentPath, release }), release);
 }

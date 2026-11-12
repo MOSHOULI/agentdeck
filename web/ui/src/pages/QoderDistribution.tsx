@@ -1,3 +1,4 @@
+import { QoderDeploymentInspection } from "./QoderDeploymentInspection";
 import { qoderReleases, type QoderRelease } from '../qoderReleases';
 import { QoderPrivateDeployment } from './QoderPrivateDeployment';
 import { QoderScopeInspection } from './QoderScopeInspection';
@@ -164,6 +165,7 @@ export function QoderDistribution({ active = true }: { active?: boolean }) {
       {written && <section aria-label="Qoder 缓存写入结果"><p role="status">{qoderCacheLabels[written.state]}</p><p>未安装、未运行；没有删除授权。可另行只读诊断明确目标目录。</p></section>}
     </section>
     <QoderPrivateDeployment active={active} release={release} />
+    <QoderDeploymentInspection active={active} release={release} />
     <QoderScopeInspection />
   </div>;
 }

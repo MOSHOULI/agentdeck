@@ -25,7 +25,10 @@ class Driver:
         self.calls = []
         self.selected = None
         self.result_reads = 0
+        self.inspection = None
     def elements(self, selector):
+        if selector.startswith(subject.INSPECT_RESULT):
+            return [1] if self.inspection and (selector == subject.INSPECT_RESULT or self.inspection in selector) else []
         if selector == subject.DIALOG: return [1] if self.dialog else []
         if selector == subject.RESULT: return [1] if self.outcome == 'complete' else []
         if selector == subject.ALERT: return [1] if self.preview_error else []
@@ -33,6 +36,8 @@ class Driver:
         return [1]
     def enabled(self, selector): return True
     def one(self, selector):
+        if selector == subject.INSPECT_BUTTON: return 'inspect_deployed'
+        if selector == subject.INSPECT_CLEAR: return 'clear_inspection'
         for name, label in subject.BUTTONS.items():
             if label in selector: return name
         return 'leave' if 'Agent 管理' in selector else 'return'
@@ -41,6 +46,7 @@ class Driver:
     def value(self, selector): return self.inputs[selector]
     def type(self, selector, value):
         self.inputs[selector] = value
+        self.inspection = None
         if self.fault != 'invalidation': self.dialog = False
         self.preview_error = False
     def text(self, selector):
@@ -58,7 +64,11 @@ class Driver:
         name = path.split('/')[2]
         if self.fault == 'transport': raise ConnectionError('no replay')
         destination = Path(self.inputs[subject.DESTINATION])
-        if name == 'preview':
+        if name == 'inspect_deployed':
+            self.inspection = 'payload_verified' if Path(self.inputs[subject.INSPECT_PATH]).name == 'confirmed' else 'unsupported_or_changed'
+        elif name == 'clear_inspection':
+            self.inspection = None; self.inputs[subject.INSPECT_PATH] = ''
+        elif name == 'preview':
             if os.path.lexists(destination): self.preview_error = True
             else:
                 self.dialog = True

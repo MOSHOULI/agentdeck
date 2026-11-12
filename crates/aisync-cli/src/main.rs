@@ -108,6 +108,13 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum QoderAction {
+    /// Recheck an explicit private deployment without cache, execution, repair or ownership claims.
+    InspectDeployment {
+        #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
+        release: String,
+        #[arg(long)]
+        deployment: PathBuf,
+    },
     /// Review fixed Qoder reviewed release (default 1.1.85) baseline private executable deployment (no writes).
     DeployPreview {
         #[arg(long, default_value = "1.1.85", value_parser = ["1.1.85", "1.1.86"])]
@@ -623,6 +630,23 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             )?;
             use std::io::Write;
             writeln!(std::io::stdout().lock(), "{report}")?;
+        }
+        Commands::Qoder {
+            action:
+                QoderAction::InspectDeployment {
+                    release,
+                    deployment,
+                },
+        } => {
+            use std::io::Write;
+            writeln!(
+                std::io::stdout().lock(),
+                "{}",
+                serde_json::to_string_pretty(&qoder::deployment::inspect_for_release(
+                    &release,
+                    &deployment
+                )?)?
+            )?;
         }
         Commands::Qoder {
             action:
@@ -1575,6 +1599,60 @@ mod tests {
         )
         .unwrap();
         assert!(exported.get());
+    }
+
+    #[test]
+    fn qoder_deployment_inspection_requires_explicit_readonly_selection() {
+        for release in ["1.1.85", "1.1.86"] {
+            let cli = Cli::try_parse_from([
+                "aisync",
+                "qoder",
+                "inspect-deployment",
+                "--release",
+                release,
+                "--deployment",
+                "/private/deployment",
+            ])
+            .unwrap();
+            assert!(matches!(
+                cli.command,
+                Commands::Qoder {
+                    action: QoderAction::InspectDeployment { .. }
+                }
+            ));
+        }
+        assert!(Cli::try_parse_from(["aisync", "qoder", "inspect-deployment"]).is_err());
+        for argument in [
+            "--yes",
+            "--cache",
+            "--repair",
+            "--delete",
+            "--preview-token",
+        ] {
+            assert!(
+                Cli::try_parse_from([
+                    "aisync",
+                    "qoder",
+                    "inspect-deployment",
+                    "--deployment",
+                    "/private/deployment",
+                    argument
+                ])
+                .is_err()
+            );
+        }
+        assert!(
+            Cli::try_parse_from([
+                "aisync",
+                "qoder",
+                "inspect-deployment",
+                "--deployment",
+                "/private/deployment",
+                "--release",
+                "latest"
+            ])
+            .is_err()
+        );
     }
 
     #[test]
