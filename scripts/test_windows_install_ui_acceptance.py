@@ -241,9 +241,11 @@ class Tests(unittest.TestCase):
     def test_recovery_target_matches_core_dos_verbatim_spelling_only(self):
         function=UI[UI.index('function ConvertTo-ExpectedRecoveryPrefix'):UI.index('function Assert-RecoveryEligibleTarget')]
         inputs=[r'\\?\C:\测试 空格\prefix',r'C:\测试 空格\prefix',r'\\?\c:\MixedCASE',r'\\?\UNC\server\share',r'\\.\C:\prefix',r'\\?\Volume{test}\prefix',r'C:relative',r'\\?\C:/prefix']
-        encoded=base64.b64encode(json.dumps(inputs,ensure_ascii=False).encode()).decode()
-        command=function+"\n$values=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+encoded+"')) | ConvertFrom-Json; $out=@(foreach($value in $values){try{ConvertTo-ExpectedRecoveryPrefix $value}catch{'REJECTED'}}); ConvertTo-Json -InputObject $out -Compress"
-        result=subprocess.run([shutil.which('pwsh'),'-NoProfile','-NonInteractive','-EncodedCommand',base64.b64encode(command.encode('utf-16le')).decode()],capture_output=True,text=True,timeout=15,check=True)
+        encoded=base64.b64encode(json.dumps(inputs,ensure_ascii=False).encode('utf-8')).decode()
+        # Both ends of the pipe must use UTF-8; Windows Python otherwise decodes
+        # pwsh output using the active ANSI code page even for -EncodedCommand.
+        command="[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false);\n"+function+"\n$values=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+encoded+"')) | ConvertFrom-Json; $out=@(foreach($value in $values){try{ConvertTo-ExpectedRecoveryPrefix $value}catch{'REJECTED'}}); ConvertTo-Json -InputObject $out -Compress"
+        result=subprocess.run([shutil.which('pwsh'),'-NoProfile','-NonInteractive','-EncodedCommand',base64.b64encode(command.encode('utf-16le')).decode()],capture_output=True,encoding='utf-8',errors='strict',timeout=15,check=True)
         self.assertEqual(json.loads(result.stdout),[r'C:\测试 空格\prefix',r'C:\测试 空格\prefix',r'c:\MixedCASE',*['REJECTED']*5])
         check=UI[UI.index('function Assert-RecoveryEligibleTarget'):UI.index('function Check-ExplicitInstallRecovery')]
         self.assertIn("$names -cnotcontains ('已记录安装位置：' + $expectedPrefix)",check)
