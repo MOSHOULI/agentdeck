@@ -13,7 +13,7 @@ try {
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $fixture.node; $info.UseShellExecute = $false
     $info.Environment.Clear(); $info.Environment['SystemRoot'] = $env:SystemRoot
-    foreach ($argument in @($fixture.manager,'install','--global','--prefix',$fixture.prefix,'--force=false','--no-audit','--no-fund','--no-progress','--ignore-scripts','@openai/codex')) { $info.ArgumentList.Add($argument) }
+    foreach ($argument in @($fixture.manager,'install','--global','--prefix',$fixture.prefix,'--force=false','--no-audit','--no-fund','--no-progress','--ignore-scripts','@openai/codex@1.2.3')) { $info.ArgumentList.Add($argument) }
     $process = [Diagnostics.Process]::Start($info)
     try {
         if (-not $process.WaitForExit(10000)) { $process.Kill($true); throw 'Authored failure fixture timed out' }

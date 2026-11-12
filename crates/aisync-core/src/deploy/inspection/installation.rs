@@ -57,8 +57,9 @@ fn inputs(agent: &AgentDefinition) -> Result<(KnownAgent, SearchPath), String> {
 }
 
 /// A reviewable observation, not a permission token or a zero-side-effect sandbox.
-/// npm queries execute local code. Version, registry, dependency closure, npm
-/// environment/configuration and script downloads are not pinned by this revision.
+/// npm queries execute local code. Only the Codex root version is pinned.
+/// Registry, dependency closure, npm environment/configuration and script
+/// downloads are not pinned by this revision.
 /// nodePath is the installer interpreter, not every future launcher interpreter.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,6 +67,7 @@ pub struct InstallPreview {
     pub schema_version: u32,
     pub agent_id: String,
     pub package: String,
+    pub package_version: Option<String>,
     pub executable: String,
     pub manager_path: String,
     pub node_path: String,
@@ -130,6 +132,7 @@ struct InstallPlan {
     prefix: PathBuf,
     root: PathBuf,
     package: &'static str,
+    package_version: Option<String>,
     installer_node_version: NodeVersion,
     installer_node_minimum: NodeVersion,
 }
@@ -158,6 +161,7 @@ fn project_plan(
         schema_version: 1,
         agent_id: display_value(id.as_ref())?,
         package: display_value(plan.package.as_ref())?,
+        package_version: plan.package_version.clone(),
         executable: display_value(known.executable.as_ref())?,
         manager_path: display_value(plan.manager.cli.as_os_str())?,
         node_path: display_value(plan.manager.command.program.as_os_str())?,
@@ -180,7 +184,12 @@ fn project_plan(
             "npm_configured"
         }
         .into(),
-        version_policy: "npm_configured".into(),
+        version_policy: if plan.package_version.is_some() {
+            "exact_root"
+        } else {
+            "npm_configured"
+        }
+        .into(),
         revision: String::new(),
     };
     let mut hash = Sha256::new();
@@ -506,14 +515,89 @@ fn build_plan(
             |_| "The planned npm launcher cannot resolve a supported native Node interpreter",
         )?;
     }
+    let package_version = resolve_package_version(package, &manager, runner)?;
     Ok(InstallPlan {
         manager,
         prefix,
         root,
         package,
+        package_version,
         installer_node_version,
         installer_node_minimum,
     })
+}
+
+// A single stable root-package version, not a tag, range, source URL, or
+// dependency closure. The configured npm registry is intentionally unchanged.
+fn parse_package_version(output: &[u8]) -> Option<String> {
+    if output.len() > 128 {
+        return None;
+    }
+    let version: String = serde_json::from_slice(output).ok()?;
+    // Reuse the strict bounded integer triplet grammar, without Node's prefix.
+    parse_node_version(format!("v{version}").as_bytes())?;
+    if version.contains(['\r', '\n']) {
+        return None;
+    }
+    Some(version)
+}
+
+fn resolve_package_version(
+    package: &str,
+    manager: &Manager,
+    runner: &mut impl Runner,
+) -> Result<Option<String>, String> {
+    if package != "@openai/codex" {
+        return Ok(None);
+    }
+    let mut command = manager.command.clone();
+    command.args.extend(
+        [
+            "view",
+            "@openai/codex@latest",
+            "version",
+            "--json",
+            "--fetch-retries=0",
+            "--fetch-timeout=25000",
+        ]
+        .into_iter()
+        .map(OsString::from),
+    );
+    let output = runner
+        .run_registry_metadata(&command)
+        .map_err(|_| "Codex package version could not be resolved; refresh the preview")?;
+    parse_package_version(&output).map(Some).ok_or_else(|| {
+        "Codex package metadata must report one stable MAJOR.MINOR.PATCH version".into()
+    })
+}
+
+fn verify_root_version(plan: &InstallPlan) -> Result<(), String> {
+    let Some(expected) = &plan.package_version else {
+        return Ok(());
+    };
+    let package_root = canonical_file_or_dir(&plan.root.join(plan.package))
+        .map_err(|_| "Installed package directory could not be inspected")?;
+    if package_root != plan.root.join(plan.package) {
+        return Err("Installed package directory changed during verification".into());
+    }
+    let manifest = package_root.join("package.json");
+    let target = canonical_file(&manifest)
+        .map_err(|_| "Installed package manifest could not be inspected")?;
+    if !target.starts_with(&package_root) {
+        return Err("Installed package manifest escapes the package directory".into());
+    }
+    let bytes = read_small(&manifest, FILE_LIMIT)
+        .map_err(|_| "Installed package manifest could not be read within its size limit")?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|_| "Installed package manifest is not valid JSON")?;
+    if value.get("name").and_then(|v| v.as_str()) != Some(plan.package)
+        || value.get("version").and_then(|v| v.as_str()) != Some(expected)
+    {
+        return Err(
+            "Installed root package version does not match the reviewed exact version".into(),
+        );
+    }
+    Ok(())
 }
 
 fn install_command(plan: &InstallPlan) -> ProbeCommand {
@@ -531,7 +615,10 @@ fn install_command(plan: &InstallPlan) -> ProbeCommand {
     if disables_lifecycle_scripts(plan.package) {
         command.args.push("--ignore-scripts".into());
     }
-    command.args.push(plan.package.into());
+    command.args.push(match &plan.package_version {
+        Some(version) => format!("{}@{version}", plan.package).into(),
+        None => plan.package.into(),
+    });
     command
 }
 
@@ -559,7 +646,7 @@ fn verify_target(plan: &InstallPlan, details: &InstallationDetails) -> Result<()
             && prefix == &plan.prefix
             && canonical_file(manager_path).ok().as_ref() == Some(&plan.manager.cli) =>
         {
-            Ok(())
+            verify_root_version(plan)
         }
         _ => Err(
             "Observed installation does not match the planned npm manager, prefix and package"
@@ -614,6 +701,156 @@ mod tests {
     };
 
     #[test]
+    fn package_version_accepts_only_one_stable_exact_json_string() {
+        for output in [br#""0.167.1""#.as_slice(), b"\"1.2.3\"\r\n"] {
+            assert!(parse_package_version(output).is_some());
+        }
+        for output in [
+            "",
+            "1.2.3",
+            "null",
+            "[]",
+            "[\"1.2.3\"]",
+            "{\"version\":\"1.2.3\"}",
+            "\"latest\"",
+            "\"^1.2.3\"",
+            "\"v1.2.3\"",
+            "\"01.2.3\"",
+            "\"1.2\"",
+            "\"1.2.3.4\"",
+            "\"1.2.3-beta.1\"",
+            "\"1.2.3+build\"",
+            "\"4294967296.2.3\"",
+            "\" 1.2.3\"",
+            "\"1.2.3\\n\"",
+            "\"1.2.3\" \"2.3.4\"",
+            "\"https://example.test/pkg.tgz\"",
+        ] {
+            assert!(
+                parse_package_version(output.as_bytes()).is_none(),
+                "{output}"
+            );
+        }
+        assert!(parse_package_version(&[b' '; 129]).is_none());
+        assert!(parse_package_version(&[0xff]).is_none());
+    }
+
+    struct MetadataRunner {
+        inner: FakeRunner,
+        outputs: std::collections::VecDeque<io::Result<Vec<u8>>>,
+    }
+    impl Runner for MetadataRunner {
+        fn run(&mut self, command: &ProbeCommand) -> io::Result<Vec<u8>> {
+            if command.args.iter().any(|arg| arg == "view") {
+                assert_eq!(
+                    &command.args[1..],
+                    &[
+                        OsString::from("view"),
+                        "@openai/codex@latest".into(),
+                        "version".into(),
+                        "--json".into(),
+                        "--fetch-retries=0".into(),
+                        "--fetch-timeout=25000".into(),
+                    ]
+                );
+                return self.outputs.pop_front().expect("unexpected metadata query");
+            }
+            self.inner.run(command)
+        }
+    }
+
+    #[test]
+    fn package_metadata_failures_and_drift_never_invoke_install() {
+        let fixture = Fixture::new(Platform::Windows);
+        let plan = build_plan(CODEX, &fixture.search, &mut fixture.runner()).unwrap();
+        let revision = project_plan("codex", CODEX, Platform::Windows, &plan)
+            .unwrap()
+            .revision;
+        for outputs in [
+            vec![Err(io::Error::other("timeout or failed query"))],
+            vec![Ok(b"[]".to_vec())],
+            vec![Ok(br#""99.99.98""#.to_vec())],
+            vec![Ok(br#""99.99.99""#.to_vec()), Ok(br#""99.99.98""#.to_vec())],
+        ] {
+            let mut runner = MetadataRunner {
+                inner: fixture.runner(),
+                outputs: outputs.into(),
+            };
+            assert!(
+                install_reviewed_with(
+                    "codex",
+                    &revision,
+                    CODEX,
+                    &fixture.search,
+                    &mut runner,
+                    |_| panic!("invalid or changed metadata must not install")
+                )
+                .is_err()
+            );
+            assert!(!fixture.root.exists());
+        }
+        let mut changed = plan;
+        changed.package_version = Some("99.99.98".into());
+        assert_ne!(
+            revision,
+            project_plan("codex", CODEX, Platform::Windows, &changed)
+                .unwrap()
+                .revision
+        );
+    }
+
+    #[test]
+    fn root_manifest_version_not_cli_measurement_must_match_pin() {
+        for version in [None, Some("1.2.3"), Some("99.99.99-beta"), Some("99.99.99")] {
+            let fixture = Fixture::new(Platform::Windows);
+            let result = install_with(CODEX, &fixture.search, &mut fixture.runner(), |_| {
+                fixture.populate();
+                let manifest = fixture.root.join("@openai/codex/package.json");
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+                match version {
+                    Some(v) => value["version"] = v.into(),
+                    None => {
+                        value.as_object_mut().unwrap().remove("version");
+                    }
+                }
+                std::fs::write(manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+                Ok(())
+            });
+            assert_eq!(result.is_ok(), version == Some("99.99.99"));
+            if let Err(error) = result {
+                assert!(error.contains("root package version"));
+                assert!(error.contains("no rollback"));
+            }
+            assert!(fixture.root.join("@openai/codex/package.json").exists());
+        }
+    }
+
+    #[test]
+    fn non_codex_adapters_do_not_resolve_or_pin_versions() {
+        let fixture = Fixture::new(Platform::Windows);
+        for package in [
+            "opencode-ai",
+            "@google/gemini-cli",
+            "@earendil-works/pi-coding-agent",
+        ] {
+            let known = KnownAgent {
+                executable: "other-agent",
+                package: Some(package),
+            };
+            let mut runner = MetadataRunner {
+                inner: fixture.runner(),
+                outputs: Default::default(),
+            };
+            let plan = build_plan(known, &fixture.search, &mut runner).unwrap();
+            let preview = project_plan("other-agent", known, Platform::Windows, &plan).unwrap();
+            assert!(preview.package_version.is_none());
+            assert_eq!(preview.version_policy, "npm_configured");
+            assert_eq!(install_command(&plan).args.last().unwrap(), package);
+        }
+    }
+
+    #[test]
     fn preview_serialization_and_exact_confirmation_install_once() {
         for platform in [Platform::Windows, Platform::Unix] {
             if platform == Platform::Unix && !cfg!(unix) {
@@ -623,7 +860,7 @@ mod tests {
             let plan = build_plan(CODEX, &fixture.search, &mut fixture.runner()).unwrap();
             let preview = project_plan("codex", CODEX, platform, &plan).unwrap();
             let json = serde_json::to_value(&preview).unwrap();
-            assert_eq!(json.as_object().unwrap().len(), 15);
+            assert_eq!(json.as_object().unwrap().len(), 16);
             assert_eq!(json["schemaVersion"], 1);
             assert_eq!(json["agentId"], "codex");
             assert_eq!(json["package"], "@openai/codex");
@@ -646,7 +883,8 @@ mod tests {
             };
             assert_eq!(json["launcherDirectory"], bin.to_str().unwrap());
             assert_eq!(json["scriptPolicy"], "disabled");
-            assert_eq!(json["versionPolicy"], "npm_configured");
+            assert_eq!(json["versionPolicy"], "exact_root");
+            assert_eq!(json["packageVersion"], "99.99.99");
             assert_eq!(preview.revision.len(), 64);
             assert!(
                 preview
@@ -986,6 +1224,7 @@ mod tests {
                 fail: false,
                 version: b"codex-cli 1.2.3\n".to_vec(),
                 node_version: b"v24.9.0\n".to_vec(),
+                package_version: b"\"99.99.99\"\n".to_vec(),
                 mutate: None,
             }
         }
@@ -1025,6 +1264,7 @@ mod tests {
         fail: bool,
         version: Vec<u8>,
         node_version: Vec<u8>,
+        package_version: Vec<u8>,
         mutate: Option<Box<dyn FnMut(usize)>>,
     }
 
@@ -1055,6 +1295,9 @@ mod tests {
             }
             if command.args.last().is_some_and(|arg| arg == "--version") {
                 return Ok(self.version.clone());
+            }
+            if command.args.iter().any(|arg| arg == "view") {
+                return Ok(self.package_version.clone());
             }
             let path = if command.args.iter().any(|arg| {
                 arg == "prefix"
@@ -1273,7 +1516,7 @@ mod tests {
                 PathBuf::from(&command.args[4]),
                 std::fs::canonicalize(&fixture.prefix).unwrap()
             );
-            assert_eq!(command.args.last().unwrap(), "@openai/codex");
+            assert_eq!(command.args.last().unwrap(), "@openai/codex@99.99.99");
             assert!(!command.args.iter().any(|arg| arg == "/C" || arg == "-c"));
             fixture.populate();
             Ok(())
@@ -1652,6 +1895,7 @@ mod tests {
             ("opencode-ai", false),
         ] {
             plan.package = package;
+            plan.package_version = (package == "@openai/codex").then(|| "99.99.99".into());
             let preview = project_plan("synthetic", CODEX, Platform::Windows, &plan).unwrap();
             let command = install_command(&plan);
             assert_eq!(
@@ -1670,7 +1914,14 @@ mod tests {
                     "npm_configured"
                 }
             );
-            assert_eq!(preview.version_policy, "npm_configured");
+            assert_eq!(
+                preview.version_policy,
+                if package == "@openai/codex" {
+                    "exact_root"
+                } else {
+                    "npm_configured"
+                }
+            );
         }
     }
 }

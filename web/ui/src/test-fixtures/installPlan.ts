@@ -7,5 +7,5 @@ export const installPlan: AgentInstallPreview = {
   prefix: '/synthetic/global', globalRoot: '/synthetic/global/lib/node_modules',
   packageRoot: '/synthetic/global/lib/node_modules/opencode-ai',
   launcherDirectory: '/synthetic/global/bin', scriptPolicy: 'npm_configured',
-  versionPolicy: 'npm_configured', revision: 'a'.repeat(64),
+  versionPolicy: 'npm_configured', packageVersion: null, revision: 'a'.repeat(64),
 };

@@ -314,7 +314,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
         <h3>检查 npm 安装计划</h3>
         <dl className="agent-facts">
           {([
-            ['npm 包', plan.package], ['启动命令', plan.executable], ['npm prefix', plan.prefix],
+            ['npm 包', plan.package], ...(plan.packageVersion ? [['Codex 根包固定版本', plan.packageVersion] as const] : []), ['启动命令', plan.executable], ['npm prefix', plan.prefix],
             ['npm 全局目录', plan.globalRoot], ['包目录', plan.packageRoot],
             ['启动文件目录', plan.launcherDirectory], ['npm 规范入口', plan.managerPath],
             ['安装器 Node', plan.nodePath],
@@ -322,11 +322,11 @@ export const AgentCard: React.FC<AgentCardProps> = ({
             ['AgentDeck 安装器 Node 最低策略', plan.installerNodeMinimum],
           ] as const).map(([label, value]) => <div key={label}><dt>{label}</dt><dd className="agent-path">{value}</dd></div>)}
         </dl>
-        <p>版本由当前 npm 配置选择，未固定或解析版本；此预览不验证 npm registry 的可信性。</p>
+        <p>{plan.versionPolicy === 'exact_root' ? 'Codex 根包版本已固定；确认后只安装所显示版本，latest 变化时需重新预览。未锁定依赖闭包、registry 或下载内容完整性。' : '版本由当前 npm 配置选择，未固定或解析版本；此预览不验证 npm registry 的可信性。'}</p>
         <p>安装器 Node 仅用于此次安装，达到 AgentDeck 最低策略不代表包或依赖兼容，也不保证 Agent 以后使用相同 Node。</p>
         <p>{plan.scriptPolicy === 'disabled' ? '生命周期脚本：禁用（ignore-scripts）。' : '生命周期脚本：遵循当前 npm 配置，安装时可能执行脚本。'}安装会下载软件，依赖或包的行为取决于 npm 配置。</p>
         <p>仅安装软件，不应用 profile 或模型配置，不创建配置备份。不自动回滚或卸载；失败后可能已有部分软件写入。</p>
-        <p>预览执行安装器 Node 版本检查及有限的 npm 路径查询，不安装软件、不初始化 profile、vault 或备份；npm 可能读取配置或更新缓存。执行前将重新核对计划，变化后需重新预览。</p>
+        <p>预览执行安装器 Node 版本检查及有限的 npm 路径查询；Codex 还查询 latest 版本元数据。预览不安装软件、不初始化 profile、vault 或备份；npm 可能读取配置或更新缓存。执行前将重新核对计划，变化后需重新预览。</p>
         <button type="button" className="button" data-testid="install-review-cancel" onClick={cancelPreview}>取消</button>
         <button type="button" className="button button-primary" data-testid="install-review-confirm" disabled={busy || dataStale || readOnly || !canInstall} onClick={() => { void confirmInstall(); }}>确认安装软件</button>
       </section>}

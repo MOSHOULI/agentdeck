@@ -65,7 +65,7 @@ def prepare(root, path):
              'prefix': root / 'prefix', 'global': root / 'prefix/lib/node_modules',
              'package': root / 'prefix/lib/node_modules/@openai/codex',
              'bin': root / 'prefix/bin', 'marker': root / 'install-marker',
-             'queries': root / 'query-events'}
+             'queries': root / 'query-events', 'latest': root / 'latest-version'}
     for directory in (paths['manager'].parent, paths['manager_bin'], paths['bin'], paths['global']):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Intermediate directories also remain private independently of umask.
@@ -74,8 +74,9 @@ def prepare(root, path):
     private_write(paths['manager'].parent.parent / 'package.json', json.dumps({
         'name': 'npm', 'version': '0.0.0', 'bin': {'npm': 'bin/npm-cli.js'}}))
     private_write(paths['queries'], '')
+    private_write(paths['latest'], '1.2.3')
     expected = ['install', '--global', '--prefix', str(paths['prefix']), '--force=false',
-                '--no-audit', '--no-fund', '--no-progress', '--ignore-scripts', '@openai/codex']
+                '--no-audit', '--no-fund', '--no-progress', '--ignore-scripts', '@openai/codex@1.2.3']
     constants = {key: str(value) for key, value in paths.items()}
     codex = "#!/usr/bin/env node\n'use strict';\nif (JSON.stringify(process.argv.slice(2)) !== '[\"--version\"]') process.exit(64);\nconsole.log('codex-cli 1.2.3');\n"
     script = "#!/usr/bin/env node\n'use strict';\n" + 'const p = ' + json.dumps(constants) + ';\n'
@@ -105,6 +106,7 @@ try {
   const args = JSON.stringify(process.argv.slice(2));
   if (args === '["prefix","--global"]') { query('p'); console.log(p.prefix); }
   else if (args === '["root","--global"]') { query('r'); console.log(p.global); }
+  else if (args === '["view","@openai/codex@latest","version","--json","--fetch-retries=0","--fetch-timeout=25000"]') { query('m'); const s = fs.lstatSync(p.latest); if (!s.isFile() || s.nlink !== 1 || s.size !== 5) throw Error('metadata'); const version = fs.readFileSync(p.latest, 'utf8'); if (!['1.2.3','1.2.4'].includes(version)) throw Error('metadata'); console.log(JSON.stringify(version)); }
   else if (args === JSON.stringify(expected)) {
     absent(p.marker); absent(p.package); absent(path.join(p.bin, 'codex'));
     const scope = path.dirname(p.package);
@@ -135,9 +137,9 @@ def query_counts(fixture):
         raise InstallFailure('unsafe_query_evidence')
     with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), 'rb') as stream:
         data = stream.read(4097)
-    if len(data) > 4096 or any(byte not in b'pr' for byte in data):
+    if len(data) > 4096 or any(byte not in b'prm' for byte in data):
         raise InstallFailure('unsafe_query_evidence')
-    return {'prefix_queries': data.count(b'p'), 'root_queries': data.count(b'r')}
+    return {'prefix_queries': data.count(b'p'), 'root_queries': data.count(b'r'), 'metadata_queries': data.count(b'm')}
 
 
 def assert_absent(fixture):
@@ -177,7 +179,7 @@ def assert_no_configuration(home):
 
 
 def assert_plan(driver, fixture):
-    fields = {'npm 包': '@openai/codex', '启动命令': 'codex', 'npm prefix': str(fixture['prefix']),
+    fields = {'npm 包': '@openai/codex', 'Codex 根包固定版本': '1.2.3', '启动命令': 'codex', 'npm prefix': str(fixture['prefix']),
               'npm 全局目录': str(fixture['global']), '包目录': str(fixture['package']),
               '启动文件目录': str(fixture['bin']), 'npm 规范入口': str(fixture['manager']),
               '安装器 Node': str(fixture['node']),
@@ -187,7 +189,7 @@ def assert_plan(driver, fixture):
         if driver.text(DIALOG + "//div[dt[text()='" + label + "']]/dd") != value:
             raise InstallFailure('plan_mismatch')
     text = driver.text(DIALOG)
-    for value in ('版本由当前 npm 配置选择', '生命周期脚本：禁用（ignore-scripts）', '仅安装软件，不应用 profile'):
+    for value in ('Codex 根包版本已固定', '生命周期脚本：禁用（ignore-scripts）', '仅安装软件，不应用 profile'):
         if value not in text: raise InstallFailure('policy_mismatch')
 
 
@@ -318,12 +320,16 @@ def exercise(driver, fixture, home, records, phase, trace=None, observe=None):
     assert_absent(fixture); done('preview_cancel')
     phase('install_stale_revision')
     preview('install_stale_preview')
-    with fixture['manager'].open('a') as stream: stream.write('\n// harmless synthetic revision change\n')
+    manager_before = fixture['manager'].read_bytes()
+    fixture['latest'].write_text('1.2.4')
     driver.click(CONFIRM)
     driver.wait(lambda: driver.elements("//*[@role='alert' and contains(@class, 'agent-notice')]"))
     if '安装请求已发送，但完成状态未确认。' not in driver.text("//*[@role='alert' and contains(@class, 'agent-notice')]"):
         raise InstallFailure('stale_rejection_not_verified')
-    assert_absent(fixture); done('stale_revision')
+    assert_absent(fixture)
+    if fixture['manager'].read_bytes() != manager_before: raise InstallFailure('manager_changed')
+    fixture['latest'].write_text('1.2.3')
+    done('stale_revision')
     phase('install_confirmed')
     driver.wait(lambda: driver.enabled(PREVIEW))
     preview('install_fresh_preview'); driver.click(CONFIRM)

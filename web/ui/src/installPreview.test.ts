@@ -48,7 +48,7 @@ describe('reviewed npm bridge contract', () => {
   });
   it.each(['C:\\', '\\\\?\\C:\\', 'C:\\npm', '\\\\?\\C:\\npm', '\\\\server\\share'])('accepts mixed Windows joins under %s without changing spelling', prefix => {
     const root = `${prefix}${prefix.endsWith('\\') ? '' : '\\'}node_modules`;
-    const plan = { ...installPlan, agentId: 'codex', package: '@openai/codex', executable: 'codex', scriptPolicy: 'disabled', prefix, globalRoot: root,
+    const plan = { ...installPlan, agentId: 'codex', versionPolicy: 'exact_root', packageVersion: '1.2.3', package: '@openai/codex', executable: 'codex', scriptPolicy: 'disabled', prefix, globalRoot: root,
       packageRoot: `${root}\\@openai/codex`, launcherDirectory: prefix };
     expect(parseInstallPreview(plan, 'codex')).toEqual(plan);
     expect(() => parseInstallPreview({ ...plan, launcherDirectory: `${prefix}\\bin` }, 'codex')).toThrow();
@@ -59,7 +59,7 @@ describe('reviewed npm bridge contract', () => {
     ['gemini-cli', '@google/gemini-cli', 'gemini', 'npm_configured', '20.0.0'],
     ['pi', '@earendil-works/pi-coding-agent', 'pi', 'disabled', '22.19.0'],
   ])('validates exact supported package policy for %s', (id, pkg, executable, scriptPolicy, installerNodeMinimum) => {
-    expect(parseInstallPreview({ ...installPlan, agentId: id, package: pkg, executable, scriptPolicy, installerNodeMinimum, packageRoot: `${installPlan.globalRoot}/${pkg}` }, id).package).toBe(pkg);
+    expect(parseInstallPreview({ ...installPlan, agentId: id, versionPolicy: id === 'codex' ? 'exact_root' : 'npm_configured', packageVersion: id === 'codex' ? '1.2.3' : null, package: pkg, executable, scriptPolicy, installerNodeMinimum, packageRoot: `${installPlan.globalRoot}/${pkg}` }, id).package).toBe(pkg);
     expect(() => parseInstallPreview({ ...installPlan, agentId: id, package: pkg, executable, installerNodeMinimum, scriptPolicy: scriptPolicy === 'disabled' ? 'npm_configured' : 'disabled', packageRoot: `${installPlan.globalRoot}/${pkg}` }, id)).toThrow();
   });
   it.each(['', '?demo=1'])('never previews or installs without native IPC (%s)', async query => {
@@ -98,8 +98,20 @@ it('forwards only an opaque backend inspection reference and never a path', asyn
 });
 it('preserves a Codex-only session reference without weakening the review contract', () => {
   const reference = '12345678-1234-4123-8123-123456789abc';
-  const raw = { ...installPlan, agentId: 'codex', package: '@openai/codex', executable: 'codex', scriptPolicy: 'disabled', packageRoot: `${installPlan.globalRoot}/@openai/codex`, sessionRef: reference };
+  const raw = { ...installPlan, agentId: 'codex', versionPolicy: 'exact_root', packageVersion: '1.2.3', package: '@openai/codex', executable: 'codex', scriptPolicy: 'disabled', packageRoot: `${installPlan.globalRoot}/@openai/codex`, sessionRef: reference };
   expect(parseInstallPreview(raw, 'codex').sessionRef).toBe(reference);
   expect(parseInstallPreview({ ...raw, sessionRef: 'C:\\secret' }, 'codex').sessionRef).toBeUndefined();
   expect(parseInstallPreview({ ...installPlan, sessionRef: reference }, 'opencode').sessionRef).toBeUndefined();
+});
+
+describe('Codex exact root version projection', () => {
+  const codex = { ...installPlan, agentId: 'codex', package: '@openai/codex', executable: 'codex', scriptPolicy: 'disabled', versionPolicy: 'exact_root', packageVersion: '1.2.3', packageRoot: `${installPlan.globalRoot}/@openai/codex` };
+  it.each([undefined, null, '', 'latest', '^1.2.3', 'v1.2.3', '1.2', '01.2.3', '1.2.3-beta.1', '1.2.3+build', '1.2.3\n', '4294967296.0.0', 123])('rejects nonexact version %j', packageVersion => {
+    expect(() => parseInstallPreview({ ...codex, packageVersion }, 'codex')).toThrow();
+  });
+  it('rejects unpinned Codex and unexpected pins on other adapters', () => {
+    expect(() => parseInstallPreview({ ...codex, versionPolicy: 'npm_configured' }, 'codex')).toThrow();
+    expect(() => parseInstallPreview({ ...installPlan, packageVersion: '1.2.3' }, 'opencode')).toThrow();
+    expect(() => parseInstallPreview({ ...installPlan, packageVersion: undefined }, 'opencode')).toThrow();
+  });
 });

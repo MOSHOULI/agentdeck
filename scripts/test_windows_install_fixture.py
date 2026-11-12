@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Offline authored fixture checks; never invoke npm or official Codex."""
+import base64
 import hashlib
 import json
 import os
@@ -20,6 +21,7 @@ class FixtureTests(unittest.TestCase):
         for k in ('queries','versions','installCalls'):Path(self.p[k]).write_bytes(b'')
         Path(self.p['node']).write_bytes(b'AUTHORED_NOT_EXECUTABLE')
         Path(self.p['canary']).write_text(h.CANARY)
+        Path(self.p['latest']).write_text('1.2.3')
         self.p['nodeSha256']=hashlib.sha256(Path(self.p['node']).read_bytes()).hexdigest()
         self.p['mode']='success'
         self.node=shutil.which('node')
@@ -34,12 +36,25 @@ class FixtureTests(unittest.TestCase):
             import codex_official_install_windows as official
             env['SystemRoot']=official.windows_directory()
         return subprocess.run([self.node,str(program or self.p['manager']),*args],cwd=self.root,env=env,capture_output=True,text=True,timeout=10)
-    def args(self):return ['install','--global','--prefix',self.p['prefix'],'--force=false','--no-audit','--no-fund','--no-progress','--ignore-scripts','@openai/codex']
+    def args(self):return ['install','--global','--prefix',self.p['prefix'],'--force=false','--no-audit','--no-fund','--no-progress','--ignore-scripts','@openai/codex@1.2.3']
     def test_queries_do_not_install_or_probe(self):
         for kind,expected in [('prefix',self.p['prefix']),('root',self.p['globalRoot'])]:
             r=self.invoke([kind,'--global']);self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(r.stdout.strip(),expected)
         self.assertEqual(h.assert_phase(self.p,'absent')['versionProbes'],0)
         self.assertEqual(Path(self.p['queries']).read_bytes(),b'pr')
+    def test_latest_changes_independently_and_exact_install_only(self):
+        manager=Path(self.p['manager']).read_bytes()
+        for version in ('1.2.3','1.2.4'):
+            Path(self.p['latest']).write_text(version)
+            result=self.invoke(['view','@openai/codex@latest','version','--json','--fetch-retries=0','--fetch-timeout=25000'])
+            self.assertEqual((result.returncode,json.loads(result.stdout)),(0,version))
+            h.assert_phase(self.p,'absent')
+        self.assertEqual(Path(self.p['manager']).read_bytes(),manager)
+        self.assertEqual(h.facts(self.p)['metadataQueries'],2)
+        for spec in ('@openai/codex','@openai/codex@latest','@openai/codex@1.2.4'):
+            self.assertEqual(self.invoke(self.args()[:-1]+[spec]).returncode,64)
+            h.assert_phase(self.p,'absent')
+
     def test_install_then_real_authored_version_probe_and_no_configuration(self):
         r=self.invoke(self.args());self.assertEqual(r.returncode,0,r.stderr)
         with self.assertRaisesRegex(h.Failure,'version_not_probed'):h.assert_phase(self.p,'installed')
@@ -49,6 +64,49 @@ class FixtureTests(unittest.TestCase):
         self.assertNotEqual(self.invoke(self.args()).returncode,0)
         self.assertEqual(Path(self.p['marker']).read_bytes(),h.MARKER)
         with self.assertRaisesRegex(h.Failure,'unexpected_install_calls'):h.assert_phase(self.p,'installed')
+    def failure_script_argument_line(self):
+        source=(Path(__file__).parent/'test_windows_failed_install_state.ps1').read_text(encoding='utf-8')
+        lines=[line.strip() for line in source.splitlines() if '$info.ArgumentList.Add($argument)' in line]
+        self.assertEqual(len(lines),1)
+        return lines[0]
+
+    def assert_failure_script_args(self,args):
+        self.assertEqual(args[0],self.p['manager'])
+        self.assertEqual(args[1:],self.args())
+        self.write('fail')
+        result=self.invoke(args[1:])
+        self.assertEqual(result.returncode,64,result.stderr)
+        counts=h.assert_phase(self.p,'failed')
+        self.assertEqual((counts['installCalls'],counts['versionProbes'],counts['partialInstallRetained']),(1,0,True))
+
+    def test_standalone_failure_script_uses_fixture_exact_install_contract(self):
+        # Execute the authored fixture with argv read from the actual PS script,
+        # not a second copied recipe that could independently become stale.
+        line=self.failure_script_argument_line()
+        prefix='foreach ($argument in @(';suffix=')) { $info.ArgumentList.Add($argument) }'
+        self.assertTrue(line.startswith(prefix) and line.endswith(suffix))
+        tokens=line[len(prefix):-len(suffix)].split(',')
+        args=[]
+        for token in tokens:
+            if token=='$fixture.manager':args.append(self.p['manager'])
+            elif token=='$fixture.prefix':args.append(self.p['prefix'])
+            else:
+                self.assertRegex(token,r"^'[a-zA-Z0-9@./=:_-]+'$")
+                args.append(token[1:-1])
+        self.assert_failure_script_args(args)
+
+    @unittest.skipUnless(shutil.which('pwsh'),'PowerShell not available')
+    def test_actual_powershell_failure_script_argument_list(self):
+        # Run only the real script's ArgumentList construction on this host.
+        # Full Windows ACL/timestamp snapshot acceptance remains Windows CI.
+        encoded=base64.b64encode(json.dumps(self.p).encode()).decode()
+        code=("$ErrorActionPreference='Stop'; $fixture=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+encoded+"')) | ConvertFrom-Json; "
+              "$info=[Diagnostics.ProcessStartInfo]::new(); "+self.failure_script_argument_line()+
+              "; ConvertTo-Json -InputObject @($info.ArgumentList) -Compress")
+        result=subprocess.run([shutil.which('pwsh'),'-NoProfile','-NonInteractive','-EncodedCommand',base64.b64encode(code.encode('utf-16le')).decode()],
+                              capture_output=True,text=True,timeout=15,check=True)
+        self.assert_failure_script_args(json.loads(result.stdout))
+
     def test_failure_partial_state_retained_and_retries_are_observable(self):
         self.write('fail');self.assertEqual(self.invoke(self.args()).returncode,64)
         partial=Path(self.p['package'])/'partial-install.txt'
@@ -92,7 +150,8 @@ class FixtureTests(unittest.TestCase):
     def test_canary_and_configuration_mutation_are_rejected(self):
         Path(self.p['canary']).write_bytes(b'changed')
         with self.assertRaisesRegex(h.Failure,'canary_changed'):h.assert_phase(self.p,'absent')
-        Path(self.p['canary']).write_text(h.CANARY);(Path(self.p['home'])/'.codex').mkdir()
+        Path(self.p['canary']).write_text(h.CANARY)
+        Path(self.p['latest']).write_text('1.2.3');(Path(self.p['home'])/'.codex').mkdir()
         with self.assertRaisesRegex(h.Failure,'configuration_created'):h.assert_phase(self.p,'absent')
     def test_exact_cmd_shim_and_authored_source_have_no_dynamic_executor(self):
         actual=h.shim('node_modules/@openai/codex/bin/codex.js')
