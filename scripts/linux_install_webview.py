@@ -452,8 +452,8 @@ def exercise_wrong_root(driver, fixture, home, records, phase):
 
     check('automatic_refresh_guarded')
     phase('wrong_root_manual_refresh')
-    refresh = "//button[text()='刷新列表']"
-    driver.wait(lambda: driver.enabled(refresh))
+    refresh = "//*[@id='workspace-panel-agents' and not(@hidden)]//button[text()='刷新列表']"
+    driver.wait(lambda: len(driver.elements(refresh)) == 1 and driver.enabled(refresh))
     driver.click(refresh)
     check('manual_refresh_guarded')
     phase('wrong_root_navigation')

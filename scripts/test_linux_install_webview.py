@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from unittest.mock import Mock, patch
 
 import installer_node_fixture
@@ -402,14 +403,24 @@ class WrongRootFixtureTests(unittest.TestCase):
         self.install(); snapshot=subject.assert_wrong_root(self.f)
         with (self.f['package']/'bin/codex.js').open('a',encoding='utf-8') as stream:stream.write('// mutation')
         with self.assertRaisesRegex(subject.InstallFailure,'wrong_root_residue_changed'):subject.assert_wrong_root(self.f,snapshot)
-    def test_offline_wrong_root_assertion_flow_is_not_native_acceptance(self):
+    def test_offline_wrong_root_flow_scopes_duplicate_refresh_buttons(self):
         owner=self
+        mounted_panels=ET.fromstring("<main><section id='workspace-panel-agents'><button>刷新列表</button></section><section id='workspace-panel-vault' hidden=''><button>刷新列表</button></section></main>")
         class Driver(OfflineDriver):
             def click(self,selector):
                 if selector==subject.CONFIRM:
                     self.clicks.append(selector);self.dialog=False;owner.install()
                 else:super().click(selector)
+            def elements(self,selector):
+                # Both mounted workspaces expose the same button text. The
+                # Vault workspace remains hidden, not absent from the DOM.
+                if selector=="//button[text()='刷新列表']":
+                    return [node for node in mounted_panels.iter('button') if node.text=='刷新列表']
+                if selector=="//*[@id='workspace-panel-agents' and not(@hidden)]//button[text()='刷新列表']":
+                    return [node for panel in mounted_panels if panel.get('id')=='workspace-panel-agents' and 'hidden' not in panel.attrib for node in panel.iter('button') if node.text=='刷新列表']
+                return super().elements(selector)
             def enabled(self,selector):
+                if len(self.elements(selector))!=1:raise harness.Failure('missing_or_ambiguous_control')
                 if selector==subject.PREVIEW and self.fixture['marker'].exists():return False
                 return super().enabled(selector)
             def text(self,selector):
@@ -420,7 +431,9 @@ class WrongRootFixtureTests(unittest.TestCase):
         subject.exercise_wrong_root(driver,self.f,self.root/'empty-home',records,lambda _:None)
         subject.assert_wrong_root_coverage(records)
         self.assertEqual(driver.clicks.count(subject.CONFIRM),1)
-        self.assertEqual(driver.clicks.count("//button[text()='刷新列表']"),1)
+        self.assertEqual(len(driver.elements("//button[text()='刷新列表']")),2)
+        self.assertEqual(driver.clicks.count("//*[@id='workspace-panel-agents' and not(@hidden)]//button[text()='刷新列表']"),1)
+        self.assertNotIn("//button[text()='刷新列表']",driver.clicks)
         self.assertEqual(self.f['calls'].read_bytes(),b'i')
         self.assertEqual(self.f['versions'].read_bytes(),b'')
     def test_wrong_root_waits_for_unique_enabled_controls_before_one_action(self):
