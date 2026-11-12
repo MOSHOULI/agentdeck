@@ -491,9 +491,37 @@ def unique_action(driver, selector):
 
 
 def select_recovery_agent(driver):
-    unique_action(driver,"//*[@role='tab' and @aria-label='Agent 管理']")
-    search="//*[@id='agent-search']"
-    driver.wait(lambda: len(driver.elements(search))==1 and driver.enabled(search))
+    tab = "//*[@role='tab' and @aria-label='Agent 管理']"
+    selected = tab + "[@aria-selected='true']"
+    unselected = tab + "[@aria-selected='false' and not(@disabled)]"
+    search = "//*[@id='agent-search']"
+    idle = "//*[@aria-label='Agent 列表' and @aria-busy='false']"
+
+    def wait_read_only(predicate, classification):
+        # Startup can render between queries. Poll only observations; never
+        # retry a click, input, install or recovery request on failure.
+        try:
+            driver.wait(predicate)
+        except Exception as error:
+            raise InstallFailure(classification) from error
+
+    wait_read_only(lambda: len(driver.elements(tab)) == 1 and
+                   (len(driver.elements(selected)) == 1 or
+                    len(driver.elements(unselected)) == 1),
+                   'recovery_workspace_tab_not_ready')
+    if len(driver.elements(selected)) != 1:
+        # At most one navigation action. An uncertain click is not replayed.
+        try:
+            driver.click(unselected)
+        except Exception as error:
+            raise InstallFailure('recovery_workspace_tab_activation_failed') from error
+    wait_read_only(lambda: len(driver.elements(selected)) == 1,
+                   'recovery_workspace_tab_not_selected')
+    wait_read_only(lambda: len(driver.elements(search)) == 1 and
+                   len(driver.elements(search + "[not(@disabled)]")) == 1,
+                   'recovery_workspace_search_not_ready')
+    wait_read_only(lambda: len(driver.elements(idle)) == 1,
+                   'recovery_workspace_list_not_idle')
     driver.type(search,'Codex')
     element=driver.one(search)
     driver.command('POST','/element/'+element+'/value',{'text':'\ue004','value':['\ue004']})

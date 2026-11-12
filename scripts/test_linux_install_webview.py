@@ -493,6 +493,69 @@ class WrongRootFixtureTests(unittest.TestCase):
         self.assertIn('install_gui.assert_wrong_root_coverage(wrong_root_records)',source)
         self.assertIn("'wrong_root_install_gui_verified': passed and",source)
 
+class RecoveryWorkspaceReadinessTests(unittest.TestCase):
+    class Driver(OfflineDriver):
+        def __init__(self, selected=True, delayed=False, click_failure=False, blocked=None):
+            super().__init__(None, None)
+            self.selected = selected; self.delayed = delayed
+            self.click_failure = click_failure; self.blocked = blocked
+            self.polls = {}; self.typed = 0
+        def elements(self, selector):
+            self.polls[selector] = self.polls.get(selector, 0) + 1
+            if self.blocked and self.blocked in selector: return []
+            if self.delayed and self.polls[selector] == 1: return []
+            if "@aria-selected='true'" in selector: return [{}] if self.selected else []
+            if "@aria-selected='false'" in selector: return [] if self.selected else [{}]
+            return [{}]
+        def wait(self, predicate, **_):
+            for _ in range(10):
+                if predicate(): return
+            raise harness.Failure('ui_wait_expired')
+        def enabled(self, selector):
+            raise AssertionError('do not re-locate controls through enabled() during readiness')
+        def click(self, selector):
+            self.clicks.append(selector)
+            if self.click_failure: raise harness.Failure('uncertain_click')
+            self.selected = True
+        def type(self, selector, text):
+            self.typed += 1
+            if not self.selected: raise AssertionError('input before selected workspace')
+
+    def test_selected_workspace_waits_for_delayed_dom_without_click(self):
+        driver = self.Driver(delayed=True)
+        subject.select_recovery_agent(driver)
+        self.assertEqual(driver.clicks, [])
+        self.assertEqual(driver.typed, 1)
+        self.assertTrue(any("@aria-busy='false'" in q for q in driver.polls))
+        self.assertEqual(len(driver.commands), 1)  # one Tab, no replay
+
+    def test_unselected_workspace_receives_one_navigation_click(self):
+        driver = self.Driver(selected=False)
+        subject.select_recovery_agent(driver)
+        self.assertEqual(len(driver.clicks), 1)
+        self.assertIn("@aria-selected='false'", driver.clicks[0])
+        self.assertEqual(driver.typed, 1)
+
+    def test_uncertain_navigation_action_is_not_replayed(self):
+        driver = self.Driver(selected=False, click_failure=True)
+        with self.assertRaisesRegex(subject.InstallFailure, 'recovery_workspace_tab_activation_failed'):
+            subject.select_recovery_agent(driver)
+        self.assertEqual(len(driver.clicks), 1)
+        self.assertEqual(driver.typed, 0)
+        self.assertEqual(driver.commands, [])
+
+    def test_missing_search_or_busy_list_fails_before_input_with_diagnostic(self):
+        for blocked, diagnostic in [('agent-search', 'search_not_ready'),
+                                    ("@aria-busy='false'", 'list_not_idle')]:
+            with self.subTest(blocked=blocked):
+                driver = self.Driver(blocked=blocked)
+                with self.assertRaisesRegex(subject.InstallFailure, diagnostic):
+                    subject.select_recovery_agent(driver)
+                self.assertEqual(driver.clicks, [])
+                self.assertEqual(driver.typed, 0)
+                self.assertEqual(driver.commands, [])
+
+
 class DurableRecoveryFixtureTests(unittest.TestCase):
     setUp=WrongRootFixtureTests.setUp
     install=WrongRootFixtureTests.install
