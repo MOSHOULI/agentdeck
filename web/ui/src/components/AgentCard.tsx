@@ -164,6 +164,7 @@ export const AgentCard: React.FC<AgentCardProps> = ({
     : agent.installationStatus === 'error' ? '检测出错' : '安装状态未知';
   const manualHelp = agent.installed
     ? '自动卸载功能尚未提供；来源目录匹配不代表安装历史或管理权限。'
+    : installUnknown && evidence.ambiguous && agent.installationMessage ? [agent.installationMessage, agent.installHelp].filter(Boolean).join(' ')
     : evidence.ambiguous ? '检测证据待确认，自动安装已暂停。'
     : installUnknown
       ? [agent.installationMessage || '无法确认本地安装状态，自动安装已暂停。请刷新列表或查看官方说明。', agent.installHelp].filter(Boolean).join(' ')

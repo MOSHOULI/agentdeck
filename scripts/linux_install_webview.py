@@ -5,6 +5,7 @@ It does not certify registry, real-package or lifecycle-script compatibility.
 The caller enforces hosted Linux and retains the WebKit sandbox.
 """
 import json
+import hashlib
 import base64
 import math
 import os
@@ -44,7 +45,8 @@ def private_write(path, content, executable=False):
     path.chmod(0o700 if executable else 0o600)
 
 
-def prepare(root, path):
+def prepare(root, path, mode="success"):
+    if mode not in ("success", "wrong-root"): raise InstallFailure("invalid_fixture_mode")
     reject_existing_codex(path)
     node = shutil.which('node', path=path)
     if not node:
@@ -60,12 +62,12 @@ def prepare(root, path):
         raise InstallFailure('node_version_unavailable') from error
     root.mkdir(mode=0o700)
     root = root.resolve(strict=True)
-    paths = {'root': root, 'node': node, 'installer_node_version': node_version, 'manager_bin': root / 'manager/bin',
+    paths = {'root': root, 'mode': mode, 'node': node, 'installer_node_version': node_version, 'manager_bin': root / 'manager/bin',
              'manager': root / 'manager/lib/node_modules/npm/bin/npm-cli.js',
              'prefix': root / 'prefix', 'global': root / 'prefix/lib/node_modules',
              'package': root / 'prefix/lib/node_modules/@openai/codex',
              'bin': root / 'prefix/bin', 'marker': root / 'install-marker',
-             'queries': root / 'query-events', 'latest': root / 'latest-version'}
+             'versions': root / 'version-events', 'calls': root / 'install-events', 'queries': root / 'query-events', 'latest': root / 'latest-version'}
     for directory in (paths['manager'].parent, paths['manager_bin'], paths['bin'], paths['global']):
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     # Intermediate directories also remain private independently of umask.
@@ -74,11 +76,15 @@ def prepare(root, path):
     private_write(paths['manager'].parent.parent / 'package.json', json.dumps({
         'name': 'npm', 'version': '0.0.0', 'bin': {'npm': 'bin/npm-cli.js'}}))
     private_write(paths['queries'], '')
+    private_write(paths['versions'], '')
+    private_write(paths['calls'], '')
     private_write(paths['latest'], '1.2.3')
     expected = ['install', '--global', '--prefix', str(paths['prefix']), '--force=false',
                 '--no-audit', '--no-fund', '--no-progress', '--ignore-scripts', '@openai/codex@1.2.3']
     constants = {key: str(value) for key, value in paths.items()}
     codex = "#!/usr/bin/env node\n'use strict';\nif (JSON.stringify(process.argv.slice(2)) !== '[\"--version\"]') process.exit(64);\nconsole.log('codex-cli 1.2.3');\n"
+    if mode == 'wrong-root':
+        codex = "#!/usr/bin/env node\n'use strict';\nconst fs = require('node:fs');\nconst log = " + json.dumps(str(paths['versions'])) + ";\nconst s = fs.lstatSync(log); if (!s.isFile() || s.nlink !== 1 || s.size >= 4096) process.exit(64); fs.appendFileSync(log, 'v');\nif (JSON.stringify(process.argv.slice(2)) !== '[\"--version\"]') process.exit(64);\nconsole.log('codex-cli 1.2.3');\n"
     script = "#!/usr/bin/env node\n'use strict';\n" + 'const p = ' + json.dumps(constants) + ';\n'
     script += 'const expected = ' + json.dumps(expected) + ';\nconst codex = ' + json.dumps(codex) + ';\n'
     script += r'''
@@ -108,6 +114,7 @@ try {
   else if (args === '["root","--global"]') { query('r'); console.log(p.global); }
   else if (args === '["view","@openai/codex@latest","version","--json","--fetch-retries=0","--fetch-timeout=25000"]') { query('m'); const s = fs.lstatSync(p.latest); if (!s.isFile() || s.nlink !== 1 || s.size !== 5) throw Error('metadata'); const version = fs.readFileSync(p.latest, 'utf8'); if (!['1.2.3','1.2.4'].includes(version)) throw Error('metadata'); console.log(JSON.stringify(version)); }
   else if (args === JSON.stringify(expected)) {
+    if (p.mode === 'wrong-root') { const s = fs.lstatSync(p.calls); if (!s.isFile() || s.nlink !== 1 || s.size >= 4096) throw Error('calls'); fs.appendFileSync(p.calls, 'i'); }
     absent(p.marker); absent(p.package); absent(path.join(p.bin, 'codex'));
     const scope = path.dirname(p.package);
     if (fs.existsSync(scope)) safeDirectory(scope);
@@ -116,7 +123,7 @@ try {
     fs.mkdirSync(scope, {recursive:true, mode:0o700});
     fs.mkdirSync(p.package, {mode:0o700});
     fs.mkdirSync(path.join(p.package, 'bin'), {mode:0o700});
-    fs.writeFileSync(path.join(p.package, 'package.json'), JSON.stringify({name:'@openai/codex',version:'1.2.3',bin:{codex:'bin/codex.js'}}), {flag:'wx',mode:0o600});
+    fs.writeFileSync(path.join(p.package, 'package.json'), JSON.stringify({name:'@openai/codex',version:p.mode === 'wrong-root' ? '1.2.4' : '1.2.3',bin:{codex:'bin/codex.js'}}), {flag:'wx',mode:0o600});
     fs.writeFileSync(path.join(p.package, 'bin/codex.js'), codex, {flag:'wx',mode:0o700});
     fs.symlinkSync(path.join(p.package, 'bin/codex.js'), path.join(p.bin, 'codex'));
   } else { throw Error('arguments'); }
@@ -348,3 +355,115 @@ def exercise(driver, fixture, home, records, phase, trace=None, observe=None):
     phase('install_no_configuration')
     assert_no_configuration(home); done('no_configuration')
     assert_coverage(records)
+
+
+WRONG_ROOT_GUARD = '本进程中 Codex 安装完成状态未确认，已暂停自动版本探测。刷新或切换页面不会为此条目执行 Codex 或 npm；未清理残留。此保护不跨应用重启。'
+WRONG_ROOT_STAGES = ('wrong_root_rejected', 'automatic_refresh_guarded', 'manual_refresh_guarded', 'navigation_guarded', 'residue_unchanged')
+
+
+def wrong_root_snapshot(fixture):
+    """Private bounded byte/identity evidence; returned values are never published."""
+    prefix = fixture['prefix']
+    paths = [prefix, *sorted(prefix.rglob('*')), fixture['marker']]
+    if len(paths) > 32: raise InstallFailure('wrong_root_inventory')
+    result = []
+    for path in paths:
+        meta = path.lstat()
+        identity = tuple(getattr(meta, key) for key in ('st_dev', 'st_ino', 'st_mode', 'st_nlink', 'st_uid', 'st_gid', 'st_size', 'st_mtime_ns', 'st_ctime_ns'))
+        if stat.S_ISLNK(meta.st_mode): value = os.readlink(path)
+        elif stat.S_ISREG(meta.st_mode):
+            if meta.st_nlink != 1 or meta.st_size > 65536: raise InstallFailure('wrong_root_inventory')
+            value = hashlib.sha256(path.read_bytes()).hexdigest()
+        elif stat.S_ISDIR(meta.st_mode): value = None
+        else: raise InstallFailure('wrong_root_inventory')
+        result.append((str(path), identity, value))
+    return result
+
+
+def assert_wrong_root(fixture, expected=None):
+    if fixture['mode'] != 'wrong-root': raise InstallFailure('invalid_fixture_mode')
+    if fixture['versions'].read_bytes() != b'': raise InstallFailure('wrong_root_agent_executed')
+    if fixture['calls'].read_bytes() != b'i': raise InstallFailure('wrong_root_install_count')
+    if fixture['marker'].read_bytes() != b'synthetic-install-once\n': raise InstallFailure('install_count')
+    package = fixture['package']
+    if (fixture['bin'] / 'codex').is_symlink() is not True or (fixture['bin'] / 'codex').resolve(strict=True) != package / 'bin/codex.js':
+        raise InstallFailure('launcher_changed')
+    executable = (package / 'bin/codex.js').lstat()
+    if not stat.S_ISREG(executable.st_mode) or executable.st_nlink != 1 or stat.S_IMODE(executable.st_mode) != 0o700:
+        raise InstallFailure('wrong_root_inventory')
+    if {str(p.relative_to(package)) for p in package.rglob('*')} != {'package.json', 'bin', 'bin/codex.js'}:
+        raise InstallFailure('wrong_root_inventory')
+    if json.loads((package / 'package.json').read_text(encoding='utf-8')) != {'name': '@openai/codex', 'version': '1.2.4', 'bin': {'codex': 'bin/codex.js'}}:
+        raise InstallFailure('package_changed')
+    snapshot = wrong_root_snapshot(fixture)
+    if expected is not None and expected != snapshot: raise InstallFailure('wrong_root_residue_changed')
+    return snapshot
+
+
+def assert_wrong_root_coverage(records):
+    if records != [{'stage': stage, 'verified': True} for stage in WRONG_ROOT_STAGES]:
+        raise InstallFailure('incomplete_wrong_root_coverage')
+
+
+def exercise_wrong_root(driver, fixture, home, records, phase):
+    """A fresh native app session; never restart it with this complete residue."""
+    # A new WebDriver session can return before React mounts its controls.
+    # Poll only read-only readiness; each click/type action is still sent once.
+    agents_tab = "//*[@role='tab' and @aria-label='Agent 管理']"
+    search_input = "//*[@id='agent-search']"
+    phase('wrong_root_wait_agents_tab')
+    driver.wait(lambda: len(driver.elements(agents_tab)) == 1 and driver.enabled(agents_tab))
+    phase('wrong_root_open_agents')
+    driver.click(agents_tab)
+    phase('wrong_root_wait_search')
+    driver.wait(lambda: len(driver.elements(search_input)) == 1 and driver.enabled(search_input))
+    phase('wrong_root_type_search')
+    driver.type(search_input, 'Codex')
+    search = driver.one("//*[@id='agent-search']")
+    driver.command('POST', '/element/' + search + '/value', {'text': '\ue004', 'value': ['\ue004']})
+    driver.wait(lambda: driver.value("//*[@id='agent-search']") == 'Codex')
+    driver.wait(lambda: len(driver.elements("//*[@aria-label='Agent 列表']/article")) == 1 and driver.elements(PREVIEW) and driver.enabled(PREVIEW))
+    preview = driver.one(PREVIEW)
+    driver.command('POST', '/element/' + preview + '/value', {'text': '\ue007', 'value': ['\ue007']})
+    driver.wait(lambda: driver.elements(DIALOG))
+    assert_plan(driver, fixture)
+    assert_absent(fixture)
+    phase('wrong_root_confirm')
+    driver.click(CONFIRM)
+    alert = "//*[@role='alert' and contains(@class, 'agent-notice')]"
+    driver.wait(lambda: driver.elements(alert) and '安装请求已发送，但完成状态未确认。' in driver.text(alert))
+    snapshot = assert_wrong_root(fixture)
+    queries = query_counts(fixture)
+    records.append({'stage': 'wrong_root_rejected', 'verified': True})
+
+    def check(stage):
+        phase(stage)
+        driver.wait(lambda: len(driver.elements("//*[@aria-label='Agent 列表' and @aria-busy='false']")) == 1 and WRONG_ROOT_GUARD in driver.text("//*[@aria-label='Agent 列表']"))
+        if query_counts(fixture) != queries: raise InstallFailure('wrong_root_query_repeated')
+        assert_wrong_root(fixture, snapshot)
+        assert_no_configuration(home)
+        text = driver.text("//*[@aria-label='Agent 列表']")
+        if '软件安装操作已完成' in driver.text('//body') or '实测版本 1.2.3' in text:
+            raise InstallFailure('wrong_root_success_displayed')
+        # Exact suppression explanation is coordinated with the desktop guard.
+        if WRONG_ROOT_GUARD not in text: raise InstallFailure('wrong_root_guard_not_displayed')
+        if driver.elements(PREVIEW) and driver.enabled(PREVIEW): raise InstallFailure('wrong_root_install_not_disabled')
+        records.append({'stage': stage, 'verified': True})
+
+    check('automatic_refresh_guarded')
+    phase('wrong_root_manual_refresh')
+    refresh = "//*[@id='workspace-panel-agents' and not(@hidden)]//button[text()='刷新列表']"
+    driver.wait(lambda: len(driver.elements(refresh)) == 1 and driver.enabled(refresh))
+    driver.click(refresh)
+    check('manual_refresh_guarded')
+    phase('wrong_root_navigation')
+    driver.click("//*[@role='tab' and @aria-label='Qwen 配置检查']")
+    driver.wait(lambda: driver.elements("//*[@role='tab' and @aria-label='Qwen 配置检查' and @aria-selected='true']"))
+    assert_wrong_root(fixture, snapshot)
+    driver.click("//*[@role='tab' and @aria-label='Agent 管理']")
+    driver.wait(lambda: driver.elements("//*[@role='tab' and @aria-label='Agent 管理' and @aria-selected='true']"))
+    check('navigation_guarded')
+    assert_wrong_root(fixture, snapshot)
+    assert_no_configuration(home)
+    records.append({'stage': 'residue_unchanged', 'verified': True})
+    assert_wrong_root_coverage(records)

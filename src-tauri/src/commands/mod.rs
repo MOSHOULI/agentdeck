@@ -27,3 +27,5 @@ pub mod dsh_distribution;
 pub mod codex_animations;
 
 mod install_session;
+
+mod install_probe_guard;

@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from unittest.mock import Mock, patch
 
 import installer_node_fixture
@@ -371,5 +372,125 @@ class DetailsActivationTests(unittest.TestCase):
         with self.assertRaises(harness.Failure): subject.open_details(driver)
         self.assertEqual(driver.command.call_count, 1)
         driver.click.assert_not_called()
+
+class WrongRootFixtureTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name); self.search=self.root/'search'; self.search.mkdir(mode=0o700)
+        node=shutil.which('node'); self.assertIsNotNone(node)
+        (self.search/'node').symlink_to(Path(node).resolve())
+        self.f=subject.prepare(self.root/'wrong-root',str(self.search),mode='wrong-root')
+    def install(self):
+        args=['install','--global','--prefix',str(self.f['prefix']),'--force=false','--no-audit','--no-fund','--no-progress','--ignore-scripts','@openai/codex@1.2.3']
+        result=subprocess.run([str(self.f['node']),str(self.f['manager']),*args],capture_output=True,timeout=5,env={'PATH':self.f['path'],'HOME':str(self.root)})
+        self.assertEqual(result.returncode,0,result.stderr)
+    def test_complete_wrong_root_is_retained_without_probe(self):
+        self.install(); snapshot=subject.assert_wrong_root(self.f)
+        for _ in range(3): self.assertEqual(subject.assert_wrong_root(self.f,snapshot),snapshot)
+        self.assertEqual(self.f['calls'].read_bytes(),b'i')
+        self.assertEqual(self.f['versions'].read_bytes(),b'')
+    def test_authored_launcher_sentinel_detects_any_probe(self):
+        self.install()
+        result=subprocess.run([str(self.f['node']),str(self.f['package']/'bin/codex.js'),'--version'],capture_output=True,timeout=5)
+        self.assertEqual(result.returncode,0)
+        with self.assertRaisesRegex(subject.InstallFailure,'wrong_root_agent_executed'):subject.assert_wrong_root(self.f)
+    def test_snapshot_detects_metadata_mutation_without_ignoring_timestamps(self):
+        self.install(); snapshot=subject.assert_wrong_root(self.f)
+        path=self.f['package']/'bin/codex.js'; meta=path.stat()
+        os.utime(path,ns=(meta.st_atime_ns,meta.st_mtime_ns-1000000))
+        with self.assertRaisesRegex(subject.InstallFailure,'wrong_root_residue_changed'):subject.assert_wrong_root(self.f,snapshot)
+    def test_snapshot_detects_changed_complete_payload(self):
+        self.install(); snapshot=subject.assert_wrong_root(self.f)
+        with (self.f['package']/'bin/codex.js').open('a',encoding='utf-8') as stream:stream.write('// mutation')
+        with self.assertRaisesRegex(subject.InstallFailure,'wrong_root_residue_changed'):subject.assert_wrong_root(self.f,snapshot)
+    def test_offline_wrong_root_flow_scopes_duplicate_refresh_buttons(self):
+        owner=self
+        mounted_panels=ET.fromstring("<main><section id='workspace-panel-agents'><button>刷新列表</button></section><section id='workspace-panel-vault' hidden=''><button>刷新列表</button></section></main>")
+        class Driver(OfflineDriver):
+            def click(self,selector):
+                if selector==subject.CONFIRM:
+                    self.clicks.append(selector);self.dialog=False;owner.install()
+                else:super().click(selector)
+            def elements(self,selector):
+                # Both mounted workspaces expose the same button text. The
+                # Vault workspace remains hidden, not absent from the DOM.
+                if selector=="//button[text()='刷新列表']":
+                    return [node for node in mounted_panels.iter('button') if node.text=='刷新列表']
+                if selector=="//*[@id='workspace-panel-agents' and not(@hidden)]//button[text()='刷新列表']":
+                    return [node for panel in mounted_panels if panel.get('id')=='workspace-panel-agents' and 'hidden' not in panel.attrib for node in panel.iter('button') if node.text=='刷新列表']
+                return super().elements(selector)
+            def enabled(self,selector):
+                if len(self.elements(selector))!=1:raise harness.Failure('missing_or_ambiguous_control')
+                if selector==subject.PREVIEW and self.fixture['marker'].exists():return False
+                return super().enabled(selector)
+            def text(self,selector):
+                if selector=="//*[@aria-label='Agent 列表']":return subject.WRONG_ROOT_GUARD
+                if selector=='//body':return subject.WRONG_ROOT_GUARD
+                return super().text(selector)
+        driver=Driver(self.f,self.install);records=[]
+        subject.exercise_wrong_root(driver,self.f,self.root/'empty-home',records,lambda _:None)
+        subject.assert_wrong_root_coverage(records)
+        self.assertEqual(driver.clicks.count(subject.CONFIRM),1)
+        self.assertEqual(len(driver.elements("//button[text()='刷新列表']")),2)
+        self.assertEqual(driver.clicks.count("//*[@id='workspace-panel-agents' and not(@hidden)]//button[text()='刷新列表']"),1)
+        self.assertNotIn("//button[text()='刷新列表']",driver.clicks)
+        self.assertEqual(self.f['calls'].read_bytes(),b'i')
+        self.assertEqual(self.f['versions'].read_bytes(),b'')
+    def test_wrong_root_waits_for_unique_enabled_controls_before_one_action(self):
+        tab="//*[@role='tab' and @aria-label='Agent 管理']"; search="//*[@id='agent-search']"
+        driver=Mock(); phases=[]; events=[]; ready=set()
+        counts={tab:iter((0,2,1,1)),search:iter((0,2,1,1))}
+        enables={tab:iter((False,True)),search:iter((False,True))}
+        def elements(selector):
+            events.append(('read',selector));return [{}]*next(counts[selector])
+        def enabled(selector):
+            result=next(enables[selector]);events.append(('enabled',selector,result))
+            if result:ready.add(selector)
+            return result
+        def wait(predicate):
+            for _ in range(4):
+                if predicate():return
+            raise harness.Failure('ui_wait_expired')
+        def click(selector):
+            self.assertIn(selector,ready);events.append(('click',selector))
+        def type_input(selector,value):
+            self.assertIn(selector,ready);events.append(('type',selector));raise harness.Failure('test_stop_after_readiness')
+        driver.elements.side_effect=elements;driver.enabled.side_effect=enabled;driver.wait.side_effect=wait
+        driver.click.side_effect=click;driver.type.side_effect=type_input
+        with self.assertRaisesRegex(harness.Failure,'test_stop_after_readiness'):
+            subject.exercise_wrong_root(driver,self.f,self.root,[],phases.append)
+        self.assertEqual(driver.click.call_count,1);self.assertEqual(driver.type.call_count,1)
+        self.assertLess(events.index(('enabled',tab,True)),events.index(('click',tab)))
+        self.assertLess(events.index(('enabled',search,True)),events.index(('type',search)))
+        self.assertEqual(phases,['wrong_root_wait_agents_tab','wrong_root_open_agents','wrong_root_wait_search','wrong_root_type_search'])
+
+    def test_wrong_root_missing_ambiguous_or_disabled_tab_never_acted_on(self):
+        for count,enabled in ((0,True),(2,True),(1,False)):
+            with self.subTest(count=count,enabled=enabled):
+                driver=Mock();driver.elements.return_value=[{}]*count;driver.enabled.return_value=enabled
+                def wait(predicate):
+                    self.assertFalse(predicate());raise harness.Failure('ui_wait_expired')
+                driver.wait.side_effect=wait
+                with self.assertRaisesRegex(harness.Failure,'ui_wait_expired'):
+                    subject.exercise_wrong_root(driver,self.f,self.root,[],lambda _:None)
+                driver.click.assert_not_called();driver.type.assert_not_called()
+                if count!=1:driver.enabled.assert_not_called()
+
+    def test_wrong_root_uncertain_first_click_is_not_replayed(self):
+        driver=Mock();driver.elements.return_value=[{}];driver.enabled.return_value=True
+        driver.wait.side_effect=lambda predicate:self.assertTrue(predicate())
+        driver.click.side_effect=harness.Failure('driver_http_error')
+        with self.assertRaisesRegex(harness.Failure,'driver_http_error'):
+            subject.exercise_wrong_root(driver,self.f,self.root,[],lambda _:None)
+        self.assertEqual(driver.click.call_count,1);driver.type.assert_not_called()
+
+    def test_native_harness_keeps_success_lane_and_distinct_wrong_root_process(self):
+        source=Path(harness.__file__).read_text(encoding='utf-8')
+        self.assertLess(source.index('memory_export.assert_coverage(memory_export_records)'),source.index("phase('wrong_root_close_success_session')"))
+        close=source.index("phase('wrong_root_close_success_session')")
+        self.assertLess(source.index("client.command('DELETE', '')",close),source.index("mode='wrong-root'",close))
+        self.assertLess(source.index("mode='wrong-root'",close),source.index('install_gui.exercise_wrong_root(',close))
+        self.assertIn('install_gui.assert_wrong_root_coverage(wrong_root_records)',source)
+        self.assertIn("'wrong_root_install_gui_verified': passed and",source)
 
 if __name__ == '__main__': unittest.main()

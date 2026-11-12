@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAgentStore } from './agentStore';
 import { installPlan } from '../test-fixtures/installPlan';
 import * as bridge from '../bridge';
-import { agentCatalog, installedAgent, notDetectedAgent, ambiguousAgent, npmMatchedAgent, activeInstance } from '../test-fixtures/agents';
+import { agentCatalog, installedAgent, notDetectedAgent, ambiguousAgent, npmMatchedAgent, activeInstance, suppressedCodexAgent } from '../test-fixtures/agents';
 
 vi.mock('../bridge', async (importOriginal) => ({
   ...await importOriginal<typeof import('../bridge')>(),
@@ -45,6 +45,31 @@ describe('agentStore', () => {
     await useAgentStore.getState().prepareInstall('opencode');
     expect(useAgentStore.getState().installSessions.opencode).toBe(history);
     expect(bridge.installAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps passive failed-Codex evidence across automatic and manual refresh without retry', async () => {
+    seedFresh([{ ...notDetectedAgent, id: 'codex', name: 'Codex' }]);
+    const plan = { ...installPlan, agentId: 'codex', package: '@openai/codex', executable: 'codex',
+      packageVersion: '1.2.3', versionPolicy: 'exact_root' as const, scriptPolicy: 'disabled' as const };
+    vi.mocked(bridge.previewAgentInstall).mockResolvedValueOnce(plan);
+    await useAgentStore.getState().prepareInstall('codex');
+    vi.mocked(bridge.installAgent).mockRejectedValueOnce('root mismatch');
+    vi.mocked(bridge.getAgents).mockResolvedValue([suppressedCodexAgent]);
+    await useAgentStore.getState().installAgent('codex', plan.revision);
+    expect(useAgentStore.getState().installSessions.codex.state).toBe('unconfirmed');
+    expect(useAgentStore.getState().agents).toEqual([suppressedCodexAgent]);
+    useAgentStore.getState().clearError();
+    useAgentStore.getState().selectAgent('other');
+    await useAgentStore.getState().loadAgents();
+    expect(await useAgentStore.getState().prepareInstall('codex')).toBeNull();
+    await useAgentStore.getState().installAgent('codex', plan.revision);
+    expect(bridge.installAgent).toHaveBeenCalledTimes(1);
+    expect(bridge.previewAgentInstall).toHaveBeenCalledTimes(1);
+    expect(bridge.getAgents).toHaveBeenCalledTimes(2);
+    expect(useAgentStore.getState().agents[0]).toMatchObject({
+      installed: false, version: null, installSource: 'unknown', authVerified: false,
+    });
+    expect(bridge.configureAgent).not.toHaveBeenCalled();
   });
 
   it('does not associate reviewed targets with a different syntactically valid revision', async () => {

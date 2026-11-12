@@ -9,11 +9,70 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from unittest.mock import patch
 import windows_install_fixture as h
+
+def remove_owned_node_copy(path, temporary_root):
+    """After subprocess.run has waited/reaped, tolerate only transient Windows
+    image sharing violations on this test's exact copied Node, not arbitrary
+    cleanup failures. No process termination, install retry or ignored errors.
+    """
+    path=Path(path);root=Path(temporary_root).resolve(strict=True)
+    if path.name!='node.exe' or path.parent.name!='manager' or not path.is_absolute():
+        raise ValueError('unexpected_owned_node_copy')
+    if path.is_symlink() or not path.parent.resolve(strict=True).is_relative_to(root):
+        raise ValueError('unexpected_owned_node_copy')
+    for parent in path.parents:
+        if parent==root:break
+        if parent.is_symlink():raise ValueError('unexpected_owned_node_copy')
+    for attempt in range(40):
+        try:
+            path.unlink()
+            return
+        except OSError as error:
+            if getattr(error,'winerror',None)!=32 or attempt==39:raise
+            time.sleep(0.05)
+
+
+class OwnedNodeCleanupTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name);self.node=self.root/'prepared'/'manager'/'node.exe'
+        self.node.parent.mkdir(parents=True);self.node.write_bytes(b'owned authored copy')
+    def sharing_error(self):
+        error=PermissionError('authored sharing violation');error.winerror=32;return error
+    def test_sharing_violation_retries_only_exact_owned_copy(self):
+        unlink=Path.unlink;calls=[]
+        def blocked_once(path,*args,**kwargs):
+            calls.append(path)
+            if len(calls)==1:raise self.sharing_error()
+            return unlink(path,*args,**kwargs)
+        with patch.object(Path,'unlink',blocked_once),patch.object(time,'sleep') as sleep:
+            remove_owned_node_copy(self.node,self.root)
+        self.assertEqual(calls,[self.node,self.node]);sleep.assert_called_once_with(0.05)
+        self.assertFalse(self.node.exists())
+    def test_persistent_sharing_violation_still_fails(self):
+        with patch.object(Path,'unlink',side_effect=self.sharing_error()) as unlink,patch.object(time,'sleep') as sleep:
+            with self.assertRaises(PermissionError):remove_owned_node_copy(self.node,self.root)
+        self.assertEqual(unlink.call_count,40);self.assertEqual(sleep.call_count,39)
+        self.assertEqual(self.node.read_bytes(),b'owned authored copy')
+    def test_other_errors_and_outside_paths_are_not_retried(self):
+        denied=PermissionError('authored access denied');denied.winerror=5
+        with patch.object(Path,'unlink',side_effect=denied) as unlink,patch.object(time,'sleep') as sleep:
+            with self.assertRaises(PermissionError):remove_owned_node_copy(self.node,self.root)
+        self.assertEqual(unlink.call_count,1);sleep.assert_not_called()
+        outside=self.root/'other-root';outside.mkdir()
+        with self.assertRaises(ValueError):remove_owned_node_copy(self.node,outside)
+        other=self.node.with_name('other.exe');other.write_bytes(b'other')
+        with self.assertRaises(ValueError):remove_owned_node_copy(other,self.root)
+        self.assertEqual(other.read_bytes(),b'other')
+
 
 class FixtureTests(unittest.TestCase):
     def setUp(self):
+        self.owned_node_copies=[]
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)/'fixture';self.root.mkdir()
         home=Path(self.tmp.name)/'home';home.mkdir()
         self.p=h.layout(h.namespaced(self.root),h.namespaced(home))
@@ -26,7 +85,11 @@ class FixtureTests(unittest.TestCase):
         self.p['mode']='success'
         self.node=shutil.which('node')
         self.write('success')
-    def tearDown(self):self.tmp.cleanup()
+    def tearDown(self):
+        # Both preparer cases invoke only synchronous subprocess.run calls.
+        # Those calls wait/reap even on timeout before teardown can begin.
+        for node in self.owned_node_copies:remove_owned_node_copy(node,Path(self.tmp.name))
+        self.tmp.cleanup()
     def write(self,mode):
         self.p['mode']=mode;Path(self.p['manager']).write_text(h.manager_program(self.p,mode),encoding='utf-8',newline='')
     def invoke(self,args,program=None):
@@ -107,6 +170,42 @@ class FixtureTests(unittest.TestCase):
                               capture_output=True,text=True,timeout=15,check=True)
         self.assert_failure_script_args(json.loads(result.stdout))
 
+    def test_successful_npm_wrong_root_is_complete_unprobed_and_unchanged(self):
+        self.write('wrong-root')
+        result=self.invoke(self.args())
+        self.assertEqual(result.returncode,0,result.stderr)
+        def snapshot():
+            root=Path(self.p['prefix']);values=[]
+            for p in [root,*sorted(root.rglob('*')),Path(self.p['marker'])]:
+                m=p.stat();values.append((str(p),p.read_bytes() if p.is_file() else None,m.st_dev,m.st_ino,m.st_mode,m.st_nlink,m.st_size,m.st_mtime_ns,m.st_ctime_ns))
+            return values
+        before=snapshot()
+        for _ in range(3):
+            counts=h.assert_phase(self.p,'wrong-root')
+            self.assertEqual((counts['installCalls'],counts['versionProbes'],counts['completeWrongRootRetained']),(1,0,True))
+        self.assertEqual(snapshot(),before)
+        # Demonstrate the authored launcher is runnable and the guard detects it;
+        # this deliberately executed offline negative control is not GUI evidence.
+        result=self.invoke(['--version'],Path(self.p['package'])/'bin/codex.js')
+        self.assertEqual(result.returncode,0,result.stderr)
+        with self.assertRaisesRegex(h.Failure,'unexpected_version_probe'):h.assert_phase(self.p,'wrong-root')
+
+    def test_wrong_root_sentinel_also_detects_unexpected_invocation(self):
+        self.write('wrong-root');self.assertEqual(self.invoke(self.args()).returncode,0)
+        result=self.invoke(['--help'],Path(self.p['package'])/'bin/codex.js')
+        self.assertEqual(result.returncode,64)
+        self.assertEqual(Path(self.p['versions']).read_bytes(),b'v')
+        with self.assertRaisesRegex(h.Failure,'unexpected_version_probe'):h.assert_phase(self.p,'wrong-root')
+
+    def test_wrong_root_guard_rejects_missing_or_changed_complete_files(self):
+        self.write('wrong-root');self.assertEqual(self.invoke(self.args()).returncode,0)
+        manifest=Path(self.p['package'])/'package.json';old=manifest.read_bytes()
+        manifest.write_bytes(old.replace(b'1.2.4',b'1.2.3'))
+        with self.assertRaisesRegex(h.Failure,'installed_bytes_changed'):h.assert_phase(self.p,'wrong-root')
+        manifest.write_bytes(old)
+        launcher=Path(self.p['prefix'])/'codex.cmd';launcher.write_bytes(b'changed')
+        with self.assertRaisesRegex(h.Failure,'shim_changed'):h.assert_phase(self.p,'wrong-root')
+
     def test_failure_partial_state_retained_and_retries_are_observable(self):
         self.write('fail');self.assertEqual(self.invoke(self.args()).returncode,64)
         partial=Path(self.p['package'])/'partial-install.txt'
@@ -168,7 +267,9 @@ class FixtureTests(unittest.TestCase):
     @unittest.skipUnless(os.name=='nt','real Windows trusted Node PE preparer')
     def test_windows_preparer_and_manifest_contract(self):
         node=Path(self.node).resolve();root=Path(self.tmp.name)/'actual-prepared'
-        manifest=h.prepare(root,node,Path(self.p['home']),'success');m=h.load(manifest)
+        manifest=h.prepare(root,node,Path(self.p['home']),'success')
+        self.owned_node_copies.append(root/'manager'/'node.exe')
+        m=h.load(manifest)
         self.assertEqual(m['display']['managerPath'],m['manager']);self.assertTrue(m['prefix'].startswith('\\\\?\\'))
         h.assert_phase(m,'absent')
         result=subprocess.run([m['node'],m['manager'],'prefix','--global'],capture_output=True,text=True,timeout=10)
@@ -186,6 +287,7 @@ class FixtureTests(unittest.TestCase):
         helper=Path(h.__file__).resolve()
         result=subprocess.run([sys.executable,str(helper),'--prepare',str(root),'--node',str(Path(self.node).resolve()),'--home',str(home)],env=env,capture_output=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stderr.decode('utf-8'))
+        self.owned_node_copies.append(root/'manager'/'node.exe')
         manifest=Path(result.stdout.decode('utf-8').strip());self.assertEqual(manifest,root/'fixture.json')
         m=h.load(manifest)
         check=subprocess.run([sys.executable,str(helper),'--assert','absent','--manifest',str(manifest)],env=env,capture_output=True,timeout=30)

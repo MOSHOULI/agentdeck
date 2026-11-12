@@ -714,7 +714,7 @@ def capture_failure_dom(driver, evidence):
 
 def capture_log(stream, output):
     # Drain the process pipe even past the retained cap to avoid deadlock.
-    kept = 0
+    kept = len(output)
     while chunk := stream.read(16384):
         chunk = chunk[:max(0, 1_048_576 - kept)]
         output.extend(chunk); kept += len(chunk)
@@ -738,7 +738,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
     env = dict(os.environ, HOME=str(home), CODEX_HOME=str(home / '.codex'))
     for key, name in [('XDG_CONFIG_HOME', 'config'), ('XDG_CACHE_HOME', 'cache'), ('XDG_DATA_HOME', 'data'), ('XDG_STATE_HOME', 'state'), ('XDG_RUNTIME_DIR', 'runtime')]:
         directory = home / name; directory.mkdir(mode=0o700); env[key] = str(directory)
-    client = Driver(); process = None; records = []; write_records = []; scope_records = []; dsh_records = []; dsh_native_records = []; qwen_records = []; qwen_current_records = []; install_records = []; install_trace = []; codex_config_records = []; codex_animation_records = []; memory_export_records = []; deployment_records = []; passed = False
+    client = Driver(); process = None; records = []; write_records = []; scope_records = []; dsh_records = []; dsh_native_records = []; qwen_records = []; qwen_current_records = []; install_records = []; install_trace = []; wrong_root_records = []; codex_config_records = []; codex_animation_records = []; memory_export_records = []; deployment_records = []; passed = False
     log = bytearray(); logger = None
     diagnostic = {'phase': 'start_driver', 'failure_code': None}
     def phase(value): diagnostic['phase'] = value
@@ -747,7 +747,8 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         completed_paths,exact=complete.prepare(cli,archive,fixture_root,env)
         paths.update(completed_paths)
         phase('prepare_synthetic_install')
-        install_fixture = install_gui.prepare(temporary / 'install-fixture', env['PATH'])
+        original_search_path = env['PATH']
+        install_fixture = install_gui.prepare(temporary / 'install-fixture', original_search_path)
         env['PATH'] = install_fixture['path']
         phase('start_driver')
         process = subprocess.Popen([str(driver_binary), '--native-driver', str(native_driver), '--native-host', '127.0.0.1'], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
@@ -819,6 +820,43 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         memory_export.assert_coverage(memory_export_records)
         if dsh_native.pinned.snapshot(native_root) != native_before or dsh_native.pinned.snapshot(dsh_native_source) != native_source_before:
             raise Failure('incomplete_gui_coverage')
+        # Finish the success/configuration app before creating a distinct HOME
+        # and npm fixture. The wrong-root session itself is never restarted.
+        phase('wrong_root_close_success_session')
+        client.command('DELETE', '')
+        client.session = None
+        client.close()
+        try: os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError: pass
+        try: process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL); process.wait(timeout=5)
+        logger.join(timeout=5)
+        if logger.is_alive(): raise Failure('driver_log_capture_incomplete')
+        process = None; logger = None
+        home = temporary / 'wrong-root-home'; home.mkdir(mode=0o700)
+        env.update(HOME=str(home), CODEX_HOME=str(home / '.codex'))
+        for key, name in [('XDG_CONFIG_HOME', 'config'), ('XDG_CACHE_HOME', 'cache'), ('XDG_DATA_HOME', 'data'), ('XDG_STATE_HOME', 'state'), ('XDG_RUNTIME_DIR', 'runtime')]:
+            directory = home / name; directory.mkdir(mode=0o700); env[key] = str(directory)
+        wrong_fixture = install_gui.prepare(temporary / 'wrong-root-install-fixture', original_search_path, mode='wrong-root')
+        env['PATH'] = wrong_fixture['path']
+        client = Driver()
+        phase('wrong_root_start_driver')
+        process = subprocess.Popen([str(driver_binary), '--native-driver', str(native_driver), '--native-host', '127.0.0.1'], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+        logger = threading.Thread(target=capture_log, args=(process.stdout, log), daemon=True)
+        logger.start()
+        deadline = time.monotonic() + 15
+        while True:
+            if process.poll() is not None: raise Failure('driver_exited')
+            try:
+                client.request('GET', '/status'); break
+            except (OSError, http.client.HTTPException):
+                if time.monotonic() > deadline: raise Failure('driver_not_ready') from None
+                time.sleep(0.2)
+        session = client.request('POST', '/session', {'capabilities': {'alwaysMatch': {'browserName': 'wry', 'tauri:options': {'application': str(application)}}}})
+        client.session = session['sessionId']
+        install_gui.exercise_wrong_root(client, wrong_fixture, home, wrong_root_records, phase)
+        install_gui.assert_wrong_root_coverage(wrong_root_records)
         phase('acceptance_complete')
         passed = True
     except Exception as error:
@@ -851,7 +889,7 @@ def guarded_run(application, driver_binary, native_driver, evidence, cli=None, a
         if any(canary.encode() in retained for canary in memory_export.CANARIES):
             retained = b'Synthetic private content suppressed.\n'; passed = False
         (evidence / 'driver.log').write_bytes(retained)
-        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'qoder_deployment_checks': deployment_records, 'qoder_deployment_gui_verified': passed and deployment_records == [{'stage': name, 'verified': True} for name in qoder_deploy.STAGES], 'qoder_deployment_gui_boundary': 'Real fixed official payload deployed through UI/IPC. Harness does not launch Qoder; mandatory CLI lane separately traces exec, GUI process execution is not traced. No runtime, login, service or PATH activation acceptance.', 'qoder_deployment_harness_invokes_qoder': False, 'qoder_official_payload_deployed': passed and deployment_records == [{'stage': name, 'verified': True} for name in qoder_deploy.STAGES], 'qoder_deployment_payload_mode': '0700', 'memory_export_checks': memory_export_records, 'memory_export_gui_verified': passed and memory_export_records == [{'stage': name, 'verified': True} for name in memory_export.STAGES], 'memory_export_boundary': 'Authored SQLite rows only. Native UI edits local Markdown; no real sessions, collection or agent consumption verified. Empty WAL and shared-memory coordination lifecycle allowed; database and export bytes are checked.', 'codex_animations_checks': codex_animation_records, 'codex_animations_gui_verified': passed and codex_animation_records == [{'stage': name, 'verified': True} for name in codex_config.ANIMATION_STAGES], 'codex_animations_agent_executed': False, 'codex_config_plan_checks': codex_config_records, 'codex_config_plan_gui_verified': passed and codex_config_records == [{'stage': name, 'verified': True} for name in codex_config.STAGES], 'codex_config_plan_agent_executed': False, 'reviewed_install_checks': install_records, 'reviewed_install_query_trace': install_trace, 'synthetic_install_gui_verified': passed and install_records == [{'stage': name, 'verified': True} for name in install_gui.STAGES], 'real_agent_package_installed_or_executed': False, 'real_agent_package_installed_or_executed_scope': 'Synthetic npm install lane only; separate Qoder deployment lane copies a real official payload without invoking it.', 'registry_or_lifecycle_compatibility_verified': False, 'qwen_owned_checks': qwen_records, 'qwen_owned_gui_verified': passed and qwen_records == [{'stage': name, 'verified': True} for name in qwen.STAGES], 'qwen_current_checks': qwen_current_records, 'qwen_current_gui_verified': passed and qwen_current_records == [{'stage': name, 'verified': True} for name in qwen.CURRENT_STAGES], 'qwen_current_version': '0.27.2', 'qwen_legacy_version': '0.27.0', 'qwen_executed': False, 'desktop_write_checks': write_records, 'scope_checks': scope_records, 'dsh_native_checks': dsh_native_records, 'dsh_native_gui_verified': passed and dsh_native_records == [{'stage': stage, 'verified': True, 'zero_write': True} for stage in dsh_native.STAGES], 'dsh_native_boundary': 'Static archive verification only; no extraction to disk, installation, lifecycle execution, native loading or runtime acceptance.', 'dsh_root_checks': dsh_records, 'dsh_root_gui_verified': passed and len(dsh_records)==3, 'dsh_executed': False, 'synthetic_scope_gui_verified': passed and len(scope_records)==2, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'qoder_release': complete.pinned.VERSION, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_file_mode_scope': 'Cache data and synthetic configuration; separate deployed Qoder payload mode is 0700.', 'required_directory_mode': '0700'}, indent=2))
+        (evidence / 'result.json').write_text(json.dumps({'passed': passed, **diagnostic, 'checks': records, 'qoder_deployment_checks': deployment_records, 'qoder_deployment_gui_verified': passed and deployment_records == [{'stage': name, 'verified': True} for name in qoder_deploy.STAGES], 'qoder_deployment_gui_boundary': 'Real fixed official payload deployed through UI/IPC. Harness does not launch Qoder; mandatory CLI lane separately traces exec, GUI process execution is not traced. No runtime, login, service or PATH activation acceptance.', 'qoder_deployment_harness_invokes_qoder': False, 'qoder_official_payload_deployed': passed and deployment_records == [{'stage': name, 'verified': True} for name in qoder_deploy.STAGES], 'qoder_deployment_payload_mode': '0700', 'memory_export_checks': memory_export_records, 'memory_export_gui_verified': passed and memory_export_records == [{'stage': name, 'verified': True} for name in memory_export.STAGES], 'memory_export_boundary': 'Authored SQLite rows only. Native UI edits local Markdown; no real sessions, collection or agent consumption verified. Empty WAL and shared-memory coordination lifecycle allowed; database and export bytes are checked.', 'codex_animations_checks': codex_animation_records, 'codex_animations_gui_verified': passed and codex_animation_records == [{'stage': name, 'verified': True} for name in codex_config.ANIMATION_STAGES], 'codex_animations_agent_executed': False, 'codex_config_plan_checks': codex_config_records, 'codex_config_plan_gui_verified': passed and codex_config_records == [{'stage': name, 'verified': True} for name in codex_config.STAGES], 'codex_config_plan_agent_executed': False, 'wrong_root_install_checks': wrong_root_records, 'wrong_root_install_gui_verified': passed and wrong_root_records == [{'stage': stage, 'verified': True} for stage in install_gui.WRONG_ROOT_STAGES], 'wrong_root_boundary': 'Authored npm exits zero, complete root version mismatches preview; no authored Agent probe after failure, refresh or navigation in this process. No official package, runtime, restart or hostile-race guarantee.', 'reviewed_install_checks': install_records, 'reviewed_install_query_trace': install_trace, 'synthetic_install_gui_verified': passed and install_records == [{'stage': name, 'verified': True} for name in install_gui.STAGES], 'real_agent_package_installed_or_executed': False, 'real_agent_package_installed_or_executed_scope': 'Synthetic npm install lane only; separate Qoder deployment lane copies a real official payload without invoking it.', 'registry_or_lifecycle_compatibility_verified': False, 'qwen_owned_checks': qwen_records, 'qwen_owned_gui_verified': passed and qwen_records == [{'stage': name, 'verified': True} for name in qwen.STAGES], 'qwen_current_checks': qwen_current_records, 'qwen_current_gui_verified': passed and qwen_current_records == [{'stage': name, 'verified': True} for name in qwen.CURRENT_STAGES], 'qwen_current_version': '0.27.2', 'qwen_legacy_version': '0.27.0', 'qwen_executed': False, 'desktop_write_checks': write_records, 'scope_checks': scope_records, 'dsh_native_checks': dsh_native_records, 'dsh_native_gui_verified': passed and dsh_native_records == [{'stage': stage, 'verified': True, 'zero_write': True} for stage in dsh_native.STAGES], 'dsh_native_boundary': 'Static archive verification only; no extraction to disk, installation, lifecycle execution, native loading or runtime acceptance.', 'dsh_root_checks': dsh_records, 'dsh_root_gui_verified': passed and len(dsh_records)==3, 'dsh_executed': False, 'synthetic_scope_gui_verified': passed and len(scope_records)==2, 'desktop_cache_writes_verified': passed and len(write_records)==5, 'synthetic_partial_states_only': False, 'complete_cache_gui_verified': passed and len(records)==5, 'qoder_executed': False, 'sandbox_overrides': False, 'qoder_release': complete.pinned.VERSION, 'archive_sha256': complete.pinned.SHA256, 'archive_bytes': complete.pinned.SIZE, 'payload_sha256': complete.PAYLOAD_SHA256, 'payload_bytes': complete.PAYLOAD_BYTES, 'required_file_mode': '0600', 'required_file_mode_scope': 'Cache data and synthetic configuration; separate deployed Qoder payload mode is 0700.', 'required_directory_mode': '0700'}, indent=2))
     if not passed:
         raise Failure('acceptance_not_confirmed')
 

@@ -240,7 +240,7 @@ Windows 已安装应用门禁通过真实 WebView 和原生 UIAutomation 操作�
 After a confirmed install request fails, the desktop UI retains the reviewed
 installation targets for that Agent **in this application session only**. This is
 historical preview information, not a fresh filesystem scan, durable receipt,
-proof of ownership, or authorization for another operation. A string failure
+proof of ownership, or authorization for another operation. The frontend string failure
 cannot distinguish an internal preflight rejection from a failed installer or
 incomplete postcheck; the UI therefore says only that completion is unconfirmed,
 not that software was necessarily executed or written. Raw failure output is not
@@ -250,18 +250,64 @@ Use the recorded package, manager, Node and target directories to compare with
 current local state and the official installation instructions. Preserve unknown
 files and credentials. Do not infer that a directory can be deleted merely
 because it appeared in the reviewed plan. AgentDeck does not repair, roll back,
-uninstall or repeat the request from this panel. Any later attempt still requires
-a fresh valid preview and separate confirmation, and occupied targets remain
-rejected. Refreshing detection does not turn this historical record into an
+uninstall or repeat the request from this panel. Where a later attempt is allowed,
+it still requires a fresh valid preview and separate confirmation, and occupied
+targets remain rejected. The Codex process-local suppression described below
+refuses further previews/install requests after attempted-dispatch failure;
+a fresh preview cannot clear that guard. Refreshing detection does not turn this historical record into an
 ownership claim. Restarting the application loses this session-only record.
 
 已确认的安装请求未确认完成时，桌面界面在**本次应用会话内**保留对应 Agent
 的已审核安装目标。这是历史预览信息，不是当前文件扫描、持久凭据、所有权证明，
-也不是再次操作的授权。后端字符串错误不能可靠区分内部预检拒绝、安装器失败和
+也不是再次操作的授权。前端收到的字符串错误不能可靠区分内部预检拒绝、安装器失败和
 后验不完整，所以界面只说明结果未确认，不推断一定执行或写入了软件。
 面板与安装错误提示不展示原始失败输出。
 
 请将记录的包、管理器、Node 和目标目录与当前本地状态及官方安装说明核对。
 保留不明文件和凭据，不因目录出现在预览中就认定可以删除。此面板不会修复、
-回滚、卸载或重复请求。后续尝试仍须重新取得有效预览并单独确认；目标占用仍会
-拒绝。刷新检测不会让历史记录变成所有权证明；重启应用后会话记录不保留。
+回滚、卸载或重复请求。在允许后续尝试的情况下，仍须重新取得有效预览并单独确认；
+目标占用仍会拒绝。下述 Codex 进程内门禁在已尝试调用安装器且失败后拒绝新的预览
+与安装请求，重新预览不能解除门禁。刷新检测不会让历史记录变成所有权证明；重启应用后会话记录不保留。
+
+### Failed Codex installation: process-local probe suppression
+
+Before Codex's immediate post-install runtime probe, the exact reviewed root
+manifest is now checked. The existing manifest check after runtime/provenance
+inspection remains: a change during probing still rejects completion. This is
+an ordering guard, not publisher validation or protection against same-user races.
+
+The desktop additionally serializes this Codex row's list probe, preview and
+reviewed install under a process-local gate. The install gate arms eagerly to
+fail closed on panic. A typed core callback marks the boundary immediately before
+the installer subprocess is attempted. A normally returned preflight rejection
+before that callback restores the clear state, so a stale latest-version review
+can be refreshed and confirmed again in the same process. Once dispatch was
+attempted, any failed or uncertain installation/verification keeps this row
+suppressed. A successful attempt clears its own guard. An already suppressed
+process refuses later previews/install submissions; there is no reset endpoint.
+
+While suppressed, automatic or manual list refresh and workspace navigation
+return an error/unknown Codex row with no instances, version, npm-source or auth
+proof, without running npm or Codex **for that row**. The existing failed-install
+residual inspection reference is separate and remains available on Windows.
+No residual files are removed, normalized, retried, or rolled back. List-probe
+contention and poisoned locks also fail closed. An already running Codex list
+probe holds the same gate, so installation cannot start concurrently with it.
+The complete list is rechecked/redacted after all other row projections; this
+is not an atomic UI snapshot against a transition after the final gate release.
+
+This protection is **not persisted across application restart**. Restart loses
+it and can resume ordinary probing; restarting is not verification or a safe
+repair operation. CLI/core callers do not acquire this desktop gate. Other
+Agent rows, custom registry aliases/shell recipes, other processes and adversarial
+filesystem changes are outside its scope. Other rows may still run their usual
+npm/version checks. No official Agent runtime or isolation guarantee follows
+from authored fixture acceptance.
+
+桌面在 Codex 安装后执行版本探测前核验根 manifest，并保留探测后的再次核验。
+若已尝试启动安装器而安装或核验失败，本进程暂停该 Codex 条目的自动版本探测；
+刷新列表、切换页面不会绕过，旧预览或新的安装请求不能解除保护。明确发生在
+安装器调用前的预检拒绝仍允许重新预览。只返回未知状态，不伪造已安装、版本、
+来源或认证证据，不清理残留或自动重试。Windows 原有显式只读残留检查仍独立保留。
+该保护不跨应用重启；重启可能恢复普通探测，不等于修复或安全验证。其他条目、
+自定义别名、CLI、其他进程及恶意并发不在此进程内门禁的保证范围内。

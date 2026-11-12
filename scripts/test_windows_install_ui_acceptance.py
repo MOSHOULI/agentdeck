@@ -190,6 +190,31 @@ class Tests(unittest.TestCase):
         self.assertIn('Check-QwenCurrentLifecycle', LIFECYCLE)
         self.assertLess(LIFECYCLE.index('    Check-QwenLifecycle'), LIFECYCLE.index('    Check-QwenCurrentLifecycle'))
 
+    def test_wrong_root_native_lane_rejects_and_retains_without_agent_probes(self):
+        method=UI[UI.index('function Check-WrongRootReviewedInstall'):UI.index('function Check-FailedReviewedInstall')]
+        guard=UI[UI.index('function Assert-WrongRootInstallObservation'):UI.index('function Check-WrongRootReviewedInstall')]
+        self.assertIn("'--mode', 'wrong-root'",method)
+        self.assertEqual(method.count("Click-Qwen '确认安装软件'"),1)
+        self.assertEqual(method.count("Click-Qwen '刷新列表'"),1)
+        self.assertEqual(method.count('Check-Gui '),1)
+        for stage in ('verification_rejected','automatic_refresh_unprobed','manual_refresh_unprobed','navigation_unprobed'):
+            self.assertIn(stage,method)
+        for item in ('installCalls -ne 1','versionProbes -ne 0','completeWrongRootRetained -ne $true',
+                     '$current -cne $residual','(Get-CodexSnapshot) -cne $baseline','Assert-InstallNoConfirmation',
+                     "'软件安装操作已完成'","'实测版本 1.2.3'"):
+            self.assertIn(item,guard)
+        self.assertIn("Activate-InstallWorkspace 'Qwen 配置检查'",method)
+        self.assertIn("Activate-InstallWorkspace 'Agent 管理'",method)
+        self.assertIn('wrongRootSessionRestarted = $false',method)
+        self.assertIn('authoredAgentExecuted = $false',method)
+        self.assertIn("'probe-suppression'",guard)
+        self.assertIn("@('installCalls','versionProbes','prefixQueries','rootQueries','metadataQueries')",guard)
+        self.assertIn('$counts.$key -ne $expectedCounts.$key',guard)
+        self.assertIn("@('安装 OpenAI Codex','应用默认配置 OpenAI Codex')",guard)
+        self.assertIn('$action.Current.IsEnabled',guard)
+        self.assertIn('    Check-WrongRootReviewedInstall',LIFECYCLE)
+        self.assertLess(LIFECYCLE.index('    Check-FailedReviewedInstall'),LIFECYCLE.index('    Check-WrongRootReviewedInstall'))
+
     def test_native_gate_and_order(self):
         self.assertLess(LIFECYCLE.index('    Check-QoderReadonly'), LIFECYCLE.index('    Check-ReviewedInstall'))
         self.assertLess(LIFECYCLE.index('    Check-ReviewedInstall'), LIFECYCLE.index('    Check-CodexReadonly'))
