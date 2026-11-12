@@ -2,16 +2,16 @@
 
 简体中文 | [English](README.en.md)
 
-本文描述持续开发中的源码：安装实例与来源证据、受限 npm 安装、目录元数据修正和 DSH 桌面/CLI 被动盘点。已发布的 v1.1.1 不包含这些增量；是否已发布请以对应 Release 为准，并核对 `BUILD_COMMIT.txt` 与成功的发布 CI 提交。v1.2.0 未单独发布，后续安装包将在较大更新并完成验证后提供；版本号尚未确定。历史准备内容见 [v1.2.0 中英文说明](docs/RELEASE-1.2.0.md)。
+本文对应用户于 2026-11-12 要求发布并暂停后续开发的 v1.2.0 累计更新批次，旧 v1.1.1 安装包不含这些增量。实际发布状态、精确构建与验证边界请查看[中英文发布说明](docs/RELEASE-1.2.0.md)及版本 Release，源码更新不等于已公开发布。
 
-本开发分支另含 [MCP 开关预检与备份顺序修复](docs/MCP-SAFETY.zh-CN.md)，尚未随正式安装包发布；验证仅使用合成夹具，未测试真实 Agent 或桌面 GUI。
+本批次另含 [MCP 开关预检与备份顺序修复](docs/MCP-SAFETY.zh-CN.md)，实际发布状态以版本 Release 为准；MCP 修复验证使用合成夹具，不代表真实 Agent 运行。
 
-**下一开发版本说明：** 当前分支新增 Qwen Code 手动安装指引与被动 PATH 候选观察，尚未随正式安装包发布。找到候选也不代表安装或登录已验证；Qwen Code 的自动安装、版本/来源验证及通用配置写入均未开放；实验性 CLI 与桌面入口支持下述 Vim 布尔设置的受管应用/撤销。详见[注册表来源核验](docs/REGISTRY-SOURCES.zh-CN.md#qwen-code手动安装与仅被动-path-发现)。
+**本批次范围：** 源码包含 Qwen Code 手动安装指引与被动 PATH 候选观察，实际发布状态以版本 Release 为准。找到候选也不代表安装或登录已验证；Qwen Code 的自动安装、版本/来源验证及通用配置写入均未开放；实验性 CLI 与桌面入口支持下述 Vim 布尔设置的受管应用/撤销。详见[注册表来源核验](docs/REGISTRY-SOURCES.zh-CN.md#qwen-code手动安装与仅被动-path-发现)。
 
 
-新增 Cursor、GitHub Copilot CLI、Kimi Code 与 Qoder CLI 的六个[官方手动指引条目](docs/MAINSTREAM-CATALOG.zh-CN.md)，CLI 和桌面分别列出。目录共 17 条，不代表 17 款可自动管理；新条目不执行探针、不读写配置，尚未随正式安装包发布。
+新增 Cursor、GitHub Copilot CLI、Kimi Code 与 Qoder CLI 的六个[官方手动指引条目](docs/MAINSTREAM-CATALOG.zh-CN.md)，CLI 和桌面分别列出。目录共 17 条，不代表 17 款可自动管理；新条目不执行探针、不读写配置，实际发布状态以版本 Release 为准。
 
-Qoder 原生分发与私有部署支持显式选择已审阅的 1.1.85 / 1.1.86，默认仍为 1.1.85。CLI 对相关子命令使用 `--release 1.1.86`；桌面使用“Qoder 已审阅版本”选择器。版本间不迁移、不混用缓存与确认令牌；仅 Linux x64 baseline 的受控私有文件部署，不运行、不登录、不激活 PATH。详见 [部署边界](docs/QODER-PRIVATE-DEPLOYMENT.md)。
+Qoder 原生分发与私有部署支持显式选择已审阅的 1.1.85 / 1.1.86 / 1.1.87，默认仍为 1.1.85。CLI 对相关子命令使用 `--release 1.1.87`；桌面使用“Qoder 已审阅版本”选择器。版本间不迁移、不混用缓存与确认令牌；仅 Linux x64 baseline 的受控私有文件部署，不运行、不登录、不激活 PATH。详见 [部署边界](docs/QODER-PRIVATE-DEPLOYMENT.md)。
 
 在一个桌面界面中管理本机 AI Agent：发现与安装、配置、可选择的对话记忆导出、加密密钥、MCP 和配置备份。
 
@@ -19,7 +19,7 @@ Qoder 原生分发与私有部署支持显式选择已审阅的 1.1.85 / 1.1.86�
 
 Agent 广场支持按当前可自动安装、仅手动安装和待确认状态筛选，详见[目录筛选说明](docs/CATALOG-FILTERS.md)。
 
-桌面 MCP 开关新增[配置变更预览](docs/MCP-PREVIEW.zh-CN.md)：先查看目标与动作摘要，确认后才备份写入；过期预览会被拒绝。此摘要不是完整配置 diff，尚未随正式安装包发布。
+桌面 MCP 开关新增[配置变更预览](docs/MCP-PREVIEW.zh-CN.md)：先查看目标与动作摘要，确认后才备份写入；过期预览会被拒绝。此摘要不是完整配置 diff，实际发布状态以版本 Release 为准。
 
 ## 安装与运行
 
@@ -117,11 +117,11 @@ python scripts/run-isolated.py cargo test --locked --workspace
 
 Linux 核心检查：`python scripts/run-isolated.py cargo test --locked -p aisync-core -p aisync-cli`。
 
-本分支为 Linux 桌面依赖 `glib 0.18.5` 回移了 `RUSTSEC-2024-0429` 的上游两行修复，保留原版本与告警。源码、实际依赖路径及18项真实 GLib 回归已在三档优化下验证通过；完整 Linux 桌面构建和图形界面仍未验证，也未消除其他维护警告。精确提交、CI证据和限制见 [中文说明](docs/GLIB-BACKPORT.zh-CN.md) / [English guide](docs/GLIB-BACKPORT.md)。
+本分支为 Linux 桌面依赖 `glib 0.18.5` 回移了 `RUSTSEC-2024-0429` 的上游两行修复，保留原版本与告警。源码、实际依赖路径及18项真实 GLib 回归已在三档优化下验证通过；当前已验证特定 Linux 原生 WebView 流程，不等于完整 Linux 产品支持，也未消除其他维护警告。精确提交、CI证据和限制见 [中文说明](docs/GLIB-BACKPORT.zh-CN.md) / [English guide](docs/GLIB-BACKPORT.md)。
 
 测试运行器设置 `AGENTDECK_TEST_HOME`，核心路径解析显式尊重此绝对路径（Windows Known Folder API 不受普通 HOME 变量影响）。
 
-**所有测试使用隔离 HOME。不要运行 `--ignored` 或 `--include-ignored`**：8 项标记忽略的手动/真实环境测试可能安装/卸载第三方软件、访问会话和修改配置。常规 CI 只使用合成夹具。当前安装安全与 DSH 增量未通过真实 Agent 安装、桌面 GUI 或真实 DSH 执行验证；模拟 IPC、临时 manifest 和替身进程测试不能替代这些验证。
+**测试使用隔离应用数据。不要无差别运行 `--ignored` 或 `--include-ignored`**：手动/真实环境用例可能改变软件、会话或配置。当前 CI 结合自编夹具、官方载荷非执行检查、Windows 已安装应用验收及特定 Linux WebView 流程；不代表官方 Agent 执行/登录、真实 DSH 运行或完整 Linux 支持。详见[本次发布边界](docs/RELEASE-1.2.0.md)。
 
 CI 验证前端、Linux 核心/CLI、Windows 全工作区（含 DPAPI），构建 NSIS 并记录 SHA256 和源码提交。PR 或合并 main 不会自动发布安装包；只有在 main 手动触发工作流并明确开启 `publish_release`，且全部验证门禁通过后，才会先上传草稿 Release，再下载核对安装包字节、SHA256、构建提交与实际标签提交，全部一致才公开发布。现有 Release（包括草稿）或指向其他提交的标签会阻止发布，需人工核查，不会覆盖或按成功跳过。
 
