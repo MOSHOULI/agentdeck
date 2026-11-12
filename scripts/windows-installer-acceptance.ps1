@@ -152,6 +152,7 @@ try {
     Check-QoderReadonly
     Check-ReviewedInstall
     Check-FailedReviewedInstall
+    Check-WrongRootReviewedInstall
     Check-CodexReadonly
     Check-MemoryExport
     Check-ConfigurationFailurePreservation

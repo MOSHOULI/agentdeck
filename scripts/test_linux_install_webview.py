@@ -372,4 +372,64 @@ class DetailsActivationTests(unittest.TestCase):
         self.assertEqual(driver.command.call_count, 1)
         driver.click.assert_not_called()
 
+class WrongRootFixtureTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name); self.search=self.root/'search'; self.search.mkdir(mode=0o700)
+        node=shutil.which('node'); self.assertIsNotNone(node)
+        (self.search/'node').symlink_to(Path(node).resolve())
+        self.f=subject.prepare(self.root/'wrong-root',str(self.search),mode='wrong-root')
+    def install(self):
+        args=['install','--global','--prefix',str(self.f['prefix']),'--force=false','--no-audit','--no-fund','--no-progress','--ignore-scripts','@openai/codex@1.2.3']
+        result=subprocess.run([str(self.f['node']),str(self.f['manager']),*args],capture_output=True,timeout=5,env={'PATH':self.f['path'],'HOME':str(self.root)})
+        self.assertEqual(result.returncode,0,result.stderr)
+    def test_complete_wrong_root_is_retained_without_probe(self):
+        self.install(); snapshot=subject.assert_wrong_root(self.f)
+        for _ in range(3): self.assertEqual(subject.assert_wrong_root(self.f,snapshot),snapshot)
+        self.assertEqual(self.f['calls'].read_bytes(),b'i')
+        self.assertEqual(self.f['versions'].read_bytes(),b'')
+    def test_authored_launcher_sentinel_detects_any_probe(self):
+        self.install()
+        result=subprocess.run([str(self.f['node']),str(self.f['package']/'bin/codex.js'),'--version'],capture_output=True,timeout=5)
+        self.assertEqual(result.returncode,0)
+        with self.assertRaisesRegex(subject.InstallFailure,'wrong_root_agent_executed'):subject.assert_wrong_root(self.f)
+    def test_snapshot_detects_metadata_mutation_without_ignoring_timestamps(self):
+        self.install(); snapshot=subject.assert_wrong_root(self.f)
+        path=self.f['package']/'bin/codex.js'; meta=path.stat()
+        os.utime(path,ns=(meta.st_atime_ns,meta.st_mtime_ns-1000000))
+        with self.assertRaisesRegex(subject.InstallFailure,'wrong_root_residue_changed'):subject.assert_wrong_root(self.f,snapshot)
+    def test_snapshot_detects_changed_complete_payload(self):
+        self.install(); snapshot=subject.assert_wrong_root(self.f)
+        with (self.f['package']/'bin/codex.js').open('a',encoding='utf-8') as stream:stream.write('// mutation')
+        with self.assertRaisesRegex(subject.InstallFailure,'wrong_root_residue_changed'):subject.assert_wrong_root(self.f,snapshot)
+    def test_offline_wrong_root_assertion_flow_is_not_native_acceptance(self):
+        owner=self
+        class Driver(OfflineDriver):
+            def click(self,selector):
+                if selector==subject.CONFIRM:
+                    self.clicks.append(selector);self.dialog=False;owner.install()
+                else:super().click(selector)
+            def enabled(self,selector):
+                if selector==subject.PREVIEW and self.fixture['marker'].exists():return False
+                return super().enabled(selector)
+            def text(self,selector):
+                if selector=="//*[@aria-label='Agent 列表']":return subject.WRONG_ROOT_GUARD
+                if selector=='//body':return subject.WRONG_ROOT_GUARD
+                return super().text(selector)
+        driver=Driver(self.f,self.install);records=[]
+        subject.exercise_wrong_root(driver,self.f,self.root/'empty-home',records,lambda _:None)
+        subject.assert_wrong_root_coverage(records)
+        self.assertEqual(driver.clicks.count(subject.CONFIRM),1)
+        self.assertEqual(driver.clicks.count("//button[text()='刷新列表']"),1)
+        self.assertEqual(self.f['calls'].read_bytes(),b'i')
+        self.assertEqual(self.f['versions'].read_bytes(),b'')
+    def test_native_harness_keeps_success_lane_and_distinct_wrong_root_process(self):
+        source=Path(harness.__file__).read_text(encoding='utf-8')
+        self.assertLess(source.index('memory_export.assert_coverage(memory_export_records)'),source.index("phase('wrong_root_close_success_session')"))
+        close=source.index("phase('wrong_root_close_success_session')")
+        self.assertLess(source.index("client.command('DELETE', '')",close),source.index("mode='wrong-root'",close))
+        self.assertLess(source.index("mode='wrong-root'",close),source.index('install_gui.exercise_wrong_root(',close))
+        self.assertIn('install_gui.assert_wrong_root_coverage(wrong_root_records)',source)
+        self.assertIn("'wrong_root_install_gui_verified': passed and",source)
+
 if __name__ == '__main__': unittest.main()

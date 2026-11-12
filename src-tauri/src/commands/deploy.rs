@@ -111,6 +111,19 @@ fn to_agent_info(agent: AgentDefinition, details: InstallationDetails) -> AgentI
     }
 }
 
+fn suppressed_codex_details() -> InstallationDetails {
+    let message = super::install_probe_guard::SUPPRESSED.to_string();
+    InstallationDetails {
+        probe: InstallationProbe {
+            status: InstallationStatus::Error,
+            message: Some(message.clone()),
+        },
+        instances: Vec::new(),
+        ambiguous: true,
+        message: Some(message),
+    }
+}
+
 /// List registered agents with bounded, parallel instance and source inspection.
 #[tauri::command]
 pub async fn get_agents() -> Result<Vec<AgentInfo>, String> {
@@ -127,7 +140,11 @@ fn list_agents_with_status() -> Result<Vec<AgentInfo>, String> {
         .map(|agent| {
             let agent = agent.clone();
             std::thread::spawn(move || {
-                let details = aisync_core::deploy::inspect_installation(&agent);
+                let details = super::install_probe_guard::CODEX.inspect(
+                    &agent.id,
+                    || aisync_core::deploy::inspect_installation(&agent),
+                    suppressed_codex_details,
+                );
                 (agent.id.clone(), details)
             })
         })
@@ -136,7 +153,7 @@ fn list_agents_with_status() -> Result<Vec<AgentInfo>, String> {
     let mut probes: HashMap<String, InstallationDetails> =
         handles.into_iter().filter_map(|h| h.join().ok()).collect();
 
-    Ok(agents
+    let infos = agents
         .into_iter()
         .map(|a| {
             let details = probes.remove(&a.id).unwrap_or(InstallationDetails {
@@ -150,7 +167,38 @@ fn list_agents_with_status() -> Result<Vec<AgentInfo>, String> {
             });
             to_agent_info(a, details)
         })
-        .collect())
+        .collect();
+    Ok(finalize_agent_list(
+        infos,
+        &super::install_probe_guard::CODEX,
+    ))
+}
+
+// The list may have waited for other probes/projections after Codex completed.
+// Redact at the final return boundary. This is not an atomic UI snapshot: an
+// installation can still start after this gate is released.
+fn finalize_agent_list(
+    mut infos: Vec<AgentInfo>,
+    gate: &super::install_probe_guard::ProbeGuard,
+) -> Vec<AgentInfo> {
+    gate.inspect(
+        "codex",
+        || (),
+        || {
+            for info in infos.iter_mut().filter(|info| info.id == "codex") {
+                let details = suppressed_codex_details();
+                info.installed = false;
+                info.installation_status = details.probe.status;
+                info.installation_message = details.probe.message.clone();
+                info.installation_details = details;
+                info.install_source = "unknown";
+                info.version = None;
+                info.auth_verified = false;
+                info.can_configure = false;
+            }
+        },
+    );
+    infos
 }
 
 /// Inspect an ephemeral target for review without running the installer.
@@ -159,13 +207,16 @@ pub async fn preview_agent_install(
     id: String,
 ) -> Result<super::install_session::DesktopPreview, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let mut slot = super::install_session::SESSION
-            .try_lock()
-            .map_err(|_| super::install_session::UNAVAILABLE.to_string())?;
-        *slot = None;
-        let agent = find_agent(&id).map_err(|e| e.to_string())?;
-        let preview = aisync_core::deploy::preview_install(&agent).map_err(|e| e.to_string())?;
-        Ok(super::install_session::remember(&mut slot, preview))
+        super::install_probe_guard::CODEX.preview(&id, || {
+            let mut slot = super::install_session::SESSION
+                .try_lock()
+                .map_err(|_| super::install_session::UNAVAILABLE.to_string())?;
+            *slot = None;
+            let agent = find_agent(&id).map_err(|e| e.to_string())?;
+            let preview =
+                aisync_core::deploy::preview_install(&agent).map_err(|e| e.to_string())?;
+            Ok(super::install_session::remember(&mut slot, preview))
+        })
     })
     .await
     .map_err(|_| super::install_session::UNAVAILABLE.to_string())?
@@ -179,16 +230,19 @@ pub async fn install_agent(
     session_ref: Option<String>,
 ) -> Result<aisync_core::deploy::InstallOutcome, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let mut slot = super::install_session::SESSION
-            .try_lock()
-            .map_err(|_| super::install_session::UNAVAILABLE.to_string())?;
-        super::install_session::submitted(&mut slot, &id, &revision, session_ref.as_deref());
-        let result = find_agent(&id)
-            .and_then(|agent| aisync_core::deploy::install_agent_from_preview(&agent, &revision));
-        super::install_session::finished(&mut slot, result.is_ok());
-        result.map_err(|e| e.to_string())?;
-        Ok(aisync_core::deploy::InstallOutcome {
-            warnings: Vec::new(),
+        super::install_probe_guard::CODEX.install(&id, |started| {
+            let mut slot = super::install_session::SESSION
+                .try_lock()
+                .map_err(|_| super::install_session::UNAVAILABLE.to_string())?;
+            super::install_session::submitted(&mut slot, &id, &revision, session_ref.as_deref());
+            let result = find_agent(&id).and_then(|agent| {
+                aisync_core::deploy::install_agent_from_preview_observed(&agent, &revision, started)
+            });
+            super::install_session::finished(&mut slot, result.is_ok());
+            result.map_err(|e| e.to_string())?;
+            Ok(aisync_core::deploy::InstallOutcome {
+                warnings: Vec::new(),
+            })
         })
     })
     .await
@@ -391,6 +445,63 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(serde_json::to_value(info).unwrap(), expected);
+    }
+
+    #[test]
+    fn final_list_projection_redacts_a_codex_result_completed_before_failure() {
+        let gate = super::super::install_probe_guard::ProbeGuard::new();
+        let mut codex = fixture_agent();
+        codex.id = "codex".into();
+        let stale = to_agent_info(
+            codex,
+            details_from_probe(InstallationProbe {
+                status: InstallationStatus::Installed,
+                message: None,
+            }),
+        );
+        let other = to_agent_info(
+            fixture_agent(),
+            details_from_probe(InstallationProbe {
+                status: InstallationStatus::Installed,
+                message: None,
+            }),
+        );
+        assert!(
+            gate.install::<()>("codex", |started| {
+                started();
+                Err("wrong root".into())
+            })
+            .is_err()
+        );
+        let final_rows = finalize_agent_list(vec![stale, other], &gate);
+        assert!(!final_rows[0].installed);
+        assert!(final_rows[0].version.is_none());
+        assert_eq!(final_rows[0].install_source, "unknown");
+        assert!(final_rows[0].installation_details.instances.is_empty());
+        assert!(final_rows[1].installed);
+    }
+
+    #[test]
+    fn suppressed_codex_projection_has_no_runtime_or_source_evidence() {
+        let mut agent = fixture_agent();
+        agent.id = "codex".into();
+        let actual =
+            serde_json::to_value(to_agent_info(agent, suppressed_codex_details())).unwrap();
+        assert_eq!(actual["installationStatus"], "error");
+        assert_eq!(actual["installed"], false);
+        assert_eq!(actual["version"], serde_json::Value::Null);
+        assert_eq!(actual["installSource"], "unknown");
+        assert_eq!(actual["authVerified"], false);
+        assert_eq!(actual["canConfigure"], false);
+        assert_eq!(actual["installationDetails"]["ambiguous"], true);
+        assert_eq!(
+            actual["installationDetails"]["instances"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            actual["installationMessage"],
+            super::super::install_probe_guard::SUPPRESSED
+        );
     }
 
     #[test]

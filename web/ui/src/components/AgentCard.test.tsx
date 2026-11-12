@@ -5,7 +5,7 @@ import { AgentCard } from './AgentCard';
 import { runtimeMode, type AgentInfo } from '../bridge';
 import nativeAgentContract from '../../../../tests/fixtures/agent-info-installed.json';
 import nativeNpmContract from '../../../../tests/fixtures/agent-info-npm.json';
-import { notDetectedAgent as agent, installedAgent, activeInstance, observedAgent, npmMatchedAgent, ambiguousAgent } from '../test-fixtures/agents';
+import { notDetectedAgent as agent, installedAgent, activeInstance, observedAgent, npmMatchedAgent, ambiguousAgent, suppressedCodexAgent, suppressedCodexMessage } from '../test-fixtures/agents';
 
 vi.mock('../bridge', async (importOriginal) => ({
   ...await importOriginal<typeof import('../bridge')>(),
@@ -35,6 +35,20 @@ describe('AgentCard', () => {
     expect(props.onUninstall).not.toHaveBeenCalled();
     expect(window.confirm).not.toHaveBeenCalled();
     expect(screen.getByText(nativeAgentContract.uninstallHelp)).toBeInTheDocument();
+  });
+
+  it('shows native failed-install probe suppression without invented source or enabled writes', () => {
+    const { props } = mountAgent({ agent: suppressedCodexAgent });
+    expect(screen.getByText(suppressedCodexMessage)).toBeInTheDocument();
+    expect(screen.queryByText(/^v[0-9]/)).not.toBeInTheDocument();
+    const install = screen.getByRole('button', { name: '安装 Codex' });
+    expect(install).toBeDisabled();
+    fireEvent.click(install);
+    expect(screen.queryByRole('button', { name: '应用默认配置 Codex' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看 Codex 详情' }));
+    expect(screen.queryByText('npm 来源已验证')).not.toBeInTheDocument();
+    expect(props.onPrepareInstall).not.toHaveBeenCalled();
+    expect(props.onConfigure).not.toHaveBeenCalled();
   });
 
   it('renders a compact row with separate selection and operation controls', () => {

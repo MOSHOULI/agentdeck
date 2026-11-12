@@ -69,3 +69,15 @@ export const agentCatalog: AgentInfo[] = [
   { ...installedAgent, id: 'cli-tool', name: 'CLI Tool', version: '1.0.0', uiType: 'cli', stars: 100, popular: false, description: '终端工具' },
   { ...notDetectedAgent, id: 'manual', name: 'Manual Agent', uiType: 'vscode-extension', installationStatus: 'unsupported', installationMessage: '请在 VS Code 查看扩展状态。', canInstall: false, canVerifyInstall: false, canConfigure: false, stars: 200, popular: false, description: '手动管理扩展' },
 ];
+
+// Authored passive DTO: native guard returns no runtime/source evidence.
+export const suppressedCodexMessage = '本进程中 Codex 安装完成状态未确认，已暂停自动版本探测。刷新或切换页面不会为此条目执行 Codex 或 npm；未清理残留。此保护不跨应用重启。';
+export const suppressedCodexAgent: AgentInfo = {
+  ...notDetectedAgent, id: 'codex', name: 'Codex', installed: false,
+  installationStatus: 'error', installationMessage: suppressedCodexMessage,
+  installSource: 'unknown', version: null, authVerified: false, canConfigure: false,
+  installationDetails: {
+    probe: { status: 'error', message: suppressedCodexMessage },
+    instances: [], ambiguous: true, message: suppressedCodexMessage,
+  },
+};

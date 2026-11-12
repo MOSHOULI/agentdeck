@@ -103,14 +103,23 @@ pub(crate) fn install_agent_from_preview(
     agent: &AgentDefinition,
     revision: &str,
 ) -> crate::Result<()> {
+    install_agent_from_preview_observed(agent, revision, || {})
+}
+
+pub(crate) fn install_agent_from_preview_observed(
+    agent: &AgentDefinition,
+    revision: &str,
+    on_installer_start: impl FnOnce(),
+) -> crate::Result<()> {
     locked(|| {
         let (known, search) = inputs(agent)?;
-        install_reviewed_with(
+        install_reviewed_observed_with(
             &agent.id,
             revision,
             known,
             &search,
             &mut ProcessRunner,
+            on_installer_start,
             |command| run_bounded(command, INSTALL_TIMEOUT, 1024 * 1024).map(|_| ()),
         )
     })
@@ -214,6 +223,23 @@ fn project_plan(
     field(&plan.manager.cli_digest);
     preview.revision = format!("{:x}", hash.finalize());
     Ok(preview)
+}
+
+fn install_reviewed_observed_with(
+    id: &str,
+    revision: &str,
+    known: KnownAgent,
+    search: &SearchPath,
+    runner: &mut impl Runner,
+    on_installer_start: impl FnOnce(),
+    install: impl FnOnce(&ProbeCommand) -> io::Result<()>,
+) -> Result<(), String> {
+    install_reviewed_with(id, revision, known, search, runner, |command| {
+        // The observer marks an attempted mutation, not proof of a successful
+        // spawn or write. It must run before the potentially mutating callback.
+        on_installer_start();
+        install(command)
+    })
 }
 
 fn install_reviewed_with(
@@ -684,6 +710,11 @@ fn execute_plan(
         if plan.manager != frozen_manager(search, runner)? {
             return Err("npm manager changed during installation".into());
         }
+        // Reject a mismatched Codex root before inspect_with can execute its
+        // Agent version probe. Keep verify_target's later check too: ordinary
+        // changes during inspection must not be accepted as the reviewed root.
+        // This is not an atomic filesystem or global no-execution guarantee.
+        verify_root_version(&plan)?;
         verify_target(&plan, &inspect_with(known, search, runner))
     })();
     verification.map_err(|reason| format!(
@@ -827,6 +858,276 @@ mod tests {
     }
 
     #[test]
+    fn observed_reviewed_install_signals_only_attempted_mutation_once_before_callback() {
+        for scenario in [
+            "stale",
+            "second-preflight",
+            "success",
+            "installer-error",
+            "root-mismatch",
+        ] {
+            let fixture = Fixture::new(Platform::Windows);
+            let plan = build_plan(CODEX, &fixture.search, &mut fixture.runner()).unwrap();
+            let mut revision = project_plan("codex", CODEX, Platform::Windows, &plan)
+                .unwrap()
+                .revision;
+            if scenario == "stale" {
+                revision = "0".repeat(64);
+            }
+            let outputs = if scenario == "second-preflight" {
+                vec![Ok(br#""99.99.99""#.to_vec()), Ok(br#""99.99.98""#.to_vec())]
+            } else {
+                vec![Ok(br#""99.99.99""#.to_vec()), Ok(br#""99.99.99""#.to_vec())]
+            };
+            let mut runner = MetadataRunner {
+                inner: fixture.runner(),
+                outputs: outputs.into(),
+            };
+            let starts = std::cell::Cell::new(0);
+            let installs = std::cell::Cell::new(0);
+            let result = install_reviewed_observed_with(
+                "codex",
+                &revision,
+                CODEX,
+                &fixture.search,
+                &mut runner,
+                || {
+                    starts.set(starts.get() + 1);
+                },
+                |_| {
+                    assert_eq!(starts.get(), 1, "observer must precede mutation");
+                    installs.set(installs.get() + 1);
+                    fixture.populate();
+                    if scenario == "installer-error" {
+                        return Err(io::Error::other("synthetic spawn/write failure"));
+                    }
+                    if scenario == "root-mismatch" {
+                        std::fs::write(fixture.root.join("@openai/codex/package.json"), b"{}")
+                            .unwrap();
+                    }
+                    Ok(())
+                },
+            );
+            assert_eq!(result.is_ok(), scenario == "success", "{scenario}");
+            let attempted = usize::from(!matches!(scenario, "stale" | "second-preflight"));
+            assert_eq!(starts.get(), attempted, "{scenario}");
+            assert_eq!(installs.get(), attempted, "{scenario}");
+        }
+    }
+
+    struct AgentProbeRunner {
+        inner: FakeRunner,
+        agent_probes: usize,
+        on_agent: Option<Box<dyn FnOnce()>>,
+    }
+
+    impl Runner for AgentProbeRunner {
+        fn run(&mut self, command: &ProbeCommand) -> io::Result<Vec<u8>> {
+            let installer_node = command.args == [OsString::from("--version")]
+                && command
+                    .program
+                    .file_name()
+                    .is_some_and(|name| name == "node" || name == "node.exe");
+            if !command.npm_metadata && !installer_node {
+                self.agent_probes += 1;
+                if let Some(action) = self.on_agent.take() {
+                    action();
+                }
+            }
+            self.inner.run(command)
+        }
+    }
+
+    #[test]
+    fn invalid_installed_root_refuses_before_immediate_agent_probe_without_rollback() {
+        for scenario in [
+            "missing-manifest",
+            "malformed",
+            "wrong-name",
+            "wrong-version",
+            "missing-version",
+            "nonstring-version",
+            "oversized",
+            "manifest-directory",
+            "missing-root",
+        ] {
+            let fixture = Fixture::new(Platform::Windows);
+            let mut runner = AgentProbeRunner {
+                inner: fixture.runner(),
+                agent_probes: 0,
+                on_agent: None,
+            };
+            let marker = fixture.prefix.join("installer-residue");
+            let mut remaining_manifest = None;
+            let manifest = fixture.root.join("@openai/codex/package.json");
+            let error = install_with(CODEX, &fixture.search, &mut runner, |_| {
+                fixture.populate();
+                std::fs::write(&marker, b"preserve partial installer output").unwrap();
+                match scenario {
+                    "missing-root" => std::fs::rename(
+                        fixture.root.join("@openai/codex"),
+                        fixture.root.join("@openai/retained-output"),
+                    )
+                    .unwrap(),
+                    "missing-manifest" => std::fs::remove_file(&manifest).unwrap(),
+                    "manifest-directory" => {
+                        std::fs::remove_file(&manifest).unwrap();
+                        std::fs::create_dir(&manifest).unwrap();
+                    }
+                    "malformed" => std::fs::write(&manifest, b"{").unwrap(),
+                    "oversized" => std::fs::write(&manifest, vec![b' '; FILE_LIMIT + 1]).unwrap(),
+                    _ => {
+                        let mut value: serde_json::Value =
+                            serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+                        match scenario {
+                            "wrong-name" => value["name"] = "different-package".into(),
+                            "wrong-version" => value["version"] = "1.2.3".into(),
+                            "missing-version" => {
+                                value.as_object_mut().unwrap().remove("version");
+                            }
+                            "nonstring-version" => value["version"] = 42.into(),
+                            _ => unreachable!(),
+                        }
+                        std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+                    }
+                }
+                if manifest.is_file() {
+                    remaining_manifest = Some(std::fs::read(&manifest).unwrap());
+                }
+                Ok(())
+            })
+            .unwrap_err();
+            assert_eq!(runner.agent_probes, 0, "{scenario}");
+            assert!(
+                error.contains("target verification is incomplete"),
+                "{error}"
+            );
+            assert!(error.contains("no rollback was attempted"), "{error}");
+            assert_eq!(
+                std::fs::read(&marker).unwrap(),
+                b"preserve partial installer output"
+            );
+            assert_eq!(
+                std::fs::read_to_string(fixture.prefix.join("codex.cmd")).unwrap(),
+                node_cmd_shim("node_modules/@openai/codex/bin/codex.js")
+            );
+            if let Some(bytes) = remaining_manifest {
+                assert_eq!(std::fs::read(&manifest).unwrap(), bytes);
+            }
+            match scenario {
+                "missing-root" => assert!(
+                    fixture
+                        .root
+                        .join("@openai/retained-output/package.json")
+                        .exists()
+                ),
+                "missing-manifest" => assert!(!manifest.exists()),
+                "manifest-directory" => assert!(manifest.is_dir()),
+                _ => assert!(manifest.is_file()),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn redirected_installed_root_refuses_before_immediate_agent_probe() {
+        for redirect_manifest in [false, true] {
+            let fixture = Fixture::new(Platform::Unix);
+            let mut runner = AgentProbeRunner {
+                inner: fixture.runner(),
+                agent_probes: 0,
+                on_agent: None,
+            };
+            let package = fixture.root.join("@openai/codex");
+            let external = fixture.directory.join("retained-external");
+            let error = install_with(CODEX, &fixture.search, &mut runner, |_| {
+                fixture.populate();
+                if redirect_manifest {
+                    let manifest = package.join("package.json");
+                    std::fs::rename(&manifest, &external).unwrap();
+                    std::os::unix::fs::symlink(&external, &manifest).unwrap();
+                } else {
+                    std::fs::rename(&package, &external).unwrap();
+                    std::os::unix::fs::symlink(&external, &package).unwrap();
+                }
+                Ok(())
+            })
+            .unwrap_err();
+            assert_eq!(runner.agent_probes, 0);
+            assert!(error.contains("target verification is incomplete"));
+            assert!(error.contains("no rollback"));
+            assert!(external.exists());
+            assert!(
+                std::fs::symlink_metadata(if redirect_manifest {
+                    package.join("package.json")
+                } else {
+                    package
+                })
+                .unwrap()
+                .file_type()
+                .is_symlink()
+            );
+        }
+    }
+
+    #[test]
+    fn matching_root_keeps_measured_version_provenance_and_late_root_checks() {
+        for scenario in [
+            "matching",
+            "invalid-measured-version",
+            "wrong-provenance",
+            "late-root-change",
+        ] {
+            let fixture = Fixture::new(Platform::Windows);
+            let manifest = fixture.root.join("@openai/codex/package.json");
+            let mut runner = AgentProbeRunner {
+                inner: fixture.runner(),
+                agent_probes: 0,
+                on_agent: None,
+            };
+            if scenario == "invalid-measured-version" {
+                runner.inner.version = b"not an agent version".to_vec();
+            }
+            if scenario == "late-root-change" {
+                let manifest = manifest.clone();
+                runner.on_agent = Some(Box::new(move || {
+                    let mut value: serde_json::Value =
+                        serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+                    value["version"] = "1.2.3".into();
+                    std::fs::write(manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+                }));
+            }
+            let result = install_with(CODEX, &fixture.search, &mut runner, |_| {
+                fixture.populate();
+                if scenario == "wrong-provenance" {
+                    // A valid root version does not authorize an unrelated launcher.
+                    std::fs::write(
+                        fixture.prefix.join("codex.cmd"),
+                        node_cmd_shim("node_modules/unrelated/bin/codex.js"),
+                    )
+                    .unwrap();
+                }
+                Ok(())
+            });
+            assert_eq!(result.is_ok(), scenario == "matching", "{scenario}");
+            if scenario != "wrong-provenance" {
+                assert_eq!(runner.agent_probes, 1, "{scenario}");
+            }
+            if let Err(error) = result {
+                assert!(
+                    error.contains("target verification is incomplete"),
+                    "{error}"
+                );
+                assert!(error.contains("no rollback"), "{error}");
+                if scenario == "late-root-change" {
+                    assert!(error.contains("root package version"), "{error}");
+                }
+            }
+            assert!(manifest.exists());
+        }
+    }
+
+    #[test]
     fn non_codex_adapters_do_not_resolve_or_pin_versions() {
         let fixture = Fixture::new(Platform::Windows);
         for package in [
@@ -845,6 +1146,10 @@ mod tests {
             let plan = build_plan(known, &fixture.search, &mut runner).unwrap();
             let preview = project_plan("other-agent", known, Platform::Windows, &plan).unwrap();
             assert!(preview.package_version.is_none());
+            assert!(
+                verify_root_version(&plan).is_ok(),
+                "unpinned adapter must not add a root guard"
+            );
             assert_eq!(preview.version_policy, "npm_configured");
             assert_eq!(install_command(&plan).args.last().unwrap(), package);
         }

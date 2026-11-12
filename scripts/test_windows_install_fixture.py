@@ -107,6 +107,42 @@ class FixtureTests(unittest.TestCase):
                               capture_output=True,text=True,timeout=15,check=True)
         self.assert_failure_script_args(json.loads(result.stdout))
 
+    def test_successful_npm_wrong_root_is_complete_unprobed_and_unchanged(self):
+        self.write('wrong-root')
+        result=self.invoke(self.args())
+        self.assertEqual(result.returncode,0,result.stderr)
+        def snapshot():
+            root=Path(self.p['prefix']);values=[]
+            for p in [root,*sorted(root.rglob('*')),Path(self.p['marker'])]:
+                m=p.stat();values.append((str(p),p.read_bytes() if p.is_file() else None,m.st_dev,m.st_ino,m.st_mode,m.st_nlink,m.st_size,m.st_mtime_ns,m.st_ctime_ns))
+            return values
+        before=snapshot()
+        for _ in range(3):
+            counts=h.assert_phase(self.p,'wrong-root')
+            self.assertEqual((counts['installCalls'],counts['versionProbes'],counts['completeWrongRootRetained']),(1,0,True))
+        self.assertEqual(snapshot(),before)
+        # Demonstrate the authored launcher is runnable and the guard detects it;
+        # this deliberately executed offline negative control is not GUI evidence.
+        result=self.invoke(['--version'],Path(self.p['package'])/'bin/codex.js')
+        self.assertEqual(result.returncode,0,result.stderr)
+        with self.assertRaisesRegex(h.Failure,'unexpected_version_probe'):h.assert_phase(self.p,'wrong-root')
+
+    def test_wrong_root_sentinel_also_detects_unexpected_invocation(self):
+        self.write('wrong-root');self.assertEqual(self.invoke(self.args()).returncode,0)
+        result=self.invoke(['--help'],Path(self.p['package'])/'bin/codex.js')
+        self.assertEqual(result.returncode,64)
+        self.assertEqual(Path(self.p['versions']).read_bytes(),b'v')
+        with self.assertRaisesRegex(h.Failure,'unexpected_version_probe'):h.assert_phase(self.p,'wrong-root')
+
+    def test_wrong_root_guard_rejects_missing_or_changed_complete_files(self):
+        self.write('wrong-root');self.assertEqual(self.invoke(self.args()).returncode,0)
+        manifest=Path(self.p['package'])/'package.json';old=manifest.read_bytes()
+        manifest.write_bytes(old.replace(b'1.2.4',b'1.2.3'))
+        with self.assertRaisesRegex(h.Failure,'installed_bytes_changed'):h.assert_phase(self.p,'wrong-root')
+        manifest.write_bytes(old)
+        launcher=Path(self.p['prefix'])/'codex.cmd';launcher.write_bytes(b'changed')
+        with self.assertRaisesRegex(h.Failure,'shim_changed'):h.assert_phase(self.p,'wrong-root')
+
     def test_failure_partial_state_retained_and_retries_are_observable(self):
         self.write('fail');self.assertEqual(self.invoke(self.args()).returncode,64)
         partial=Path(self.p['package'])/'partial-install.txt'

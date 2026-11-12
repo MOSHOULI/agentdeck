@@ -8,7 +8,7 @@ function Get-InstallAccessibleText {
     return (@($nodes | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) -join "`n")
 }
 function Wait-InstallText([string]$expected,
-    [ValidateSet('session-boundary','residual-boundary','residual-unavailable','occupied-preview-error','authored-install-error','stale-error','install-complete','installed-version','version','source','package','global','prefix','manager')][string]$check) {
+    [ValidateSet('probe-suppression','session-boundary','residual-boundary','residual-unavailable','occupied-preview-error','authored-install-error','stale-error','install-complete','installed-version','version','source','package','global','prefix','manager')][string]$check) {
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
         if ((Get-InstallAccessibleText).Contains($expected)) { return }
@@ -463,6 +463,78 @@ function Check-FailedInstallResidualInspection($fixture, [string]$manifest, [str
     # Closing must not auto-reopen a result or perform a second inspection.
     Start-Sleep -Milliseconds 300
     Assert-ResidualResultAbsent
+}
+function Assert-WrongRootInstallObservation($fixture, [string]$manifest, [string]$baseline, [string]$residual,
+    [ValidateSet('initial','automatic-refresh','manual-refresh','navigation')][string]$stage, $expectedCounts = $null) {
+    $counts = Invoke-InstallFixture @('--assert', 'wrong-root', '--manifest', $manifest) | ConvertFrom-Json
+    if ($counts.installCalls -ne 1 -or $counts.versionProbes -ne 0 -or $counts.completeWrongRootRetained -ne $true) {
+        throw 'Wrong-root installation was probed, retried or lost its complete residue'
+    }
+    if ($null -ne $expectedCounts) {
+        foreach ($key in @('installCalls','versionProbes','prefixQueries','rootQueries','metadataQueries')) {
+            if ($counts.$key -ne $expectedCounts.$key) { throw 'Suppressed wrong-root observation executed a fixture operation' }
+        }
+    }
+    $current = Get-FailedInstallState $fixture
+    if ($current -cne $residual) {
+        Record 'wrong-root-install-residual-changed' @{ stage = $stage; differences = @(Get-FailedStateDifference $residual $current) }
+        throw 'Wrong-root installation residual changed'
+    }
+    if ((Get-CodexSnapshot) -cne $baseline) { throw 'Wrong-root installation changed configuration' }
+    Assert-InstallNoConfiguration
+    Assert-InstallNoConfirmation
+    Wait-InstallText '本进程中 Codex 安装完成状态未确认，已暂停自动版本探测。刷新或切换页面不会为此条目执行 Codex 或 npm；未清理残留。此保护不跨应用重启。' 'probe-suppression'
+    $text = Get-InstallAccessibleText
+    if ($text.Contains('软件安装操作已完成') -or $text.Contains('实测版本 1.2.3')) { throw 'Wrong-root installation displayed verified success' }
+    foreach ($name in @('安装 OpenAI Codex','应用默认配置 OpenAI Codex')) {
+        $action = Find-QwenControl $name ([Windows.Automation.ControlType]::Button)
+        if ($null -ne $action -and $action.Current.IsEnabled) { throw 'Suppressed wrong-root action remained enabled' }
+    }
+    return $counts
+}
+function Check-WrongRootReviewedInstall {
+    $savedPath = $env:PATH; $savedExt = $env:PATHEXT
+    $fixtureRoot = Join-Path $root 'Windows authored wrong root install fixture'
+    $manifest = Invoke-InstallFixture @('--prepare', $fixtureRoot, '--node', $script:acceptanceNode, '--home', $homeDir, '--mode', 'wrong-root')
+    $fixture = Get-Content -LiteralPath $manifest -Raw -Encoding UTF8 | ConvertFrom-Json
+    try {
+        $env:PATH = "$($fixture.path);$savedPath"
+        $env:PATHEXT = '.COM;.EXE;.BAT;.CMD'
+        Check-Gui 'wrong-root-reviewed-install-start' -KeepOpen
+        Set-QwenPath '搜索 Agent' 'Codex'
+        $null = Wait-QwenControl '安装 OpenAI Codex' ([Windows.Automation.ControlType]::Button)
+        Assert-InstallNoConfiguration
+        $baseline = Get-CodexSnapshot
+        Open-ReviewedInstallPlan $fixture $manifest
+        Click-Qwen '确认安装软件'
+        Wait-InstallText '安装请求已发送，但完成状态未确认。' 'authored-install-error'
+        Assert-InstallNoConfirmation
+        $null = Invoke-InstallFixture @('--assert', 'wrong-root', '--manifest', $manifest)
+        Wait-InstallText '本进程中 Codex 安装完成状态未确认，已暂停自动版本探测。刷新或切换页面不会为此条目执行 Codex 或 npm；未清理残留。此保护不跨应用重启。' 'probe-suppression'
+        $residual = Get-FailedInstallState $fixture
+        $counts = Assert-WrongRootInstallObservation $fixture $manifest $baseline $residual 'initial'
+        $initialCounts = $counts
+        $null = Wait-QwenControl '刷新列表' ([Windows.Automation.ControlType]::Button)
+        Start-Sleep -Milliseconds 1000
+        $counts = Assert-WrongRootInstallObservation $fixture $manifest $baseline $residual 'automatic-refresh' $initialCounts
+        Save-QwenEvidence 'wrong-root-reviewed-install-automatic-refresh'
+        Record 'wrong-root-reviewed-install-automatic-refresh' @{ fixtureCounts = $counts; residualUnchanged = $true }
+        Click-Qwen '刷新列表'
+        $null = Wait-QwenControl '刷新列表' ([Windows.Automation.ControlType]::Button)
+        Start-Sleep -Milliseconds 1000
+        $counts = Assert-WrongRootInstallObservation $fixture $manifest $baseline $residual 'manual-refresh' $initialCounts
+        Save-QwenEvidence 'wrong-root-reviewed-install-manual-refresh'
+        Activate-InstallWorkspace 'Qwen 配置检查'
+        Activate-InstallWorkspace 'Agent 管理'
+        $counts = Assert-WrongRootInstallObservation $fixture $manifest $baseline $residual 'navigation' $initialCounts
+        Save-QwenEvidence 'wrong-root-reviewed-install-navigation'
+        Record 'wrong-root-reviewed-install-complete' @{ fixtureCounts = $counts; stages = @('verification_rejected','automatic_refresh_unprobed','manual_refresh_unprobed','navigation_unprobed'); residualUnchanged = $true; configurationUnchanged = $true; authoredNpmExitZero = $true; authoredAgentExecuted = $false; officialAgentExecuted = $false; processLocalOnly = $true; wrongRootSessionRestarted = $false; automaticRollbackObserved = $false; retryAttempted = $false }
+    } finally {
+        # The guard is process-local. Never restart with this complete wrong-root
+        # fixture on PATH or mistake a clean exit for persistent protection.
+        Stop-App
+        $env:PATH = $savedPath; $env:PATHEXT = $savedExt
+    }
 }
 function Check-FailedReviewedInstall {
     $savedPath = $env:PATH; $savedExt = $env:PATHEXT

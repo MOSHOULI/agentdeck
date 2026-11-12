@@ -98,7 +98,8 @@ fn wait_for_shell_with_timeout(mut child: Child, timeout: Duration) -> std::io::
 }
 
 /// Inspect the actual installation target for review. Queries run local npm code;
-/// this is not a sandbox or permission token, nor a pinned registry/version/closure.
+/// this is not a sandbox or permission token. Only the Codex root version is pinned,
+/// not the registry or full dependency closure.
 pub fn preview_install(agent: &AgentDefinition) -> crate::Result<InstallPreview> {
     inspection::preview_install(agent)
 }
@@ -106,6 +107,20 @@ pub fn preview_install(agent: &AgentDefinition) -> crate::Result<InstallPreview>
 /// Rebuild the inspected target and reject stale or missing confirmation before installation.
 pub fn install_agent_from_preview(agent: &AgentDefinition, revision: &str) -> crate::Result<()> {
     inspection::install_agent_from_preview(agent, revision)
+}
+
+/// Reviewed installation with a synchronous attempt-boundary observer.
+/// The observer runs once immediately before the installer subprocess is attempted,
+/// after all preflights. It does not run for proven preflight rejection. Invocation
+/// does not prove a process spawned or files changed. An error after invocation
+/// must be treated as uncertain; this function never retries or rolls back.
+/// The observer must not re-enter installation (the installer lock is held).
+pub fn install_agent_from_preview_observed(
+    agent: &AgentDefinition,
+    revision: &str,
+    on_installer_start: impl FnOnce(),
+) -> crate::Result<()> {
+    inspection::install_agent_from_preview_observed(agent, revision, on_installer_start)
 }
 
 /// Direct CLI/core installation retains caller-managed explicit confirmation.

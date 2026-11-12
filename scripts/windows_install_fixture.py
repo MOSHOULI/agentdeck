@@ -49,20 +49,26 @@ def layout(root,home):
            'installCalls':root/'install-events','latest':root/'latest-version','queries':root/'query-events','versions':root/'version-events','canary':root/'canary.txt','home':Path(home)}
     return {k:str(v) for k,v in paths.items()}
 
-def codex_program(p):
-    return ("#!/usr/bin/env node\n'use strict';\nconst fs=require('node:fs');const path=require('node:path');\n"
+def codex_program(p, count_all=False):
+    program = ("#!/usr/bin/env node\n'use strict';\nconst fs=require('node:fs');const path=require('node:path');\n"
             'const log='+json.dumps(p['versions'])+';\n'
             "try { if(JSON.stringify(process.argv.slice(2))!=='[\"--version\"]')throw Error();"
             "if(path.toNamespacedPath(fs.realpathSync(log))!==log)throw Error();const s=fs.lstatSync(log);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.size>=4096)throw Error();"
             "fs.appendFileSync(log,'v');console.log('codex-cli 1.2.3');"
             "}catch(_){process.stderr.write('synthetic version rejected\\n');process.exitCode=64;}\n")
+    if count_all:
+        # The wrong-root sentinel records any authored launcher invocation, even
+        # unsupported argv. The ordinary success fixture contract is unchanged.
+        check="if(JSON.stringify(process.argv.slice(2))!=='[\"--version\"]')throw Error();"
+        program=program.replace(check,'').replace("fs.appendFileSync(log,'v');", "fs.appendFileSync(log,'v');"+check)
+    return program
 
 def manager_program(p,mode):
     expected=['install','--global','--prefix',p['prefix'],'--force=false','--no-audit','--no-fund','--no-progress','--ignore-scripts','@openai/codex@1.2.3']
     header=("#!/usr/bin/env node\n'use strict';\nconst fs=require('node:fs');const path=require('node:path');\n"
             'const p='+json.dumps(p)+';\nconst expected='+json.dumps(expected)+';\nconst mode='+json.dumps(mode)+';\n'
             'const partial='+json.dumps(PARTIAL.decode())+';\n'
-            'const codex='+json.dumps(codex_program(p))+';\nconst launcher='+json.dumps(shim('node_modules/@openai/codex/bin/codex.js').decode())+';\n')
+            'const codex='+json.dumps(codex_program(p,mode=='wrong-root'))+';\nconst launcher='+json.dumps(shim('node_modules/@openai/codex/bin/codex.js').decode())+';\n')
     return header+r'''
 function canonical(target){return path.toNamespacedPath(fs.realpathSync(target));}
 function directory(target){
@@ -95,7 +101,7 @@ try{
    throw Error('authored failure after partial installation');
   }
   fs.mkdirSync(path.join(p.package,'bin'));
-  fs.writeFileSync(path.join(p.package,'package.json'),JSON.stringify({name:'@openai/codex',version:'1.2.3',bin:{codex:'bin/codex.js'}}),{flag:'wx'});
+  fs.writeFileSync(path.join(p.package,'package.json'),JSON.stringify({name:'@openai/codex',version:mode==='wrong-root'?'1.2.4':'1.2.3',bin:{codex:'bin/codex.js'}}),{flag:'wx'});
   fs.writeFileSync(path.join(p.package,'bin/codex.js'),codex,{flag:'wx'});
   fs.writeFileSync(path.join(p.prefix,'codex.cmd'),launcher,{flag:'wx'});
  }else throw Error('arguments');
@@ -104,7 +110,7 @@ try{
 
 def prepare(root,node,home,mode):
     if os.name!='nt':raise Failure('requires_windows')
-    if mode not in ('success','fail') or not root.is_absolute() or not node.is_absolute() or not home.is_absolute():raise Failure('invalid_fixture_arguments')
+    if mode not in ('success','fail','wrong-root') or not root.is_absolute() or not node.is_absolute() or not home.is_absolute():raise Failure('invalid_fixture_arguments')
     node=node.resolve(strict=True)
     data=safe_file(node,256*1024*1024)
     if len(data)<64 or data[:2]!=b'MZ':raise Failure('trusted_node_not_pe')
@@ -129,7 +135,7 @@ def prepare(root,node,home,mode):
 
 def load(manifest):
     m=json.loads(safe_file(manifest,65536))
-    if m.get('schemaVersion')!=1 or m.get('mode') not in ('success','fail'):raise Failure('invalid_manifest')
+    if m.get('schemaVersion')!=1 or m.get('mode') not in ('success','fail','wrong-root'):raise Failure('invalid_manifest')
     expected=layout(namespaced(manifest.parent),m['home'])
     if any(m.get(k)!=v for k,v in expected.items()) or m.get('path')!=expected['managerBin']+';'+expected['prefix']:raise Failure('invalid_manifest_paths')
     for value in expected.values():
@@ -165,7 +171,7 @@ def assert_phase(m,phase):
         if any(os.path.lexists(p) for p in (marker,package,*[prefix/('codex'+s) for s in ('','.cmd','.ps1','.exe','.com','.bat')])):raise Failure('unconfirmed_install_write')
         if result['versionProbes']:raise Failure('unexpected_version_probe')
         if result['installCalls']:raise Failure('unexpected_install_calls')
-    elif phase in ('installed','failed'):
+    elif phase in ('installed','failed','wrong-root'):
         if result['installCalls']!=1:raise Failure('unexpected_install_calls')
         if safe_file(marker,128)!=MARKER:raise Failure('install_marker_mismatch')
         if phase=='failed':
@@ -174,13 +180,17 @@ def assert_phase(m,phase):
             if result['versionProbes']:raise Failure('unexpected_version_probe')
             result['partialInstallRetained']=True
         else:
-            expected={'package.json':json.dumps({'name':'@openai/codex','version':'1.2.3','bin':{'codex':'bin/codex.js'}},separators=(',',':')).encode(),
-                      'bin/codex.js':codex_program(m).encode()}
+            if phase=='wrong-root' and m['mode']!='wrong-root':raise Failure('failure_state_mismatch')
+            expected={'package.json':json.dumps({'name':'@openai/codex','version':'1.2.4' if phase=='wrong-root' else '1.2.3','bin':{'codex':'bin/codex.js'}},separators=(',',':')).encode(),
+                      'bin/codex.js':codex_program(m,phase=='wrong-root').encode()}
             if {p.relative_to(package).as_posix() for p in package.rglob('*') if p.is_file()}!=set(expected):raise Failure('installed_inventory_mismatch')
             for name,data in expected.items():
                 if safe_file(package/name,65536)!=data:raise Failure('installed_bytes_changed')
             if safe_file(prefix/'codex.cmd',4096)!=shim('node_modules/@openai/codex/bin/codex.js'):raise Failure('shim_changed')
-            if result['versionProbes']<1:raise Failure('version_not_probed')
+            if phase=='wrong-root':
+                if result['versionProbes']!=0:raise Failure('unexpected_version_probe')
+                result['completeWrongRootRetained']=True
+            elif result['versionProbes']<1:raise Failure('version_not_probed')
     elif phase!='no-config':raise Failure('unknown_assertion')
     no_configuration(m);return result
 
@@ -212,8 +222,8 @@ def main():
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, 'reconfigure'): stream.reconfigure(encoding='utf-8', errors='strict')
     parser=argparse.ArgumentParser(description=__doc__);group=parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('--prepare',type=Path);group.add_argument('--assert',dest='phase',choices=('absent','installed','failed','no-config'));group.add_argument('--stale',action='store_true');group.add_argument('--restore-latest',action='store_true')
-    parser.add_argument('--node',type=Path);parser.add_argument('--home',type=Path);parser.add_argument('--mode',choices=('success','fail'),default='success');parser.add_argument('--manifest',type=Path)
+    group.add_argument('--prepare',type=Path);group.add_argument('--assert',dest='phase',choices=('absent','installed','failed','wrong-root','no-config'));group.add_argument('--stale',action='store_true');group.add_argument('--restore-latest',action='store_true')
+    parser.add_argument('--node',type=Path);parser.add_argument('--home',type=Path);parser.add_argument('--mode',choices=('success','fail','wrong-root'),default='success');parser.add_argument('--manifest',type=Path)
     a=parser.parse_args()
     try:
         if a.prepare:
