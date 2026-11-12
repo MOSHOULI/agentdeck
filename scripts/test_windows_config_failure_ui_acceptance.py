@@ -81,6 +81,161 @@ class Tests(unittest.TestCase):
             Path(m['hardlinkAliases'][1]).write_bytes(b'changed alias')
             self.assertNotEqual(after, fixture.snapshot(m['configurationTargets']))
 
+    def test_success_dacl_stage_is_additive_and_checks_real_content_backup_and_acls(self):
+        script = (ROOT / 'scripts/windows-config-dacl-ui-acceptance.ps1').read_text(encoding='utf-8')
+        self.assertIn("'windows-config-dacl-ui-acceptance.ps1'", LIFECYCLE)
+        self.assertLess(SCRIPT.index('$result.hardlinks ='), SCRIPT.index('$result.successfulDacl ='))
+        self.assertEqual(script.count('Confirm-ConfigurationOnce $agent.name'), 2)
+        self.assertEqual(script.count('Click-Qwen ("应用默认配置 " + $agent.name)'), 2)
+        for required in ('AccessControlSections]::Access', 'AreAccessRulesProtected', '$otherParentGrants.Count -eq 0',
+                         '$rules.Count -ne 1', '$rules[0].IdentityReference -ne $owner',
+                         '$beforeOwner', 'Get-ConfigurationDacl $verified.backup',
+                         "'verify-success'", 'Get-InactiveConfigurationSnapshot', 'Wait-ConfigurationSuccess',
+                         'rollbackExercised = $false', 'officialAgentExecuted = $false'):
+            self.assertIn(required, script)
+        self.assertIn('$beforeGroup = $beforeAcl.GetGroup([Security.Principal.SecurityIdentifier]).Value', script)
+        for state in ('afterAcl', 'closedAcl'):
+            for field, expected in (('AreAccessRulesProtected', '$beforeAcl.AreAccessRulesProtected'),
+                                    ('GetOwner([Security.Principal.SecurityIdentifier]).Value', '$beforeOwner'),
+                                    ('GetGroup([Security.Principal.SecurityIdentifier]).Value', '$beforeGroup')):
+                self.assertIn('$' + state + '.' + field + (' -ne ' if field == 'AreAccessRulesProtected' else ' -cne ') + expected, script)
+        close_checks = script.split('$closedAcl = Get-Acl', 1)[0]
+        self.assertGreater(close_checks.rfind('Stop-App'), close_checks.rfind('Save-QwenEvidence'))
+        self.assertIn('primaryGroupPreserved = $true', script)
+        self.assertIn('$sourceAutoInherited = ($sourceDescriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited) -ne 0', script)
+        self.assertIn('$sourceAutoInheritRequired = ($sourceDescriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInheritRequired) -ne 0', script)
+        self.assertIn("if (-not $sourceAutoInherited -or $sourceAutoInheritRequired) { throw 'Expected native auto-inherited DACL control shape missing' }", script)
+        self.assertLess(script.index("throw 'Expected native auto-inherited DACL control shape missing'"), script.index('            Check-Gui'))
+        self.assertIn('sourceAutoInherited = $sourceAutoInherited; sourceAutoInheritRequired = $sourceAutoInheritRequired;', script)
+        self.assertIn('$parentAcl = [Security.AccessControl.DirectorySecurity]::new()', script)
+        self.assertIn('$parentAcl.SetAccessRuleProtection($true, $false)', script)
+        self.assertIn('[Security.AccessControl.InheritanceFlags]::ObjectInherit -bor [Security.AccessControl.InheritanceFlags]::ContainerInherit', script)
+        self.assertIn('$childAcl.SetAccessRuleProtection($false, $false)', script)
+        self.assertIn('@($acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])).Count -ne 0', script)
+        baseline_position = script.index('$inactiveBaseline = Get-InactiveConfigurationSnapshot')
+        self.assertLess(script.index('Set-Acl -LiteralPath $target -AclObject $childAcl'), baseline_position)
+        self.assertLess(script.index('Set-Acl -LiteralPath (Split-Path $target) -AclObject $parentAcl'), baseline_position)
+        self.assertEqual(script[baseline_position:].count('Set-Acl '), 1)
+        self.assertIn('Set-Acl -LiteralPath $target -AclObject $protectedAcl', script[baseline_position:])
+        refusal = script.split('function Check-InheritedConfigurationRefusal', 1)[1].split('function Check-ConfigurationDaclPreservation', 1)[0]
+        self.assertEqual(refusal.count('Confirm-ConfigurationOnce $agent.name'), 1)
+        self.assertNotIn('Set-Acl ', refusal)
+        self.assertEqual(refusal.count('(Get-ConfigurationSnapshot $fixture $manifest) -cne $baseline'), 3)
+        self.assertIn('$state.backupCount -ne 0', refusal)
+        self.assertIn('inheritedDifferentParentPolicyUnsupported = $true', refusal)
+        self.assertIn('protectedSuccessRequiresSeparateTestPreparation = $true', refusal)
+        self.assertIn('configuration-inherited-dacl-refusal.json', refusal)
+        self.assertLess(refusal.index('    Stop-App'), refusal.index('$state.backupCount -ne 0'))
+        self.assertIn('testAuthoredProtection = -not $agent.protected', script)
+        self.assertLess(script.index('$result.inheritanceRefusal = Check-InheritedConfigurationRefusal'), script.index('Set-Acl -LiteralPath $target -AclObject $protectedAcl'))
+
+
+
+        self.assertIn("file = '.claude/CLAUDE.md'; protected = $true", script)
+        self.assertIn("file = '.gemini/GEMINI.md'; protected = $false", script)
+        for unsafe in ('executeScript', 'invoke_handler', '--remote-debugging', '--no-sandbox', 'Invoke-WebRequest'):
+            self.assertNotIn(unsafe, script)
+
+    def test_failure_classifier_ignores_unrelated_ui_labels(self):
+        import shutil
+        powershell = shutil.which('pwsh')
+        if powershell is None:
+            self.skipTest('PowerShell unavailable for offline classifier execution')
+        code = r'''$ErrorActionPreference = 'Stop'
+. ./scripts/windows-config-dacl-ui-acceptance.ps1
+$prefix = '配置失败（可能已写入部分配置，请检查备份与当前配置）:'
+$cases = @(
+    @{ text = "Git repository`n$prefix Windows configuration security cannot be preserved: staging DACL verification failed"; expected = 'staging-dacl-verification' },
+    @{ text = "Git repository`n$prefix unknown authored error"; expected = 'other-configuration-error' },
+    @{ text = "$prefix staging DACL verification failed (ACL bytes and control flags)"; expected = 'staging-dacl-verification-acl-and-control' },
+    @{ text = "$prefix staging DACL verification failed (ACL bytes)"; expected = 'staging-dacl-verification-acl-bytes' },
+    @{ text = "$prefix staging DACL verification failed (control flags)"; expected = 'staging-dacl-verification-control-flags' },
+    @{ text = "$prefix staging DACL verification failed (owner/group)"; expected = 'staging-dacl-verification-owner-group' },
+    @{ text = 'Git repository staging DACL verification failed'; expected = 'no-known-configuration-error' },
+    @{ text = "Git repository`n$prefix Windows configuration security cannot be preserved: outside ordinary allow/deny subset"; expected = 'unsupported-ace-policy' },
+    @{ text = "DPAPI label`n$prefix unknown authored error"; expected = 'other-configuration-error' }
+)
+foreach ($case in $cases) { if ((Get-ConfigurationFailureCategory $case.text) -cne $case.expected) { throw 'Fixed category mismatch' } }
+Set-StrictMode -Version Latest
+function Stop-App { }
+function Invoke-ConfigurationFixture { throw 'original-fixture-failure' }
+$EvidenceDirectory = Join-Path ([IO.Path]::GetTempPath()) ('agentdeck-diagnostic-' + [Guid]::NewGuid())
+$null = New-Item -ItemType Directory -Path $EvidenceDirectory
+try {
+    foreach ($brokenDiagnostic in @($false, $true)) {
+        if ($brokenDiagnostic) { function Get-ConfigurationFailureDiagnostic { throw 'diagnostic-failure' } }
+        $observed = $null
+        try { Check-ConfigurationDaclPreservation 'unused-private-manifest' } catch { $observed = $_.Exception.Message }
+        if ($observed -cne 'original-fixture-failure') { throw 'Diagnostic masked original early failure' }
+    }
+} finally { Remove-Item -LiteralPath $EvidenceDirectory -Recurse -Force }
+
+'''
+        result = subprocess.run([powershell, '-NoLogo', '-NoProfile', '-Command', code], cwd=ROOT,
+                                capture_output=True, text=True, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_failure_diagnostics_precede_cleanup_and_do_not_publish_raw_errors(self):
+        script = (ROOT / 'scripts/windows-config-dacl-ui-acceptance.ps1').read_text(encoding='utf-8')
+        final = script.split('function Check-ConfigurationDaclPreservation', 1)[1]
+        self.assertLess(final.index('$result.failure = Get-ConfigurationFailureDiagnostic'), final.index('    } finally {'))
+        self.assertIn('        throw $originalFailure\n    } finally {', final)
+        diagnostic = script.split('function Get-ConfigurationFailureDiagnostic', 1)[1].split('function Check-ConfigurationDaclPreservation', 1)[0]
+        for required in ('beforeAutoInherited', 'beforeAutoInheritRequired', 'daclControlMatches', 'beforeAceCount', 'beforeAclBytes', 'ownerMatches', 'groupMatches', "'diagnose-success'"):
+            self.assertIn(required, diagnostic)
+        self.assertNotIn('Save-QwenEvidence', diagnostic)
+        self.assertNotIn('Exception.Message', diagnostic)
+        self.assertNotIn('$diagnostic.text', diagnostic)
+        self.assertIn("'staging-dacl-verification' = 'staging DACL verification failed'", script)
+
+    def test_success_fixture_requires_managed_content_and_original_backup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home, root = Path(tmp) / 'home', Path(tmp) / 'root'
+            root.mkdir()
+            targets = []
+            for _, _, _, instruction in fixture.AGENTS:
+                target = home / instruction
+                target.parent.mkdir(parents=True)
+                target.write_bytes(b'initial')
+                settings = target.parent / 'settings.json'
+                settings.write_bytes(b'{}')
+                targets.extend((str(target), str(settings)))
+            m = fixture.prepare_hardlinks(dict(home=str(home), root=str(root), configurationTargets=targets))
+            alias_before = fixture.snapshot(m['hardlinkAliases'])
+            m = fixture.prepare_dacl(m)
+            alias_after = fixture.snapshot(m['hardlinkAliases'])
+            self.assertEqual([a['hash'] for a in alias_before], [a['hash'] for a in alias_after])
+            self.assertTrue(all(a['links'] == 1 for a in alias_after))
+            self.assertEqual(len(m['inactiveTargets']), 4)
+            for binary, _, _, instruction in fixture.AGENTS:
+                target = home / instruction
+                self.assertEqual(target.read_bytes(), fixture.DACL_ORIGINAL)
+                diagnosis = fixture.diagnose_success(m, binary)
+                self.assertEqual(diagnosis, dict(targetOriginalBytes=True, targetHasManagedMarkers=False, backupCount=0, backupsOriginalBytes=True))
+                template = home / '.agentdeck/profiles/default/personalization' / binary / 'AGENTS.md'
+                template.parent.mkdir(parents=True)
+                template.write_bytes(b'Authored template.\n')
+                expected = fixture.DACL_ORIGINAL + b'\n\n<!-- agentdeck:personalization:start -->\nAuthored template.\n<!-- agentdeck:personalization:end -->\n'
+                target.write_bytes(expected)
+                backup = home / '.agentdeck/backups/inject-1' / target.name
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                backup.write_bytes(fixture.DACL_ORIGINAL)
+                with patch.object(fixture, 'verify', return_value={'claude': 1, 'gemini': 1}):
+                    self.assertEqual(fixture.verify_success(m, binary)['backup'], str(backup))
+                    target.write_bytes(b'false success')
+                    with self.assertRaisesRegex(ValueError, 'incorrect_successful_configuration'):
+                        fixture.verify_success(m, binary)
+                    target.write_bytes(expected)
+                    backup.write_bytes(b'wrong old bytes')
+                    with self.assertRaisesRegex(ValueError, 'incorrect_prewrite_backup'):
+                        fixture.verify_success(m, binary)
+                    backup.write_bytes(fixture.DACL_ORIGINAL)
+                    duplicate = home / '.agentdeck/backups/inject-2' / target.name
+                    duplicate.parent.mkdir(parents=True, exist_ok=True)
+                    duplicate.write_bytes(fixture.DACL_ORIGINAL)
+                    with self.assertRaisesRegex(ValueError, 'incorrect_prewrite_backup'):
+                        fixture.verify_success(m, binary)
+
     def test_snapshot_detects_identical_bytes_replacement_and_metadata_change(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'instructions'

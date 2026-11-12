@@ -132,6 +132,7 @@ function Check-ConfigurationFailurePreservation {
         }
         if ($result.agents.Count -ne 2) { throw 'Missing configuration rejection stage' }
         $result.hardlinks = @(Check-ConfigurationHardlinkPreservation $manifest)
+        $result.successfulDacl = Check-ConfigurationDaclPreservation $manifest
         $result.passed = $true
         Record $stage $result
     } finally {

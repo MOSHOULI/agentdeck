@@ -1,5 +1,5 @@
-//! Bounded Linux extended-metadata refusal, not a metadata copier or atomic CAS.
-//! All Linux architectures use libc; other OS behavior is intentionally unchanged.
+//! Bounded Linux extended-metadata refusal and Windows DACL eligibility.
+//! Neither is an atomic CAS; Windows staging preservation lives in windows_security.
 use std::{fs::File, path::Path};
 
 #[cfg(target_os = "linux")]
@@ -27,7 +27,11 @@ pub(super) fn check_path(path: &Path) -> crate::Result<()> {
         // the name-list length without reading content or following a leaf link.
         checked_size(unsafe { libc::llistxattr(path.as_ptr(), std::ptr::null_mut(), 0) })
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        super::windows_security::Security::read_path(path).map(|_| ())
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = path;
         Ok(())
@@ -41,7 +45,11 @@ pub(super) fn check_file(file: &File) -> crate::Result<()> {
         // SAFETY: borrowed live file descriptor; zero-sized query, no buffer.
         checked_size(unsafe { libc::flistxattr(file.as_raw_fd(), std::ptr::null_mut(), 0) })
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        super::windows_security::Security::read(file).map(|_| ())
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = file;
         Ok(())

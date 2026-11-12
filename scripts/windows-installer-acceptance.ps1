@@ -136,6 +136,7 @@ try {
     . (Join-Path $PSScriptRoot 'windows-install-ui-acceptance.ps1')
     . (Join-Path $PSScriptRoot 'windows-memory-ui-acceptance.ps1')
     . (Join-Path $PSScriptRoot 'windows-config-failure-ui-acceptance.ps1')
+    . (Join-Path $PSScriptRoot 'windows-config-dacl-ui-acceptance.ps1')
     $sentinel = Join-Path $homeDir '.agentdeck\acceptance-user-data.txt'
     $sentinelValue = 'Synthetic data, must survive installation, upgrade and uninstall.'
     New-Item -ItemType Directory -Force -Path (Split-Path $sentinel) | Out-Null

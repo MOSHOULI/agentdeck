@@ -19,6 +19,12 @@ mod destination;
 mod metadata;
 #[cfg(all(test, target_os = "linux"))]
 mod metadata_tests;
+#[cfg(any(windows, test))]
+mod windows_acl_policy;
+#[cfg(all(test, windows))]
+mod windows_metadata_tests;
+#[cfg(windows)]
+mod windows_security;
 pub use codex_preview::{
     CodexConfigurationPreview, CodexConfigurationTarget, preview_codex_configuration,
 };
@@ -161,13 +167,19 @@ fn backup_file_in(path: &Path, home: &Path) -> crate::Result<Option<PathBuf>> {
         .file_name()
         .ok_or_else(|| crate::Error::Other("目标路径无文件名".into()))?;
     let dest = backup_root.join(name);
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     {
+        #[cfg(windows)]
+        let security = windows_security::Security::read_path(path)?;
         let mut created = false;
         let result = (|| -> crate::Result<()> {
             let mut output = create_staging_file(&dest, &mut created)?;
+            #[cfg(windows)]
+            security.apply_before_content(&output)?;
             destination::check(path)?;
             let mut input = fs::File::open(path)?;
+            #[cfg(windows)]
+            security.verify_file(&input)?;
             metadata::check_file(&input)?;
             output.set_permissions(input.metadata()?.permissions())?;
             metadata::check_file(&output)?;
@@ -175,6 +187,13 @@ fn backup_file_in(path: &Path, home: &Path) -> crate::Result<Option<PathBuf>> {
             metadata::check_file(&input)?;
             metadata::check_file(&output)?;
             destination::check(path)?;
+            #[cfg(windows)]
+            {
+                security.verify_file(&input)?;
+                security.verify_file(&output)?;
+                security.verify_path(path)?;
+                security.verify_path(&dest)?;
+            }
             Ok(())
         })();
         if result.is_err() && created {
@@ -182,7 +201,7 @@ fn backup_file_in(path: &Path, home: &Path) -> crate::Result<Option<PathBuf>> {
         }
         result?;
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     fs::copy(path, &dest)?;
     Ok(Some(dest))
 }
@@ -196,19 +215,35 @@ fn backup_file(path: &Path) -> crate::Result<Option<PathBuf>> {
     backup_file_in(path, &home)
 }
 
-fn write_file(path: &Path, content: &str) -> crate::Result<()> {
+#[derive(Debug)]
+struct WriteEvidence {
+    #[cfg(windows)]
+    security: windows_security::Security,
+}
+
+fn write_file(path: &Path, content: &str) -> crate::Result<WriteEvidence> {
     write_bytes(path, content.as_bytes())
 }
 
-fn write_bytes(path: &Path, content: &[u8]) -> crate::Result<()> {
+fn write_bytes(path: &Path, content: &[u8]) -> crate::Result<WriteEvidence> {
     destination::check(path)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
+    #[cfg(windows)]
+    let security = if path.exists() {
+        Some(windows_security::Security::read_path(path)?)
+    } else {
+        None
+    };
     let temporary = path.with_file_name(format!(".agentdeck-{}.tmp", uuid::Uuid::new_v4()));
     let mut created = false;
-    let result = (|| -> crate::Result<()> {
+    let result = (|| -> crate::Result<WriteEvidence> {
         let mut file = create_staging_file(&temporary, &mut created)?;
+        #[cfg(windows)]
+        if let Some(security) = &security {
+            security.apply_before_content(&file)?;
+        }
         if let Ok(metadata) = fs::metadata(path) {
             fs::set_permissions(&temporary, metadata.permissions())?;
         }
@@ -216,14 +251,24 @@ fn write_bytes(path: &Path, content: &[u8]) -> crate::Result<()> {
         file.write_all(content)?;
         file.sync_all()?;
         metadata::check_file(&file)?;
+        #[cfg(windows)]
+        if let Some(security) = &security {
+            security.verify_path(path)?;
+            security.verify_path(&temporary)?;
+        }
+        #[cfg(windows)]
+        let security = windows_security::Security::read(&file)?;
         drop(file);
-        replace_staged_file(path, &temporary)
+        replace_staged_file(path, &temporary)?;
+        Ok(WriteEvidence {
+            #[cfg(windows)]
+            security,
+        })
     })();
     if result.is_err() && created {
         let _ = fs::remove_file(&temporary);
     }
-    result?;
-    Ok(())
+    result
 }
 
 // Check inherited metadata before chmod or content writes. The injectable creator
@@ -238,6 +283,9 @@ fn checked_staging_file(
 
 fn create_staging_file(path: &Path, created: &mut bool) -> crate::Result<fs::File> {
     checked_staging_file(|| {
+        #[cfg(windows)]
+        let file = windows_security::create(path)?;
+        #[cfg(not(windows))]
         let file = OpenOptions::new().write(true).create_new(true).open(path)?;
         *created = true;
         Ok(file)
@@ -360,7 +408,7 @@ fn merge_toml_tables(target: &mut toml_edit::Table, additions: &toml_edit::Table
 }
 
 /// 合并 TOML section（不产生重复段，不触碰其他内容）
-fn patch_toml_section(target: &Path, section_text: &str) -> crate::Result<()> {
+fn patch_toml_section(target: &Path, section_text: &str) -> crate::Result<WriteEvidence> {
     destination::check(target)?;
     let mut doc: toml_edit::Document = if target.exists() {
         let content = fs::read_to_string(target)?;
@@ -378,7 +426,7 @@ fn patch_toml_section(target: &Path, section_text: &str) -> crate::Result<()> {
     write_file(target, &doc.to_string())
 }
 
-fn merge_yaml(target: &Path, additions: &str) -> crate::Result<()> {
+fn merge_yaml(target: &Path, additions: &str) -> crate::Result<WriteEvidence> {
     destination::check(target)?;
     let base: Value = if target.exists() {
         let text = fs::read_to_string(target)?;
@@ -414,7 +462,7 @@ fn inject_with_backup(
     target_path: &Path,
     content: &str,
     _backup: Option<PathBuf>,
-) -> crate::Result<()> {
+) -> crate::Result<WriteEvidence> {
     destination::check(target_path)?;
     let result = match format {
         Format::PlainText => write_file(target_path, content),
@@ -463,7 +511,7 @@ fn inject_with_backup(
 pub fn inject(format: Format, target_path: &Path, content: &str) -> crate::Result<()> {
     let _guard = write_lock();
     let backup = backup_file(target_path)?;
-    inject_with_backup(format, target_path, content, backup)
+    inject_with_backup(format, target_path, content, backup).map(|_| ())
 }
 
 fn inject_in_home(
@@ -471,7 +519,7 @@ fn inject_in_home(
     target_path: &Path,
     content: &str,
     home: &Path,
-) -> crate::Result<()> {
+) -> crate::Result<WriteEvidence> {
     let backup = backup_file_in(target_path, home)?;
     inject_with_backup(format, target_path, content, backup)
 }
@@ -487,7 +535,7 @@ fn inject_target(
     target: &Path,
     content: &str,
     target_home: Option<&Path>,
-) -> crate::Result<()> {
+) -> crate::Result<WriteEvidence> {
     match target_home {
         Some(home) => inject_in_home(format, target, content, home),
         None => {
@@ -602,12 +650,21 @@ pub fn supports_personalization(agent: &AgentDefinition) -> bool {
 // writer performs one replacement and has no fallible steps after it succeeds.
 // Keep that contract when adding writers: errors with uncertain commit outcomes
 // require explicit recovery handling, not an assumption that nothing was written.
+struct JournalEntry {
+    path: PathBuf,
+    before: Option<Vec<u8>>,
+    #[cfg(windows)]
+    security: Option<windows_security::Security>,
+    #[cfg(windows)]
+    committed_security: windows_security::Security,
+}
+
 fn inject_journaled(
     format: Format,
     target: &Path,
     content: &str,
     target_home: Option<&Path>,
-    committed: &mut Vec<(PathBuf, Option<Vec<u8>>)>,
+    committed: &mut Vec<JournalEntry>,
 ) -> crate::Result<()> {
     destination::check(target)?;
     let before = match fs::read(target) {
@@ -615,8 +672,23 @@ fn inject_journaled(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e.into()),
     };
-    inject_target(format, target, content, target_home)?;
-    committed.push((target.to_path_buf(), before));
+    #[cfg(windows)]
+    let security = if before.is_some() {
+        Some(windows_security::Security::read_path(target)?)
+    } else {
+        None
+    };
+    let evidence = inject_target(format, target, content, target_home)?;
+    committed.push(JournalEntry {
+        path: target.to_path_buf(),
+        before,
+        #[cfg(windows)]
+        security,
+        #[cfg(windows)]
+        committed_security: evidence.security,
+    });
+    #[cfg(not(windows))]
+    let _ = evidence;
     Ok(())
 }
 
@@ -624,7 +696,7 @@ fn inject_for_agent_apply(
     agent: &AgentDefinition,
     source_dir: &Path,
     target_home: Option<&Path>,
-    committed: &mut Vec<(PathBuf, Option<Vec<u8>>)>,
+    committed: &mut Vec<JournalEntry>,
 ) -> crate::Result<InjectReport> {
     let mut personalization = None;
     let mut model_config = None;
@@ -697,10 +769,29 @@ fn inject_for_agent_apply(
 fn rollback_target(path: &Path, before: Option<Vec<u8>>) -> crate::Result<()> {
     destination::check(path)?;
     match before {
-        Some(bytes) => write_bytes(path, &bytes),
+        Some(bytes) => write_bytes(path, &bytes).map(|_| ()),
         None if path.is_file() => fs::remove_file(path).map_err(crate::Error::from),
         None => Ok(()),
     }
+}
+
+#[cfg(windows)]
+fn rollback_security_checked(
+    path: &Path,
+    before: Option<Vec<u8>>,
+    security: Option<windows_security::Security>,
+    committed: windows_security::Security,
+) -> crate::Result<()> {
+    destination::check(path)?;
+    committed.verify_path(path)?;
+    if let Some(original) = security
+        && original != committed
+    {
+        return Err(crate::Error::InjectFailed(
+            "Rollback refused: Windows DACL changed during configuration transaction".into(),
+        ));
+    }
+    rollback_target(path, before)
 }
 
 /// Journal only completed replacements. Validation failures and skipped adapters
@@ -715,8 +806,17 @@ fn inject_for_agent_with_home(
     let result = inject_for_agent_apply(agent, source_dir, target_home, &mut committed);
     if let Err(error) = result {
         let mut failures = Vec::new();
-        for (path, before) in committed.into_iter().rev() {
-            let restore = rollback_target(&path, before);
+        for entry in committed.into_iter().rev() {
+            let path = entry.path;
+            #[cfg(windows)]
+            let restore = rollback_security_checked(
+                &path,
+                entry.before,
+                entry.security,
+                entry.committed_security,
+            );
+            #[cfg(not(windows))]
+            let restore = rollback_target(&path, entry.before);
             if let Err(e) = restore {
                 failures.push(format!("{}: {}", path.display(), e));
             }

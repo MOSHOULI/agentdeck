@@ -41,9 +41,9 @@ process can change a file between checks, and replacement errors with uncertain
 outcomes still require inspection. No post-rename fallible check is added that
 would misreport a completed replacement as uncommitted.
 
-Windows behavior is intentionally unchanged. Windows DACL preservation and
-possible permission changes remain unverified; this change makes no Windows or
-cross-platform metadata-protection claim. macOS behavior is also unchanged.
+Windows has a separate [bounded DACL preservation implementation](WINDOWS-CONFIGURATION-DACL.md).
+This Linux guard makes no cross-platform metadata-protection claim. macOS
+behavior remains unchanged.
 The separate Codex animations filesystem adapter is not modified by this guard.
 
 Tests cover a real `user.audit` attribute through public `config::inject`,
