@@ -516,6 +516,33 @@ function Assert-RecoveryNoExecution([string]$manifest, $expected) {
         if ($current.$key -ne $expected.$key) { throw 'Recovery check executed a fixture operation' }
     }
 }
+function Get-ProtectionSecurityDifference([string]$expected, [string]$observed) {
+    # Return fixed categories only; descriptors, account SIDs and paths stay private.
+    $left = [Security.AccessControl.RawSecurityDescriptor]::new($expected)
+    $right = [Security.AccessControl.RawSecurityDescriptor]::new($observed)
+    if ($left.Owner -ne $right.Owner) { 'owner' }
+    if ($left.Group -ne $right.Group) { 'group' }
+    foreach ($part in @('DiscretionaryAcl','SystemAcl')) {
+        $a = $left.$part; $b = $right.$part
+        $different = ($null -eq $a) -ne ($null -eq $b)
+        if ($null -ne $a -and $null -ne $b) {
+            $aBytes = [byte[]]::new($a.BinaryLength); $a.GetBinaryForm($aBytes, 0)
+            $bBytes = [byte[]]::new($b.BinaryLength); $b.GetBinaryForm($bBytes, 0)
+            $different = [Convert]::ToBase64String($aBytes) -cne [Convert]::ToBase64String($bBytes)
+        }
+        if ($different) { if ($part -eq 'DiscretionaryAcl') { 'dacl' } else { 'sacl' } }
+    }
+    if ($left.ControlFlags -ne $right.ControlFlags) {
+        'control'
+        $changed = [int]$left.ControlFlags -bxor [int]$right.ControlFlags
+        foreach ($flag in [Enum]::GetValues([Security.AccessControl.ControlFlags])) {
+            if ([int]$flag -ne 0 -and ($changed -band [int]$flag) -ne 0) { 'control:' + $flag.ToString() }
+        }
+    }
+    if ($left.ResourceManagerControl -ne $right.ResourceManagerControl) { 'resource-manager-control' }
+    # A differing complete SDDL remains a failure even if its parsed parts match.
+    if ($expected -cne $observed) { 'sddl' }
+}
 function Check-SyntheticUncertainProtection([string]$manifest, $expected) {
     # These are test-authored record mutations, not evidence of an actual crash.
     # Slots are empty, so armed refusal cannot pass merely because residue exists.
@@ -531,7 +558,11 @@ function Check-SyntheticUncertainProtection([string]$manifest, $expected) {
             $source = Join-Path $sourceHome $relative; $target = Join-Path $destination $relative
             $acl = Get-Acl -LiteralPath $source
             Set-Acl -LiteralPath $target -AclObject $acl
-            if ((Get-Acl -LiteralPath $target).Sddl -cne $acl.Sddl) { throw 'Synthetic protection security did not match its source' }
+            $observedSddl = (Get-Acl -LiteralPath $target).Sddl
+            if ($observedSddl -cne $acl.Sddl) {
+                Record 'synthetic-protection-security-mismatch' @{ case = $case; fields = @(Get-ProtectionSecurityDifference $acl.Sddl $observedSddl) }
+                throw 'Synthetic protection security did not match its source'
+            }
         }
         $before = Get-ProtectionDigest $manifest $destination
         $saved = @{}

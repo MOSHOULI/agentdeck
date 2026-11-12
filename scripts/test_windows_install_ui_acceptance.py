@@ -1,6 +1,7 @@
 """Offline wiring checks only; not evidence of native Windows UI behavior."""
 import base64
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -236,6 +237,40 @@ class Tests(unittest.TestCase):
         homes=UI[UI.index('function Invoke-InstallPrivateHome'):UI.index('function Open-BlockedRecovery')]
         for token in ('finally {','Stop-App',"'HOME','USERPROFILE','AGENTDECK_TEST_HOME','APPDATA','LOCALAPPDATA'",'$script:homeDir = $savedHome'):
             self.assertIn(token,homes)
+
+    def test_synthetic_security_diagnostic_preserves_full_sddl_failure(self):
+        function = UI[UI.index('function Get-ProtectionSecurityDifference'):UI.index('function Check-SyntheticUncertainProtection')]
+        for category in ("'owner'", "'group'", "'dacl'", "'sacl'", "'control'", "'resource-manager-control'", "'sddl'"):
+            self.assertIn(category, function)
+        flow = UI[UI.index('function Check-SyntheticUncertainProtection'):UI.index('function ConvertTo-ExpectedRecoveryPrefix')]
+        self.assertIn('if ($observedSddl -cne $acl.Sddl)', flow)
+        self.assertIn("fields = @(Get-ProtectionSecurityDifference $acl.Sddl $observedSddl)", flow)
+        self.assertIn("throw 'Synthetic protection security did not match its source'", flow)
+        self.assertNotIn('Write-Output', function)
+        self.assertNotIn('Write-Host', function)
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows PowerShell security descriptors required')
+    def test_security_diagnostic_reports_categories_not_descriptors(self):
+        function = UI[UI.index('function Get-ProtectionSecurityDifference'):UI.index('function Check-SyntheticUncertainProtection')]
+        command = "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ErrorActionPreference = 'Stop';\n" + function + """
+$base = 'O:SYG:SYD:P(A;;FA;;;SY)'
+$results = @(
+    ,@(Get-ProtectionSecurityDifference $base $base)
+    ,@(Get-ProtectionSecurityDifference $base 'O:BAG:SYD:P(A;;FA;;;SY)')
+    ,@(Get-ProtectionSecurityDifference $base 'O:SYG:BAD:P(A;;FA;;;SY)')
+    ,@(Get-ProtectionSecurityDifference $base 'O:SYG:SYD:P(A;;FR;;;SY)')
+    ,@(Get-ProtectionSecurityDifference $base 'O:SYG:SYD:PAI(A;;FA;;;SY)')
+    ,@(Get-ProtectionSecurityDifference $base 'O:SYG:SYD:P(A;;FA;;;SY)S:(AU;SA;FA;;;SY)')
+)
+ConvertTo-Json -InputObject $results -Depth 4 -Compress
+"""
+        result = subprocess.run(
+            [shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-EncodedCommand',
+             base64.b64encode(command.encode('utf-16le')).decode()],
+            capture_output=True, encoding='utf-8', errors='strict', timeout=15, check=True)
+        self.assertEqual(json.loads(result.stdout), [[], ['owner', 'sddl'], ['group', 'sddl'],
+                         ['dacl', 'sddl'], ['control', 'control:DiscretionaryAclAutoInherited', 'sddl'],
+                         ['sacl', 'control', 'control:SystemAclPresent', 'sddl']])
 
     def test_protection_digest_does_not_bind_readonly_home(self):
         # PowerShell identifiers are case insensitive: $home aliases readonly $HOME.
