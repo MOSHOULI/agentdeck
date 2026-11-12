@@ -232,11 +232,54 @@ class Tests(unittest.TestCase):
         self.assertEqual(recovery.count("Click-Qwen '确认恢复 Codex 探测'"),2) # stale once, fresh once
         self.assertEqual(recovery.count("Click-Qwen '确认安装软件'"),1)
         self.assertLess(recovery.index("'--protection','clear'"),recovery.index('Open-ReviewedInstallPlanAfterRecovery'))
-        for token in ("@('armed','corrupt')",'stateUnchanged = $true','actualCrashVerified = $false','emptySlots = $true','Assert-RecoveryNoExecution','Set-Acl -LiteralPath $target -AclObject $acl','Synthetic protection security did not match its source'):
+        for token in ("@('armed','corrupt')",'stateUnchanged = $true','actualCrashVerified = $false','emptySlots = $true','Assert-RecoveryNoExecution','Set-SyntheticProtectionSecurity $target $acl','Synthetic protection security did not match its source'):
             self.assertIn(token,synthetic)
         homes=UI[UI.index('function Invoke-InstallPrivateHome'):UI.index('function Open-BlockedRecovery')]
         for token in ('finally {','Stop-App',"'HOME','USERPROFILE','AGENTDECK_TEST_HOME','APPDATA','LOCALAPPDATA'",'$script:homeDir = $savedHome'):
             self.assertIn(token,homes)
+
+    @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows filesystem security required')
+    def test_synthetic_security_clone_preserves_non_ai_file_and_directory(self):
+        function = UI[UI.index('function Set-SyntheticProtectionSecurity'):UI.index('function Get-ProtectionSecurityDifference')]
+        command = "$ErrorActionPreference = 'Stop';\n" + function + r"""
+$root = Join-Path ([IO.Path]::GetTempPath()) ('protection-acl-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $root | Out-Null
+try {
+    $directory = Join-Path $root 'directory'
+    $file = Join-Path $root 'state.json'
+    New-Item -ItemType Directory -Path $directory | Out-Null
+    [IO.File]::WriteAllText($file, 'authored state')
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    foreach ($target in @($directory, $file)) {
+        $acl = Get-Acl -LiteralPath $target
+        $raw = [Security.AccessControl.RawSecurityDescriptor]::new($acl.Sddl)
+        $sddl = 'O:' + $raw.Owner.Value + 'G:' + $raw.Group.Value + 'D:P(A;;FA;;;SY)(A;;FA;;;' + $sid + ')'
+        $acl.SetSecurityDescriptorSddlForm($sddl)
+        # Reproduce the modern API's AI conversion before the exact clone.
+        Set-Acl -LiteralPath $target -AclObject $acl
+        $converted = [Security.AccessControl.RawSecurityDescriptor]::new((Get-Acl -LiteralPath $target).Sddl)
+        if (($converted.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited) -eq 0) { throw 'AI conversion fixture not established' }
+        Set-SyntheticProtectionSecurity $target $acl
+        if ((Get-Acl -LiteralPath $target).Sddl -cne $acl.Sddl) { throw 'Exact descriptor clone failed' }
+        $before = (Get-Acl -LiteralPath $target).Sddl
+        $unsupported = Get-Acl -LiteralPath $target
+        $unsupported.SetSecurityDescriptorSddlForm($sddl.Replace('D:P', 'D:PAI'))
+        $rejected = $false
+        try { Set-SyntheticProtectionSecurity $target $unsupported } catch {
+            if ($_.Exception.Message -ne 'Unsupported synthetic protection descriptor') { throw }
+            $rejected = $true
+        }
+        if (-not $rejected -or (Get-Acl -LiteralPath $target).Sddl -cne $before) { throw 'Unsupported descriptor modified target' }
+    }
+    if ([IO.File]::ReadAllText($file) -cne 'authored state') { throw 'Clone changed fixture bytes' }
+    'exact-clone-passed'
+} finally { Remove-Item -LiteralPath $root -Recurse -Force }
+"""
+        result = subprocess.run(
+            [shutil.which('pwsh'), '-NoProfile', '-NonInteractive', '-EncodedCommand',
+             base64.b64encode(command.encode('utf-16le')).decode()],
+            capture_output=True, encoding='utf-8', errors='strict', timeout=30, check=True)
+        self.assertEqual(result.stdout.strip(), 'exact-clone-passed')
 
     def test_synthetic_security_diagnostic_preserves_full_sddl_failure(self):
         function = UI[UI.index('function Get-ProtectionSecurityDifference'):UI.index('function Check-SyntheticUncertainProtection')]

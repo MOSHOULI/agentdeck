@@ -516,6 +516,45 @@ function Assert-RecoveryNoExecution([string]$manifest, $expected) {
         if ($current.$key -ne $expected.$key) { throw 'Recovery check executed a fixture operation' }
     }
 }
+function Set-SyntheticProtectionSecurity([string]$target, $acl) {
+    # Disposable authored fixture only. Set-Acl converts a protected non-AI
+    # descriptor to AI. Match the product's bounded legacy non-AI API route,
+    # then require full SDDL equality at the caller; never ignore control bits.
+    $descriptor = [Security.AccessControl.RawSecurityDescriptor]::new($acl.Sddl)
+    if (($descriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -eq 0 -or
+        ($descriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited) -ne 0 -or
+        ($descriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInheritRequired) -ne 0 -or
+        $null -eq $descriptor.DiscretionaryAcl -or $null -ne $descriptor.SystemAcl) {
+        throw 'Unsupported synthetic protection descriptor'
+    }
+    if (-not ('AgentDeckSyntheticProtectionSecurity' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class AgentDeckSyntheticProtectionSecurity {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(string path, uint access, uint share,
+        IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetKernelObjectSecurity(SafeFileHandle handle, uint information, byte[] descriptor);
+    public static void Apply(string path, byte[] descriptor) {
+        // READ_CONTROL | WRITE_DAC; OPEN_EXISTING; BACKUP_SEMANTICS | OPEN_REPARSE_POINT.
+        using (var handle = CreateFileW(path, 0x00060000, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero)) {
+            if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+            // DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION.
+            // Owner/group are not rewritten; the caller verifies they still match.
+            if (!SetKernelObjectSecurity(handle, 0x80000004, descriptor))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+    }
+}
+'@
+    }
+    [AgentDeckSyntheticProtectionSecurity]::Apply($target, $acl.GetSecurityDescriptorBinaryForm())
+}
 function Get-ProtectionSecurityDifference([string]$expected, [string]$observed) {
     # Return fixed categories only; descriptors, account SIDs and paths stay private.
     $left = [Security.AccessControl.RawSecurityDescriptor]::new($expected)
@@ -557,7 +596,7 @@ function Check-SyntheticUncertainProtection([string]$manifest, $expected) {
         foreach ($relative in @('.agentdeck\install-protection','.agentdeck\install-protection\codex','.agentdeck\install-protection\codex\gate.lock','.agentdeck\install-protection\codex\state.json')) {
             $source = Join-Path $sourceHome $relative; $target = Join-Path $destination $relative
             $acl = Get-Acl -LiteralPath $source
-            Set-Acl -LiteralPath $target -AclObject $acl
+            Set-SyntheticProtectionSecurity $target $acl
             $observedSddl = (Get-Acl -LiteralPath $target).Sddl
             if ($observedSddl -cne $acl.Sddl) {
                 Record 'synthetic-protection-security-mismatch' @{ case = $case; fields = @(Get-ProtectionSecurityDifference $acl.Sddl $observedSddl) }
