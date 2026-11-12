@@ -524,7 +524,8 @@ function Set-SyntheticProtectionSecurity([string]$target, $acl) {
     if (($descriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -eq 0 -or
         ($descriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited) -ne 0 -or
         ($descriptor.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInheritRequired) -ne 0 -or
-        $null -eq $descriptor.DiscretionaryAcl -or $null -ne $descriptor.SystemAcl) {
+        $null -eq $descriptor.DiscretionaryAcl -or $null -ne $descriptor.SystemAcl -or
+        $descriptor.Owner -ne [Security.Principal.WindowsIdentity]::GetCurrent().User) {
         throw 'Unsupported synthetic protection descriptor'
     }
     if (-not ('AgentDeckSyntheticProtectionSecurity' -as [type])) {
@@ -541,12 +542,13 @@ public static class AgentDeckSyntheticProtectionSecurity {
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetKernelObjectSecurity(SafeFileHandle handle, uint information, byte[] descriptor);
     public static void Apply(string path, byte[] descriptor) {
-        // READ_CONTROL | WRITE_DAC; OPEN_EXISTING; BACKUP_SEMANTICS | OPEN_REPARSE_POINT.
-        using (var handle = CreateFileW(path, 0x00060000, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero)) {
+        // READ_CONTROL | WRITE_DAC | WRITE_OWNER; OPEN_EXISTING; BACKUP_SEMANTICS | OPEN_REPARSE_POINT.
+        using (var handle = CreateFileW(path, 0x000E0000, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero)) {
             if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
-            // DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION.
-            // Owner/group are not rewritten; the caller verifies they still match.
-            if (!SetKernelObjectSecurity(handle, 0x80000004, descriptor))
+            // OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION.
+            // The PowerShell guard permits only the current user as owner.
+            // Group is preserved; complete SDDL is verified by the caller.
+            if (!SetKernelObjectSecurity(handle, 0x80000005, descriptor))
                 throw new Win32Exception(Marshal.GetLastWin32Error());
         }
     }

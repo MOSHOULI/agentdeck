@@ -238,6 +238,12 @@ class Tests(unittest.TestCase):
         for token in ('finally {','Stop-App',"'HOME','USERPROFILE','AGENTDECK_TEST_HOME','APPDATA','LOCALAPPDATA'",'$script:homeDir = $savedHome'):
             self.assertIn(token,homes)
 
+    def test_synthetic_security_owner_is_bounded_to_current_user(self):
+        helper = UI[UI.index('function Set-SyntheticProtectionSecurity'):UI.index('function Get-ProtectionSecurityDifference')]
+        self.assertIn('$descriptor.Owner -ne [Security.Principal.WindowsIdentity]::GetCurrent().User', helper)
+        self.assertIn('CreateFileW(path, 0x000E0000,', helper)
+        self.assertIn('SetKernelObjectSecurity(handle, 0x80000005, descriptor)', helper)
+
     @unittest.skipUnless(os.name == 'nt' and shutil.which('pwsh'), 'Windows filesystem security required')
     def test_synthetic_security_clone_preserves_non_ai_file_and_directory(self):
         function = UI[UI.index('function Set-SyntheticProtectionSecurity'):UI.index('function Get-ProtectionSecurityDifference')]
@@ -251,25 +257,31 @@ try {
     [IO.File]::WriteAllText($file, 'authored state')
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     foreach ($target in @($directory, $file)) {
+        $originalAcl = Get-Acl -LiteralPath $target
         $acl = Get-Acl -LiteralPath $target
         $raw = [Security.AccessControl.RawSecurityDescriptor]::new($acl.Sddl)
-        $sddl = 'O:' + $raw.Owner.Value + 'G:' + $raw.Group.Value + 'D:P(A;;FA;;;SY)(A;;FA;;;' + $sid + ')'
+        $sddl = 'O:' + $sid + 'G:' + $raw.Group.Value + 'D:P(A;;FA;;;SY)(A;;FA;;;' + $sid + ')'
         $acl.SetSecurityDescriptorSddlForm($sddl)
         # Reproduce the modern API's AI conversion before the exact clone.
         Set-Acl -LiteralPath $target -AclObject $acl
         $converted = [Security.AccessControl.RawSecurityDescriptor]::new((Get-Acl -LiteralPath $target).Sddl)
         if (($converted.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited) -eq 0) { throw 'AI conversion fixture not established' }
+        # Restore the authored target's original owner before cloning. Elevated
+        # Windows runners create it as Administrators, unlike product current-user ownership.
+        Set-Acl -LiteralPath $target -AclObject $originalAcl
         Set-SyntheticProtectionSecurity $target $acl
         if ((Get-Acl -LiteralPath $target).Sddl -cne $acl.Sddl) { throw 'Exact descriptor clone failed' }
         $before = (Get-Acl -LiteralPath $target).Sddl
-        $unsupported = Get-Acl -LiteralPath $target
-        $unsupported.SetSecurityDescriptorSddlForm($sddl.Replace('D:P', 'D:PAI'))
-        $rejected = $false
-        try { Set-SyntheticProtectionSecurity $target $unsupported } catch {
-            if ($_.Exception.Message -ne 'Unsupported synthetic protection descriptor') { throw }
-            $rejected = $true
+        foreach ($rejectedSddl in @($sddl.Replace('D:P', 'D:PAI'), $sddl.Replace('O:' + $sid, 'O:SY'))) {
+            $unsupported = Get-Acl -LiteralPath $target
+            $unsupported.SetSecurityDescriptorSddlForm($rejectedSddl)
+            $rejected = $false
+            try { Set-SyntheticProtectionSecurity $target $unsupported } catch {
+                if ($_.Exception.Message -ne 'Unsupported synthetic protection descriptor') { throw }
+                $rejected = $true
+            }
+            if (-not $rejected -or (Get-Acl -LiteralPath $target).Sddl -cne $before) { throw 'Unsupported descriptor modified target' }
         }
-        if (-not $rejected -or (Get-Acl -LiteralPath $target).Sddl -cne $before) { throw 'Unsupported descriptor modified target' }
     }
     if ([IO.File]::ReadAllText($file) -cne 'authored state') { throw 'Clone changed fixture bytes' }
     'exact-clone-passed'
