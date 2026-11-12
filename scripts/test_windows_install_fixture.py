@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Offline authored fixture checks; never invoke npm or official Codex."""
+import base64
 import hashlib
 import json
 import os
@@ -63,6 +64,49 @@ class FixtureTests(unittest.TestCase):
         self.assertNotEqual(self.invoke(self.args()).returncode,0)
         self.assertEqual(Path(self.p['marker']).read_bytes(),h.MARKER)
         with self.assertRaisesRegex(h.Failure,'unexpected_install_calls'):h.assert_phase(self.p,'installed')
+    def failure_script_argument_line(self):
+        source=(Path(__file__).parent/'test_windows_failed_install_state.ps1').read_text(encoding='utf-8')
+        lines=[line.strip() for line in source.splitlines() if '$info.ArgumentList.Add($argument)' in line]
+        self.assertEqual(len(lines),1)
+        return lines[0]
+
+    def assert_failure_script_args(self,args):
+        self.assertEqual(args[0],self.p['manager'])
+        self.assertEqual(args[1:],self.args())
+        self.write('fail')
+        result=self.invoke(args[1:])
+        self.assertEqual(result.returncode,64,result.stderr)
+        counts=h.assert_phase(self.p,'failed')
+        self.assertEqual((counts['installCalls'],counts['versionProbes'],counts['partialInstallRetained']),(1,0,True))
+
+    def test_standalone_failure_script_uses_fixture_exact_install_contract(self):
+        # Execute the authored fixture with argv read from the actual PS script,
+        # not a second copied recipe that could independently become stale.
+        line=self.failure_script_argument_line()
+        prefix='foreach ($argument in @(';suffix=')) { $info.ArgumentList.Add($argument) }'
+        self.assertTrue(line.startswith(prefix) and line.endswith(suffix))
+        tokens=line[len(prefix):-len(suffix)].split(',')
+        args=[]
+        for token in tokens:
+            if token=='$fixture.manager':args.append(self.p['manager'])
+            elif token=='$fixture.prefix':args.append(self.p['prefix'])
+            else:
+                self.assertRegex(token,r"^'[a-zA-Z0-9@./=:_-]+'$")
+                args.append(token[1:-1])
+        self.assert_failure_script_args(args)
+
+    @unittest.skipUnless(shutil.which('pwsh'),'PowerShell not available')
+    def test_actual_powershell_failure_script_argument_list(self):
+        # Run only the real script's ArgumentList construction on this host.
+        # Full Windows ACL/timestamp snapshot acceptance remains Windows CI.
+        encoded=base64.b64encode(json.dumps(self.p).encode()).decode()
+        code=("$ErrorActionPreference='Stop'; $fixture=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+encoded+"')) | ConvertFrom-Json; "
+              "$info=[Diagnostics.ProcessStartInfo]::new(); "+self.failure_script_argument_line()+
+              "; ConvertTo-Json -InputObject @($info.ArgumentList) -Compress")
+        result=subprocess.run([shutil.which('pwsh'),'-NoProfile','-NonInteractive','-EncodedCommand',base64.b64encode(code.encode('utf-16le')).decode()],
+                              capture_output=True,text=True,timeout=15,check=True)
+        self.assert_failure_script_args(json.loads(result.stdout))
+
     def test_failure_partial_state_retained_and_retries_are_observable(self):
         self.write('fail');self.assertEqual(self.invoke(self.args()).returncode,64)
         partial=Path(self.p['package'])/'partial-install.txt'
