@@ -46,7 +46,7 @@ def layout(root,home):
     paths={'root':root,'managerBin':root/'manager','manager':root/'manager/node_modules/npm/bin/npm-cli.js',
            'node':root/'manager/node.exe','prefix':root/'prefix','globalRoot':root/'prefix/node_modules',
            'package':root/'prefix/node_modules/@openai/codex','marker':root/'install-marker',
-           'installCalls':root/'install-events','queries':root/'query-events','versions':root/'version-events','canary':root/'canary.txt','home':Path(home)}
+           'installCalls':root/'install-events','latest':root/'latest-version','queries':root/'query-events','versions':root/'version-events','canary':root/'canary.txt','home':Path(home)}
     return {k:str(v) for k,v in paths.items()}
 
 def codex_program(p):
@@ -58,7 +58,7 @@ def codex_program(p):
             "}catch(_){process.stderr.write('synthetic version rejected\\n');process.exitCode=64;}\n")
 
 def manager_program(p,mode):
-    expected=['install','--global','--prefix',p['prefix'],'--force=false','--no-audit','--no-fund','--no-progress','--ignore-scripts','@openai/codex']
+    expected=['install','--global','--prefix',p['prefix'],'--force=false','--no-audit','--no-fund','--no-progress','--ignore-scripts','@openai/codex@1.2.3']
     header=("#!/usr/bin/env node\n'use strict';\nconst fs=require('node:fs');const path=require('node:path');\n"
             'const p='+json.dumps(p)+';\nconst expected='+json.dumps(expected)+';\nconst mode='+json.dumps(mode)+';\n'
             'const partial='+json.dumps(PARTIAL.decode())+';\n'
@@ -82,6 +82,7 @@ try{
  const args=JSON.stringify(process.argv.slice(2));
  if(args==='["prefix","--global"]'){record('p');console.log(p.prefix);}
  else if(args==='["root","--global"]'){record('r');console.log(p.globalRoot);}
+ else if(args==='["view","@openai/codex@latest","version","--json","--fetch-retries=0","--fetch-timeout=25000"]'){record('m');const s=fs.lstatSync(p.latest);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.size!==5)throw Error('metadata');const version=fs.readFileSync(p.latest,'utf8');if(!['1.2.3','1.2.4'].includes(version))throw Error('metadata');console.log(JSON.stringify(version));}
  else if(args===JSON.stringify(expected)){
   record('i',p.installCalls);
   absent(p.marker);absent(p.package);
@@ -117,10 +118,11 @@ def prepare(root,node,home,mode):
     write_new(Path(p['manager']).parent.parent/'package.json',json.dumps({'name':'npm','version':'0.0.0','bin':{'npm':'bin/npm-cli.js'}}).encode())
     for key in ('queries','versions','installCalls'):write_new(Path(p[key]),b'')
     write_new(Path(p['canary']),CANARY.encode())
+    write_new(Path(p['latest']),b'1.2.3')
     write_new(Path(p['manager']),manager_program(p,mode).encode())
     write_new(Path(p['managerBin'])/'npm.cmd',shim('node_modules/npm/bin/npm-cli.js'))
     manifest={'schemaVersion':1,**p,'mode':mode,'path':p['managerBin']+';'+p['prefix'],
-              'installerNodeVersion':node_version,'installerNodeMinimum':'18.0.0',
+              'packageVersion':'1.2.3','installerNodeVersion':node_version,'installerNodeMinimum':'18.0.0',
               'display':{'managerPath':p['manager'],'nodePath':p['node'],'prefix':p['prefix'],'globalRoot':p['globalRoot'],'packageRoot':p['package'],'launcherDirectory':p['prefix']},
               'nodeSha256':hashlib.sha256(data).hexdigest(),'managerSha256':hashlib.sha256(Path(p['manager']).read_bytes()).hexdigest()}
     destination=root/'fixture.json';write_new(destination,json.dumps(manifest,indent=2).encode());return destination
@@ -152,10 +154,10 @@ def no_configuration(m):
 
 def facts(m):
     q=safe_file(Path(m['queries']),4096);v=safe_file(Path(m['versions']),4096);calls=safe_file(Path(m['installCalls']),4096)
-    if any(c not in b'pr' for c in q) or any(c!=ord('v') for c in v) or any(c!=ord('i') for c in calls):raise Failure('invalid_event_log')
+    if any(c not in b'prm' for c in q) or any(c!=ord('v') for c in v) or any(c!=ord('i') for c in calls):raise Failure('invalid_event_log')
     if safe_file(Path(m['canary']),256)!=CANARY.encode():raise Failure('canary_changed')
     if hashlib.sha256(safe_file(Path(m['node']),256*1024*1024)).hexdigest()!=m['nodeSha256']:raise Failure('node_changed')
-    return {'installCalls':len(calls),'partialInstallRetained':False,'prefixQueries':q.count(b'p'),'rootQueries':q.count(b'r'),'versionProbes':len(v),'syntheticFixture':True,'officialAgentExecuted':False,'noConfigurationCreated':True}
+    return {'installCalls':len(calls),'partialInstallRetained':False,'prefixQueries':q.count(b'p'),'rootQueries':q.count(b'r'),'metadataQueries':q.count(b'm'),'versionProbes':len(v),'syntheticFixture':True,'officialAgentExecuted':False,'noConfigurationCreated':True}
 
 def assert_phase(m,phase):
     result=facts(m);prefix=Path(m['prefix']);package=Path(m['package']);marker=Path(m['marker'])
@@ -210,7 +212,7 @@ def main():
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, 'reconfigure'): stream.reconfigure(encoding='utf-8', errors='strict')
     parser=argparse.ArgumentParser(description=__doc__);group=parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('--prepare',type=Path);group.add_argument('--assert',dest='phase',choices=('absent','installed','failed','no-config'));group.add_argument('--stale',action='store_true')
+    group.add_argument('--prepare',type=Path);group.add_argument('--assert',dest='phase',choices=('absent','installed','failed','no-config'));group.add_argument('--stale',action='store_true');group.add_argument('--restore-latest',action='store_true')
     parser.add_argument('--node',type=Path);parser.add_argument('--home',type=Path);parser.add_argument('--mode',choices=('success','fail'),default='success');parser.add_argument('--manifest',type=Path)
     a=parser.parse_args()
     try:
@@ -219,11 +221,13 @@ def main():
             print(prepare(a.prepare,a.node,a.home,a.mode));return 0
         if a.manifest is None:raise Failure('missing_manifest')
         m=load(a.manifest)
-        if a.stale:
+        if a.stale or a.restore_latest:
             path=Path(m['manager']);data=safe_file(path,65536)
             if hashlib.sha256(data).hexdigest()!=m['managerSha256']:raise Failure('manager_already_changed')
-            with path.open('ab') as out:out.write(b'\n// authored stale-preview mutation\n')
-            print(json.dumps({'managerChangedForStalePreview':True}));return 0
+            latest=Path(m['latest']);current=safe_file(latest,5)
+            if current!=(b'1.2.3' if a.stale else b'1.2.4'):raise Failure('invalid_manifest')
+            latest.write_bytes(b'1.2.4' if a.stale else b'1.2.3')
+            print(json.dumps({'latestChangedForStalePreview':a.stale,'managerUnchanged':True}));return 0
         print(json.dumps(assert_phase(m,a.phase)));return 0
     except Exception as error:
         print(json.dumps(failure_diagnostic(error)), file=sys.stderr);return 1

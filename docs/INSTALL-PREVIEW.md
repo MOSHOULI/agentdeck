@@ -7,7 +7,7 @@ Development source only; not yet shipped in a public installer.
 The Install action first requests a fresh backend plan. The confirmation shows
 exactly the supported package, canonical npm entrypoint, **installer** Node
 executable, global prefix/root, package destination and launcher directory.
-It also shows the package-version and lifecycle-script policies. Only a separate
+It also shows the exact Codex root-package version and the package-version and lifecycle-script policies. Only a separate
 confirmation submits the plan revision to the real install adapter.
 
 This does not add an installation channel. The existing adapters are Codex,
@@ -16,7 +16,9 @@ npm channel remains disabled, even if a retained registry describes it. Manual
 entries, Qwen, Qoder and DSH do not become installable through this interface.
 
 The preview measures the frozen native installer Node version and performs bounded local npm prefix/root queries and
-filesystem inspection. It does not run an installer, download a package, prepare
+filesystem inspection. For Codex it also queries the configured registry through
+the frozen npm entrypoint for one exact stable latest root-package version. It
+does not run an installer, download a package archive, prepare
 a profile/vault/Git backup, or change agent configuration. npm itself is local
 code: it may consult configuration and touch caches/logs. A preview is not a
 zero-side-effect sandbox, publisher verification, or an installation guarantee.
@@ -32,7 +34,8 @@ The revision binds the agent, displayed paths/package/policies, actual command
 and arguments, platform/execution mode, and inspected Node/npm-entrypoint bytes.
 Before installing, the backend independently rebuilds the plan under the shared
 in-process installer lock and compares its revision. It then retains the existing
-second preflight and occupied-target checks. A stale revision, changed manager,
+second preflight and occupied-target checks. Codex latest-version resolution is
+repeated at both checks; a changed result requires a fresh review. A stale revision, changed manager,
 redirected prefix, newly occupied package/launcher, or incomplete inspection
 cannot reach the installer callback. Paths that cannot be represented losslessly,
 or contain ambiguous controls, are rejected rather than displayed differently.
@@ -52,11 +55,24 @@ refresh remain separate outcomes.
 
 ## What remains unresolved
 
-The command still requests the supported package without an exact version. npm's
-current configuration chooses the version/registry/dependency closure; those are
-**not pinned or fully fingerprinted** by this plan. They can change independently
-of the displayed target. No dependency download or source-signature verification
-happens during preview. Review this limitation before confirming.
+For Codex, the frozen npm entrypoint runs direct argv
+`view @openai/codex@latest version --json --fetch-retries=0 --fetch-timeout=25000`
+with a 30-second process/descendant bound and a 128-byte output limit. Local
+Node/prefix/root probes retain their three-second bound. npm fetch retries are
+disabled and its per-fetch timeout is 25 seconds. Only one stable `MAJOR.MINOR.PATCH` JSON string is accepted (no ranges,
+tags, prereleases, URLs, arrays or extra records). The nullable `packageVersion`
+field is non-null and `versionPolicy` is `exact_root`; both are revision-bound.
+The installer requests `@openai/codex@<reviewed-version>`, never bare latest.
+Even if latest moves after the final preflight, that argv remains exact.
+Metadata lookup failure or drift fails closed before package mutation; preview
+can therefore require network access and may touch npm caches/logs.
+
+Other adapters retain `packageVersion: null` and `versionPolicy: npm_configured`.
+Registry identity, npm configuration, tarball integrity, publisher identity and
+the complete dependency closure are **not pinned or fully fingerprinted**.
+An exact version is not an immutable-content guarantee, even for Codex.
+No dependency download or source-signature verification happens during preview.
+Review these limitations before confirming.
 
 For Codex and Pi, `--ignore-scripts` is mandatory. For other supported adapters, lifecycle
 behavior follows npm configuration and may execute installation scripts. This is
@@ -66,6 +82,9 @@ contact its configured registry and write dependencies, launchers, caches and lo
 Installation remains software-only, with a five-minute subprocess bound and
 captured-output limits. Successful npm exit is not enough: the observed active
 instance, measured version and npm directory association must match the plan.
+Codex also requires the bounded, parsed root manifest name/version to match the
+reviewed package and exact version. A CLI version is not substituted for that
+manifest check; both independent checks remain required.
 Failure can leave partial software changes. No automatic rollback, uninstall,
 upgrade, authentication or profile/model configuration is added.
 
@@ -90,9 +109,9 @@ facts, cancellation, stale responses, repeated actions, unmount and remount.
 
 The Linux WebView acceptance uses the real application, DOM controls, IPC and
 subprocess runner with an **authored synthetic npm/Codex fixture**. Its manager
-handles only fixture prefix/root queries and the exact expected install command;
+handles only fixture prefix/root and exact-version metadata queries and the exact expected install command;
 it creates a synthetic version-only executable and never downloads a package.
-Acceptance checks cancellation, changed-manager rejection, one confirmed install,
+Acceptance checks cancellation, latest-version drift rejection with unchanged manager bytes, one confirmed install,
 and observed source/version. This does not establish real registry availability,
 package lifecycle behavior, login, model execution or real-agent compatibility.
 
@@ -112,8 +131,10 @@ npm 安装，也不将 Qwen、Qoder、DSH 或手动条目升级为自动安装�
 底层检查完成前保持忙碌；不重复提交、不自动重试不确定结果。
 
 预览不执行安装、不准备 profile/密钥库/备份，也不改 agent 配置，但会运行本地 npm
-路径查询，因此不承诺 npm 无缓存/日志副作用。revision 不是人类点击证明、安装所有权
-记录或安全沙箱，也未固定完整 npm 配置、registry、实际包版本和依赖闭包。Windows
+路径查询，Codex 还会查询配置 registry 的版本元数据，因此不承诺 npm 无缓存/日志副作用。revision 不是人类点击证明、安装所有权
+记录或安全沙箱。Codex 通过 npm 查询并固定预览中的根包精确版本，确认和二次预检
+发现 latest 变化即拒绝，安装后另核对根 manifest 版本；其他适配器仍由 npm 选版本。
+完整 npm 配置、registry、归档完整性和依赖闭包未固定。Windows
 未来启动器选用的 Node 可能不同于当前安装器 Node。
 
 Codex 和 Pi 强制禁用安装脚本；其他现有适配器遵循 npm 配置，可能下载依赖并执行安装脚本。
@@ -141,7 +162,7 @@ remains eligible; it is not executed as a shell string. The internal adapter add
 `--ignore-scripts` unconditionally, and the preview reports `disabled` from the
 same policy helper. Pi keeps its existing policy; Gemini CLI and OpenCode V1
 remain npm-configured. A stale Codex preview from before this change is rejected.
-Package versions are still selected by npm configuration, not pinned to 0.167.0.
+Codex now resolves and pins the reviewed stable latest root version, not a hardcoded 0.167.0.
 
 The separate [official-package gate](CODEX-OFFICIAL-INSTALL.md) verified the
 pinned 0.167.0 Linux x64 npm filesystem layout without lifecycle scripts. That
@@ -152,7 +173,7 @@ The application/WebView tests still use authored synthetic manager/agent fixture
 Codex 的现有及保留配方 `npm install -g @openai/codex` 仍可匹配适配器；
 后端不通过 shell 执行配方，而是强制加入 `--ignore-scripts`，预览与执行共用策略。
 Pi 策略不变；Gemini CLI、OpenCode V1 仍遵循 npm 配置。更新前的 Codex 预览不能
-用于新策略安装。实际包版本仍由 npm 配置选择，没有固定成 0.167.0。
+用于新策略安装。Codex 根包版本现按预览解析结果精确固定，并非硬编码为 0.167.0。
 独立官方包门禁仅验证了固定 0.167.0 Linux x64 包在不运行生命周期脚本时的 npm
 文件安装布局，不代表未来版本、其他平台、真实适配器版本后检、登录或模型运行均已验收。
 应用和 WebView 安装流程测试仍使用自建合成替身。
@@ -163,14 +184,14 @@ The Windows installed-lifecycle lane additionally exercises the reviewed install
 adapter through the real installed WebView and native UIAutomation. A copied,
 trusted official Node executable runs **authored test npm and Codex JavaScript**.
 The fixture is not the official npm implementation or Codex package. Its npm
-substitute only accepts bounded prefix/root queries and the exact reviewed
+substitute only accepts bounded prefix/root and exact-version metadata queries and the exact reviewed
 installation arguments, including `--ignore-scripts`; its Codex substitute only
 answers the expected version probe. Fixture generation and validation remain
 outside the application; preview, cancellation and confirmation go through the
 actual UI/IPC/adapter, never a direct backend call or fabricated Installed state.
 
-Required stages are preview/cancel with no install, mutation of the reviewed
-manager before confirmation with stale-plan rejection, a fresh preview and one
+Required stages are preview/cancel with no install, mutation of the fixture latest
+version with unchanged manager bytes before confirmation and stale-plan rejection, a fresh preview and one
 confirmed install, observed version/source association, and unchanged agent
 configuration. Native accessibility activation is single-shot; uncertain writes
 are not retried. The authored process counters and complete stage list are
@@ -196,11 +217,11 @@ substitutes for the other, and this test does not publish an installer.
 
 Windows 已安装应用门禁通过真实 WebView 和原生 UIAutomation 操作安装计划。
 官方 Node 执行的是**测试编写的 npm 与 Codex JavaScript 替身**，不是官方 Agent。
-合成 npm 只接受路径查询和包含 `--ignore-scripts` 的精确安装参数，合成 Codex
+合成 npm 只接受路径/精确版本元数据查询和包含 `--ignore-scripts` 的精确安装参数，合成 Codex
 只允许预定版本探测。只有 fixture 的创建与核验由测试程序完成；预览、取消和
 确认必须经过真实界面、IPC 与适配器，不直接调用后端或伪造“已安装”。
 
-必须验证取消零安装、预览后管理器变化导致过期拒绝、重新预览后单次确认安装、
+必须验证取消零安装、预览后 latest 版本变化且管理器不变导致过期拒绝、重新预览后单次确认安装、
 版本及来源关联展示，以及配置未变化。每次原生激活只发送一次，不自动重试不确定写入。
 证据记录合成进程计数和完整阶段，原有 Qwen、Codex 只读及 Qoder 门禁全部保留。
 独立失败替身在检查独占标记之前记录每次安装调用，写入有限部分文件后返回失败。

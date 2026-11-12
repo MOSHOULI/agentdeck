@@ -20,6 +20,7 @@ class FixtureTests(unittest.TestCase):
         for k in ('queries','versions','installCalls'):Path(self.p[k]).write_bytes(b'')
         Path(self.p['node']).write_bytes(b'AUTHORED_NOT_EXECUTABLE')
         Path(self.p['canary']).write_text(h.CANARY)
+        Path(self.p['latest']).write_text('1.2.3')
         self.p['nodeSha256']=hashlib.sha256(Path(self.p['node']).read_bytes()).hexdigest()
         self.p['mode']='success'
         self.node=shutil.which('node')
@@ -34,12 +35,25 @@ class FixtureTests(unittest.TestCase):
             import codex_official_install_windows as official
             env['SystemRoot']=official.windows_directory()
         return subprocess.run([self.node,str(program or self.p['manager']),*args],cwd=self.root,env=env,capture_output=True,text=True,timeout=10)
-    def args(self):return ['install','--global','--prefix',self.p['prefix'],'--force=false','--no-audit','--no-fund','--no-progress','--ignore-scripts','@openai/codex']
+    def args(self):return ['install','--global','--prefix',self.p['prefix'],'--force=false','--no-audit','--no-fund','--no-progress','--ignore-scripts','@openai/codex@1.2.3']
     def test_queries_do_not_install_or_probe(self):
         for kind,expected in [('prefix',self.p['prefix']),('root',self.p['globalRoot'])]:
             r=self.invoke([kind,'--global']);self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(r.stdout.strip(),expected)
         self.assertEqual(h.assert_phase(self.p,'absent')['versionProbes'],0)
         self.assertEqual(Path(self.p['queries']).read_bytes(),b'pr')
+    def test_latest_changes_independently_and_exact_install_only(self):
+        manager=Path(self.p['manager']).read_bytes()
+        for version in ('1.2.3','1.2.4'):
+            Path(self.p['latest']).write_text(version)
+            result=self.invoke(['view','@openai/codex@latest','version','--json','--fetch-retries=0','--fetch-timeout=25000'])
+            self.assertEqual((result.returncode,json.loads(result.stdout)),(0,version))
+            h.assert_phase(self.p,'absent')
+        self.assertEqual(Path(self.p['manager']).read_bytes(),manager)
+        self.assertEqual(h.facts(self.p)['metadataQueries'],2)
+        for spec in ('@openai/codex','@openai/codex@latest','@openai/codex@1.2.4'):
+            self.assertEqual(self.invoke(self.args()[:-1]+[spec]).returncode,64)
+            h.assert_phase(self.p,'absent')
+
     def test_install_then_real_authored_version_probe_and_no_configuration(self):
         r=self.invoke(self.args());self.assertEqual(r.returncode,0,r.stderr)
         with self.assertRaisesRegex(h.Failure,'version_not_probed'):h.assert_phase(self.p,'installed')
@@ -92,7 +106,8 @@ class FixtureTests(unittest.TestCase):
     def test_canary_and_configuration_mutation_are_rejected(self):
         Path(self.p['canary']).write_bytes(b'changed')
         with self.assertRaisesRegex(h.Failure,'canary_changed'):h.assert_phase(self.p,'absent')
-        Path(self.p['canary']).write_text(h.CANARY);(Path(self.p['home'])/'.codex').mkdir()
+        Path(self.p['canary']).write_text(h.CANARY)
+        Path(self.p['latest']).write_text('1.2.3');(Path(self.p['home'])/'.codex').mkdir()
         with self.assertRaisesRegex(h.Failure,'configuration_created'):h.assert_phase(self.p,'absent')
     def test_exact_cmd_shim_and_authored_source_have_no_dynamic_executor(self):
         actual=h.shim('node_modules/@openai/codex/bin/codex.js')

@@ -138,6 +138,7 @@ mod tests {
             schema_version: 1,
             agent_id: "codex".into(),
             package: "@openai/codex".into(),
+            package_version: Some("1.2.3".into()),
             executable: "codex".into(),
             manager_path: "C:\\npm".into(),
             node_path: "C:\\node.exe".into(),
@@ -148,7 +149,7 @@ mod tests {
             package_root: "C:\\prefix\\node_modules\\@openai\\codex".into(),
             launcher_directory: "C:\\prefix".into(),
             script_policy: "disabled".into(),
-            version_policy: "npm_configured".into(),
+            version_policy: "exact_root".into(),
             revision: "revision".into(),
         }
     }

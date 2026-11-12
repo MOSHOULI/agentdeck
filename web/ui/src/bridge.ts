@@ -311,7 +311,8 @@ export interface AgentInstallPreview {
   packageRoot: string;
   launcherDirectory: string;
   scriptPolicy: 'disabled' | 'npm_configured';
-  versionPolicy: 'npm_configured';
+  versionPolicy: 'npm_configured' | 'exact_root';
+  packageVersion: string | null;
   revision: string;
 }
 
@@ -331,6 +332,11 @@ function validInstallerNodeVersion(value: unknown, minimum: string): value is st
     if (measured[i] !== required[i]) return measured[i] > required[i];
   }
   return true;
+}
+function validExactPackageVersion(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 32
+    && /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(value)
+    && value.split('.').every(part => Number(part) <= 0xffffffff);
 }
 export function validInstallRevision(value: unknown): value is string {
   return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -364,7 +370,9 @@ export function parseInstallPreview(value: unknown, id: string): AgentInstallPre
   const scriptPolicy = (id === 'pi' || id === 'codex') ? 'disabled' : 'npm_configured';
   if (raw.schemaVersion !== 1 || raw.agentId !== id || raw.package !== expected[0]
     || raw.executable !== expected[1] || raw.scriptPolicy !== scriptPolicy
-    || raw.versionPolicy !== 'npm_configured' || !validInstallRevision(raw.revision)
+    || raw.versionPolicy !== (id === 'codex' ? 'exact_root' : 'npm_configured')
+    || (id === 'codex' ? !validExactPackageVersion(raw.packageVersion) : raw.packageVersion !== null)
+    || !validInstallRevision(raw.revision)
     || raw.installerNodeMinimum !== expected[2] || !validInstallerNodeVersion(raw.installerNodeVersion, expected[2])) return fail();
   const paths = ['managerPath', 'nodePath', 'prefix', 'globalRoot', 'packageRoot', 'launcherDirectory'] as const;
   for (const key of paths) if (!safeInstallPath(raw[key])) return fail();
@@ -372,7 +380,8 @@ export function parseInstallPreview(value: unknown, id: string): AgentInstallPre
   return {
     schemaVersion: 1, agentId: id, package: expected[0], executable: expected[1], scriptPolicy,
     ...(id === 'codex' && validSessionRef(raw.sessionRef) ? { sessionRef: raw.sessionRef } : {}),
-    versionPolicy: 'npm_configured', revision: raw.revision,
+    versionPolicy: id === 'codex' ? 'exact_root' : 'npm_configured',
+    packageVersion: id === 'codex' ? raw.packageVersion as string : null, revision: raw.revision,
     managerPath: raw.managerPath as string, nodePath: raw.nodePath as string,
     installerNodeVersion: raw.installerNodeVersion, installerNodeMinimum: expected[2],
     prefix: raw.prefix as string, globalRoot: raw.globalRoot as string,

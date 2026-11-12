@@ -18,7 +18,9 @@ These are **AgentDeck installer policy minima**, independent of user-editable
 registry strings. They are not a claim that the selected package, npm itself,
 transitive dependencies, native libraries or the eventual Agent runtime are compatible.
 An exact policy minimum passing the check is not an endorsement of an EOL Node release.
-The installer still does not pin the package version or resolve its dependency closure.
+Codex now pins the reviewed root-package version, but no adapter resolves or pins its
+complete dependency closure. Other adapters still leave version selection to npm.
+See [the reviewed installation contract](INSTALL-PREVIEW.md).
 No Node download, upgrade or PATH change is performed automatically.
 
 ## Evidence and source distinction

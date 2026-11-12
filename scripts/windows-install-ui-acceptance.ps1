@@ -63,15 +63,16 @@ function Open-ReviewedInstallPlan($fixture, [string]$manifest) {
     $null = Wait-QwenControl '确认安装软件' ([Windows.Automation.ControlType]::Button)
     $names = Get-InstallPlanNames
     foreach ($value in @('@openai/codex', 'codex', $fixture.prefix, $fixture.globalRoot, $fixture.package,
-                         $fixture.manager, $fixture.node, $fixture.installerNodeVersion, $fixture.installerNodeMinimum,
+                         $fixture.manager, $fixture.node, $fixture.packageVersion, 'Codex 根包固定版本', $fixture.installerNodeVersion, $fixture.installerNodeMinimum,
                          '安装器 Node 实测版本', 'AgentDeck 安装器 Node 最低策略')) {
         if ($names -cnotcontains $value) { throw 'Reviewed installation path/package mismatch' }
     }
     $text = $names -join "`n"
-    foreach ($policy in @('生命周期脚本：禁用（ignore-scripts）', '仅安装软件，不应用 profile', '版本由当前 npm 配置选择')) {
+    foreach ($policy in @('生命周期脚本：禁用（ignore-scripts）', '仅安装软件，不应用 profile', 'Codex 根包版本已固定')) {
         if (-not $text.Contains($policy)) { throw 'Reviewed installation policy mismatch' }
     }
     $afterQueries = Invoke-InstallFixture @('--assert', 'absent', '--manifest', $manifest) | ConvertFrom-Json
+    if ($afterQueries.metadataQueries -ne ($beforeQueries.metadataQueries + 1)) { throw 'Preview version metadata query count mismatch' }
     if ($afterQueries.prefixQueries -ne ($beforeQueries.prefixQueries + 1) -or $afterQueries.rootQueries -ne ($beforeQueries.rootQueries + 1)) { throw 'Preview query count mismatch' }
     Assert-InstallNoConfiguration
 }
@@ -138,6 +139,7 @@ function Check-ReviewedInstall {
         Assert-InstallNoConfirmation
         $counts = Invoke-InstallFixture @('--assert', 'absent', '--manifest', $manifest) | ConvertFrom-Json
         if ((Get-CodexSnapshot) -cne $baseline) { throw 'Stale installation changed configuration' }
+        $null = Invoke-InstallFixture @('--restore-latest', '--manifest', $manifest)
         Save-QwenEvidence 'reviewed-install-stale'
         Record 'reviewed-install-stale' @{ fixtureCounts = $counts; configurationUnchanged = $true }
 

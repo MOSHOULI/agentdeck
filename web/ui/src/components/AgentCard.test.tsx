@@ -315,12 +315,18 @@ describe('AgentCard', () => {
   });
 
   it.each([['pi', 'Pi', '@earendil-works/pi-coding-agent'], ['codex', 'Codex', '@openai/codex']])('shows disabled lifecycle scripts for the reviewed %s plan', async (id, name, pkg) => {
-    const disabledPlan = { ...installPlan, installerNodeMinimum: id === 'pi' ? '22.19.0' : '18.0.0', agentId: id, package: pkg, executable: id, scriptPolicy: 'disabled' as const };
+    const disabledPlan = { ...installPlan, versionPolicy: id === 'codex' ? 'exact_root' as const : 'npm_configured' as const, packageVersion: id === 'codex' ? '1.2.3' : null, installerNodeMinimum: id === 'pi' ? '22.19.0' : '18.0.0', agentId: id, package: pkg, executable: id, scriptPolicy: 'disabled' as const };
     mountAgent({ agent: { ...agent, id, name }, onPrepareInstall: vi.fn().mockResolvedValue(disabledPlan) });
     fireEvent.click(screen.getByRole('button', { name: `安装 ${name}` }));
     const dialog = await screen.findByRole('dialog', { name: `${name} 安装计划` });
     expect(dialog).toHaveTextContent('生命周期脚本：禁用（ignore-scripts）');
     expect(dialog).not.toHaveTextContent('生命周期脚本：遵循当前 npm 配置');
+    if (id === 'codex') {
+      expect(dialog).toHaveTextContent('Codex 根包固定版本');
+      expect(dialog).toHaveTextContent('1.2.3');
+      expect(dialog).toHaveTextContent('未锁定依赖闭包、registry 或下载内容完整性');
+      expect(dialog).not.toHaveTextContent('版本由当前 npm 配置选择');
+    }
   });
 
   it('confirms software-only installation without configuring or selecting the row', async () => {

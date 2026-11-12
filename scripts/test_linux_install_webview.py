@@ -48,7 +48,7 @@ class OfflineDriver:
         if not predicate(): raise harness.Failure('ui_wait_expired')
     def text(self, selector):
         f = self.fixture
-        fields = {'npm 包': '@openai/codex', '启动命令': 'codex', 'npm prefix': str(f['prefix']),
+        fields = {'npm 包': '@openai/codex', 'Codex 根包固定版本': '1.2.3', '启动命令': 'codex', 'npm prefix': str(f['prefix']),
                   'npm 全局目录': str(f['global']), '包目录': str(f['package']),
                   '启动文件目录': str(f['bin']), 'npm 规范入口': str(f['manager']), '安装器 Node': str(f['node']),
                   '安装器 Node 实测版本': f['installer_node_version'],
@@ -56,7 +56,7 @@ class OfflineDriver:
         if '/dd' in selector:
             return fields[selector.split("dt[text()='")[1].split("']")[0]]
         if selector == subject.DIALOG:
-            return '版本由当前 npm 配置选择 生命周期脚本：禁用（ignore-scripts） 仅安装软件，不应用 profile'
+            return 'Codex 根包版本已固定 生命周期脚本：禁用（ignore-scripts） 仅安装软件，不应用 profile'
         if "@role='alert'" in selector:
             return 'wrong failure' if self.fault == 'wrong_stale' else '安装请求已发送，但完成状态未确认。'
         if "@role='status'" in selector: return '软件安装操作已完成，未应用配置'
@@ -82,7 +82,7 @@ class FixtureTests(unittest.TestCase):
 
     def install_args(self):
         return ['install', '--global', '--prefix', str(self.f['prefix']), '--force=false',
-                '--no-audit', '--no-fund', '--no-progress', '--ignore-scripts', '@openai/codex']
+                '--no-audit', '--no-fund', '--no-progress', '--ignore-scripts', '@openai/codex@1.2.3']
 
     def test_native_node_expected_version_matches_real_program(self):
         actual = subprocess.run([str(self.f['node']), '--version'], capture_output=True,
@@ -109,7 +109,7 @@ class FixtureTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, str(self.f[key]) + '\n')
             subject.assert_absent(self.f)
-        self.assertEqual(subject.query_counts(self.f), {'prefix_queries': 1, 'root_queries': 1})
+        self.assertEqual(subject.query_counts(self.f), {'prefix_queries': 1, 'root_queries': 1, 'metadata_queries': 0})
         result = self.run_fixture(self.install_args())
         self.assertEqual(result.returncode, 0, result.stderr)
         subject.assert_installed(self.f)
@@ -118,6 +118,21 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout), (0, 'codex-cli 1.2.3\n'))
         self.assertEqual(self.run_fixture(self.install_args()).returncode, 64)
         subject.assert_installed(self.f)
+
+    def test_latest_metadata_changes_without_manager_mutation_or_install(self):
+        manager = self.f['manager'].read_bytes()
+        query = ['view', '@openai/codex@latest', 'version', '--json', '--fetch-retries=0', '--fetch-timeout=25000']
+        for version in ('1.2.3', '1.2.4'):
+            self.f['latest'].write_text(version)
+            result = self.run_fixture(query)
+            self.assertEqual((result.returncode, json.loads(result.stdout)), (0, version))
+            subject.assert_absent(self.f)
+        self.assertEqual(self.f['manager'].read_bytes(), manager)
+        self.assertEqual(subject.query_counts(self.f)['metadata_queries'], 2)
+        self.assertEqual(self.run_fixture(self.install_args()[:-1] + ['@openai/codex']).returncode, 64)
+        self.assertEqual(self.run_fixture(self.install_args()[:-1] + ['@openai/codex@latest']).returncode, 64)
+        self.assertEqual(self.run_fixture(self.install_args()[:-1] + ['@openai/codex@1.2.4']).returncode, 64)
+        subject.assert_absent(self.f)
 
     def test_rejects_malformed_arguments_without_side_effects(self):
         cases = [[], ['--version'], ['prefix'], ['root', '-g'], ['install', '-g', '@openai/codex'],
@@ -234,8 +249,8 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(sum(args[1] == '/element/preview-element/value' for args in driver.commands), 1)
         self.assertEqual(driver.clicks.count(subject.CONFIRM), 0)
         self.assertEqual(trace, [{'stage': 'install_initial_preview',
-                                 'before': {'prefix_queries': 0, 'root_queries': 0},
-                                 'after': {'prefix_queries': 0, 'root_queries': 0}}])
+                                 'before': {'prefix_queries': 0, 'root_queries': 0, 'metadata_queries': 0},
+                                 'after': {'prefix_queries': 0, 'root_queries': 0, 'metadata_queries': 0}}])
 
     def test_failed_native_tab_is_not_replayed_or_followed_by_preview(self):
         driver = OfflineDriver(self.f, lambda: self.fail('must not install'))

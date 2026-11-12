@@ -910,12 +910,20 @@ fn parse_version(executable: &str, output: &[u8]) -> Option<String> {
 
 trait Runner {
     fn run(&mut self, command: &ProbeCommand) -> io::Result<Vec<u8>>;
+    // Network metadata gets its own finite budget; local probes stay at 3s.
+    fn run_registry_metadata(&mut self, command: &ProbeCommand) -> io::Result<Vec<u8>> {
+        self.run(command)
+    }
 }
 
 struct ProcessRunner;
 impl Runner for ProcessRunner {
     fn run(&mut self, command: &ProbeCommand) -> io::Result<Vec<u8>> {
         run_bounded(command, PROBE_TIMEOUT, OUTPUT_LIMIT)
+    }
+
+    fn run_registry_metadata(&mut self, command: &ProbeCommand) -> io::Result<Vec<u8>> {
+        run_bounded(command, Duration::from_secs(30), 128)
     }
 }
 
